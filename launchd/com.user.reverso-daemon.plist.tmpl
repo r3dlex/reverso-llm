@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  LaunchAgent template for the Reverso session daemon (Phase 2).
+
+  This plist is provided for completeness. The daemon is not implemented
+  in Phase 1; loading this agent will result in a clean exit (stub).
+
+  Install via:
+    scripts/install-launchagents.sh
+
+  Variables expanded by install-launchagents.sh (sed substitution):
+    {{REVERSO_DIR}}   – absolute path to the reverso/ project root
+    {{UV_BIN}}        – absolute path to the uv binary
+    {{USER_HOME}}     – $HOME of the running user
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.user.reverso-daemon</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>{{UV_BIN}}</string>
+        <string>run</string>
+        <string>--project</string>
+        <string>{{REVERSO_DIR}}</string>
+        <string>reverso-daemon</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>{{REVERSO_DIR}}</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Phase 2: daemon is fully implemented; keep alive on crash/reboot. -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>{{USER_HOME}}/Library/Logs/reverso/daemon.stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>{{USER_HOME}}/Library/Logs/reverso/daemon.stderr.log</string>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+</dict>
+</plist>

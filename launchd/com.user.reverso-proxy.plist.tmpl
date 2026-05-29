@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  LaunchAgent template for the Reverso LiteLLM proxy.
+
+  Install via:
+    scripts/install-launchagents.sh
+
+  Variables expanded by install-launchagents.sh (sed substitution):
+    {{REVERSO_DIR}}   – absolute path to the reverso/ project root
+    {{UV_BIN}}        – absolute path to the uv binary (e.g. /Users/you/.local/bin/uv)
+    {{USER_HOME}}     – $HOME of the running user
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.user.reverso-proxy</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>{{UV_BIN}}</string>
+        <string>run</string>
+        <string>--project</string>
+        <string>{{REVERSO_DIR}}</string>
+        <string>reverso-proxy</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>{{REVERSO_DIR}}</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <!-- Keychain secrets are loaded at process startup by reverso-proxy. -->
+        <!-- Add any static env overrides here if needed. -->
+        <key>REVERSO_HOST</key>
+        <string>127.0.0.1</string>
+        <key>REVERSO_PORT</key>
+        <string>4000</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>{{USER_HOME}}/Library/Logs/reverso/proxy.stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>{{USER_HOME}}/Library/Logs/reverso/proxy.stderr.log</string>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+</dict>
+</plist>

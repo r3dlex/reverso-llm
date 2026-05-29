@@ -1,0 +1,184 @@
+{
+  "project": "Reverso Gateway - AI-SDLC Bootstrap",
+  "spec": ".omc/specs/deep-interview-reverso-sdlc.md",
+  "created": "2026-05-27",
+  "stories": [
+    {
+      "id": "US-001",
+      "title": "Repo bootstrap: extract zip, register in setup.sh",
+      "passes": true,
+      "acceptanceCriteria": [
+        "Directory /Users/andresilvaburgstahler/Ws/Rib/reverso/docs/ exists",
+        "Files 01-brd.md, 02-prd.md, 03-architecture.md, 04-mvp.md exist under reverso/docs/",
+        "setup.sh LOCAL_DIRS array contains 'reverso'",
+        "setup.sh is valid bash and can be sourced without error"
+      ]
+    },
+    {
+      "id": "US-002",
+      "title": "SDLC init: deepinit generates AGENTS.md for reverso",
+      "passes": true,
+      "acceptanceCriteria": [
+        "reverso/AGENTS.md exists",
+        "AGENTS.md references the 4 spec docs in reverso/docs/",
+        "AGENTS.md includes routing rules, stack overview (Python+LiteLLM+asyncio), and vault hard rules where applicable",
+        "AGENTS.md has valid YAML frontmatter"
+      ]
+    },
+    {
+      "id": "US-003",
+      "title": "Phase 0 spike: CLI invocation and output format research",
+      "passes": true,
+      "acceptanceCriteria": [
+        "reverso/docs/spike-notes.md exists",
+        "spike-notes.md documents how to invoke 'claude' non-interactively with a user prompt",
+        "spike-notes.md documents how to invoke 'codex' non-interactively with a user prompt",
+        "spike-notes.md documents the output format for plain text responses for both CLIs",
+        "spike-notes.md documents tool-use output format (or confirms not parseable) for both CLIs",
+        "spike-notes.md confirms per-workspace isolation behavior for both CLIs",
+        "spike-notes.md includes a go/no-go decision: v1-full (tool interception) or v1-small (sessions only)"
+      ]
+    },
+    {
+      "id": "US-004",
+      "title": "Phase 1: Python project skeleton and pyproject.toml",
+      "passes": true,
+      "acceptanceCriteria": [
+        "reverso/pyproject.toml exists with [project] name='reverso', requires-python>=3.11",
+        "reverso/reverso/__init__.py exists",
+        "reverso/reverso/providers/__init__.py exists",
+        "reverso/reverso/daemon/__init__.py exists",
+        "reverso/reverso/middleware/__init__.py exists",
+        "reverso/config/ directory exists",
+        "reverso/tests/ directory exists",
+        "reverso/launchd/ directory exists",
+        "'pip install -e reverso/' installs without error (in a temp venv)"
+      ]
+    },
+    {
+      "id": "US-005",
+      "title": "Phase 1: models.yaml with all 8 model entries",
+      "passes": true,
+      "acceptanceCriteria": [
+        "reverso/config/models.yaml exists",
+        "Contains at least one Claude model entry (claude-sonnet or claude-opus)",
+        "Contains at least one OpenAI/Codex model entry (gpt-5.x or codex variant)",
+        "Contains deepseek-reasoner and deepseek-chat entries as HTTP-forwarded (api_base set)",
+        "Contains MiniMax model aliases as HTTP-forwarded",
+        "Each entry has a provider field identifying whether it is cli-wrapped or http-forwarded",
+        "YAML parses without error"
+      ]
+    },
+    {
+      "id": "US-006",
+      "title": "Phase 1: config.yaml and litellm_config.yaml",
+      "passes": true,
+      "acceptanceCriteria": [
+        "reverso/config/config.yaml exists with bind_host: '127.0.0.1', port: 4000, default_workspace key",
+        "reverso/config/litellm_config.yaml exists and references models.yaml for model_list",
+        "litellm_config.yaml includes environment_variables section referencing Keychain-sourced secrets",
+        "Both YAML files parse without error"
+      ]
+    },
+    {
+      "id": "US-007",
+      "title": "Phase 1: stateless Anthropic and OpenAI CLI providers",
+      "passes": true,
+      "acceptanceCriteria": [
+        "reverso/reverso/providers/anthropic_cli_provider.py exists",
+        "reverso/reverso/providers/openai_cli_provider.py exists",
+        "Each provider implements the LiteLLM custom provider interface (completion method)",
+        "Each provider spawns the wrapped CLI as a subprocess per-request (stateless, no session reuse)",
+        "Each provider captures stdout and returns the final assistant text as a LiteLLM response",
+        "Normalization functions ported from ~/.local/bin/codex-litellm-responses-shim: normalize_function_call_arguments, sanitize_input_tool_sequence, compact_input_items, strip_think_blocks",
+        "Python files have no syntax errors (python -m py_compile passes)"
+      ]
+    },
+    {
+      "id": "US-008",
+      "title": "Phase 1: x_gateway middleware envelope",
+      "passes": true,
+      "acceptanceCriteria": [
+        "reverso/reverso/middleware/x_gateway.py exists",
+        "Middleware wraps all responses to add x_gateway object with: session_id (null for Phase 1), observations (empty list for Phase 1), workspace (from request x_gateway.workspace or default)",
+        "x_gateway.workspace validation: returns HTTP 400 if path does not exist or is not a directory",
+        "Python file has no syntax errors"
+      ]
+    },
+    {
+      "id": "US-009",
+      "title": "Phase 1: launchd plist for LiteLLM process",
+      "passes": true,
+      "acceptanceCriteria": [
+        "reverso/launchd/com.andres.reverso.litellm.plist exists",
+        "Plist has RunAtLoad=true and KeepAlive.SuccessfulExit=false",
+        "Plist stdout/stderr log to ~/Library/Logs/reverso/litellm.out.log and litellm.err.log",
+        "Plist is valid XML (xmllint --noout passes)",
+        "README.md or docs/launchd-setup.md documents how to load/unload the agent"
+      ]
+    },
+    {
+      "id": "US-010",
+      "title": "Phase 1: README and smoke test instructions",
+      "passes": true,
+      "acceptanceCriteria": [
+        "reverso/README.md exists",
+        "README describes quick-start: install dependencies, configure Keychain secrets, load launchd agent",
+        "README includes a curl smoke test example for POST /v1/chat/completions with a DeepSeek model",
+        "README includes a curl smoke test example for POST /v1/messages with a Claude model",
+        "README documents that this replaces the existing codex-litellm shim (decommission instructions for existing LaunchAgents)"
+      ]
+    },
+    {
+      "id": "US-011",
+      "title": "Phase 1: Codex config.toml updated to point at port 4000",
+      "passes": true,
+      "acceptanceCriteria": [
+        "~/.codex/config.toml contains a [model_providers.reverso_gateway] section with base_url='http://127.0.0.1:4000/v1' and wire_api='responses'",
+        "~/.codex/config.toml contains at least one [profiles.reverso_*] section using reverso_gateway",
+        "Original minimax_gateway and deepseek_gateway sections are preserved (not removed) until Reverso is verified working (decommission is manual)",
+        "TOML syntax is valid"
+      ]
+    },
+    {
+      "id": "US-012",
+      "title": "Phase 2: Session daemon implementation",
+      "passes": true,
+      "acceptanceCriteria": [
+        "reverso/reverso/daemon/session_daemon.py exists",
+        "reverso/reverso/daemon/session_table.py exists",
+        "Session daemon exposes a Unix-domain socket HTTP API at ~/Library/Application Support/reverso/daemon.sock",
+        "Session table keys sessions by (machine, workspace, provider) tuple",
+        "Session daemon spawns new CLI subprocess for unknown session key",
+        "Session daemon reuses existing subprocess for known session key (multi-turn test documented in spike-notes or tests)",
+        "Session daemon implements idle detection: subprocess recycled after configured idle timeout",
+        "launchd/com.andres.reverso.daemon.plist exists for daemon LaunchAgent",
+        "Python files have no syntax errors"
+      ]
+    },
+    {
+      "id": "US-013",
+      "title": "Phase 2: Session integration in CLI providers",
+      "passes": true,
+      "acceptanceCriteria": [
+        "anthropic_cli_provider.py and openai_cli_provider.py updated to call session daemon instead of spawning per-request",
+        "Providers pass (machine, workspace, provider) session key to daemon via UDS",
+        "x_gateway.session_id is populated in responses (non-null)",
+        "httpx with HTTPTransport(uds=...) used for daemon communication",
+        "Python files have no syntax errors"
+      ]
+    },
+    {
+      "id": "US-014",
+      "title": "Phase 3: Tool interception and x_gateway observations",
+      "passes": true,
+      "acceptanceCriteria": [
+        "Tool-use output from wrapped CLIs is parsed into structured Observation objects",
+        "Each Observation has: type (file_edit/shell_cmd/read), timestamp, detail fields",
+        "x_gateway.observations list is populated with observations from the current turn",
+        "Structured JSON logs capture observations per session in ~/Library/Logs/reverso/",
+        "If spike-notes.md concluded tool parsing is not feasible, this story is documented as v1-small with rationale and marked passes: true with that documented rationale"
+      ]
+    }
+  ]
+}

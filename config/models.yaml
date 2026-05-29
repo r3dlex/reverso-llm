@@ -1,0 +1,145 @@
+# Reverso model registry – LiteLLM model_list format.
+#
+# Two provider kinds:
+#   cli-wrapped  – requests are forwarded to the session daemon (Phase 2) which
+#                  spawns a wrapped CLI subprocess. Custom providers handle routing.
+#   http-forwarded – standard LiteLLM native backend; no custom code needed.
+#
+# Phase 1 note: cli-wrapped models use a stateless custom provider that spawns
+# one subprocess per request. The session_daemon_url field is reserved for Phase 2.
+
+model_list:
+
+  # ── Anthropic / Claude Code (cli-wrapped) ──────────────────────────────────
+
+  - model_name: claude-sonnet-4-6
+    litellm_params:
+      model: custom/claude-sonnet-4-6
+      custom_llm_provider: anthropic_cli
+    model_info:
+      description: "Claude Sonnet 4.6 via Claude Code CLI (subscription-backed)"
+      provider_kind: cli-wrapped
+      cli: claude
+      aliases:
+        - claude-sonnet
+        - claude
+
+  - model_name: claude-sonnet
+    litellm_params:
+      model: custom/claude-sonnet-4-6
+      custom_llm_provider: anthropic_cli
+    model_info:
+      description: "Alias → claude-sonnet-4-6"
+      provider_kind: cli-wrapped
+      cli: claude
+
+  - model_name: claude
+    litellm_params:
+      model: custom/claude-sonnet-4-6
+      custom_llm_provider: anthropic_cli
+    model_info:
+      description: "Alias → claude-sonnet-4-6"
+      provider_kind: cli-wrapped
+      cli: claude
+
+  - model_name: claude-opus-4-7
+    litellm_params:
+      model: custom/claude-opus-4-7
+      custom_llm_provider: anthropic_cli
+    model_info:
+      description: "Claude Opus 4.7 via Claude Code CLI (subscription-backed)"
+      provider_kind: cli-wrapped
+      cli: claude
+      aliases:
+        - claude-opus
+
+  - model_name: claude-opus
+    litellm_params:
+      model: custom/claude-opus-4-7
+      custom_llm_provider: anthropic_cli
+    model_info:
+      description: "Alias → claude-opus-4-7"
+      provider_kind: cli-wrapped
+      cli: claude
+
+  # ── OpenAI / Codex CLI (cli-wrapped) ──────────────────────────────────────
+
+  - model_name: gpt-5.5
+    litellm_params:
+      model: custom/gpt-5.5
+      custom_llm_provider: openai_cli
+    model_info:
+      description: "GPT-5.5 via Codex CLI through MiniMax gateway alias (subscription-backed)"
+      provider_kind: cli-wrapped
+      cli: codex
+
+  - model_name: gpt-4.1
+    litellm_params:
+      model: custom/gpt-4.1
+      custom_llm_provider: openai_cli
+    model_info:
+      description: "GPT-4.1 via Codex CLI (subscription-backed)"
+      provider_kind: cli-wrapped
+      cli: codex
+
+  # ── DeepSeek (http-forwarded) ──────────────────────────────────────────────
+
+  - model_name: deepseek-reasoner
+    litellm_params:
+      model: openai/deepseek-reasoner
+      api_base: https://api.deepseek.com/v1
+      api_key: "os.environ/DEEPSEEK_API_KEY"
+    model_info:
+      description: "DeepSeek-R1 reasoner – http-forwarded via LiteLLM native backend"
+      provider_kind: http-forwarded
+
+  - model_name: deepseek-chat
+    litellm_params:
+      model: openai/deepseek-chat
+      api_base: https://api.deepseek.com/v1
+      api_key: "os.environ/DEEPSEEK_API_KEY"
+    model_info:
+      description: "DeepSeek-V3 chat – http-forwarded via LiteLLM native backend"
+      provider_kind: http-forwarded
+
+  # ── MiniMax (http-forwarded) ───────────────────────────────────────────────
+
+  - model_name: MiniMax-M2.7-highspeed
+    litellm_params:
+      model: openai/MiniMax-M2.7-highspeed
+      api_base: https://api.minimax.io/v1
+      api_key: "os.environ/MINIMAX_API_KEY"
+    model_info:
+      description: "MiniMax M2.7 high-speed variant – http-forwarded"
+      provider_kind: http-forwarded
+      aliases:
+        - minimax-fast
+
+  - model_name: minimax-fast
+    litellm_params:
+      model: openai/MiniMax-M2.7-highspeed
+      api_base: https://api.minimax.io/v1
+      api_key: "os.environ/MINIMAX_API_KEY"
+    model_info:
+      description: "Alias → MiniMax-M2.7-highspeed"
+      provider_kind: http-forwarded
+
+  - model_name: MiniMax-M2.7
+    litellm_params:
+      model: openai/MiniMax-M2.7
+      api_base: https://api.minimax.io/v1
+      api_key: "os.environ/MINIMAX_API_KEY"
+    model_info:
+      description: "MiniMax M2.7 standard – http-forwarded"
+      provider_kind: http-forwarded
+      aliases:
+        - minimax
+
+  - model_name: minimax
+    litellm_params:
+      model: openai/MiniMax-M2.7
+      api_base: https://api.minimax.io/v1
+      api_key: "os.environ/MINIMAX_API_KEY"
+    model_info:
+      description: "Alias → MiniMax-M2.7"
+      provider_kind: http-forwarded

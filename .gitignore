@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# uv
+.venv/
+# uv.lock is intentionally tracked for reproducibility
+
+# Environment / secrets – never commit
+.env
+.env.*
+*.key
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Test artefacts
+.pytest_cache/
+.coverage
+htmlcov/
+
+# OMC runtime state (transient; plans/ and specs/ are tracked)
+.omc/state/
+
+# Spike notes are per-machine operational notes, not committed (see docs/04-mvp.md)
+docs/spike-notes.md

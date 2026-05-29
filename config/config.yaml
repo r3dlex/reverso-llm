@@ -1,0 +1,20 @@
+# Reverso gateway runtime configuration.
+# All paths support ~ expansion. Override individual values with env vars
+# (REVERSO_HOST, REVERSO_PORT, etc.) for local development.
+
+bind_host: "127.0.0.1"
+port: 4000
+
+# Default workspace directory used when the request does not include
+# x_gateway.workspace. Expanded at runtime.
+default_workspace: "~"
+
+# Unix-domain socket path for the session daemon (Phase 2).
+daemon_socket: "~/Library/Application Support/reverso/daemon.sock"
+
+# Sessions idle longer than this (no requests AND no live child processes)
+# are recycled by the sweeper (Phase 2).
+session_idle_timeout_minutes: 30
+
+# Structured log output directory. Rotated by newsyslog.d (Phase 4).
+log_dir: "~/Library/Logs/reverso"

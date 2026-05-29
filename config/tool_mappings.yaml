@@ -1,0 +1,22 @@
+# Tool mappings: inbound tool name -> wrapped CLI tool name and observation type.
+#
+# Used by the session daemon to translate tool declarations in inbound requests
+# (from third-party agents) to the native tools used by the wrapped CLIs.
+# Unmapped inbound tools are dropped and their names added to x_gateway.warnings.
+
+mappings:
+  - inbound_name: "read_file"
+    cli_tool: "Read"
+    obs_type: "file_read"
+  - inbound_name: "write_file"
+    cli_tool: "Write"
+    obs_type: "file_write"
+  - inbound_name: "edit_file"
+    cli_tool: "Edit"
+    obs_type: "file_edit"
+  - inbound_name: "bash"
+    cli_tool: "Bash"
+    obs_type: "shell_cmd"
+  - inbound_name: "computer_use"
+    cli_tool: null
+    obs_type: null
