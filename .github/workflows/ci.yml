@@ -33,4 +33,4 @@ jobs:
           echo "All files compile OK"
 
       - name: Run tests
-        run: uv run pytest tests/ -v --ignore=tests/integration -tb=short
+        run: uv run pytest tests/ -v --ignore=tests/integration --tb=short
