@@ -32,7 +32,7 @@ A single developer running Reverso on their own workstation, using the gateway a
 The developer runs `codex -p anthropic "explain this diff"` and Codex CLI sends the request to Reverso, which routes it to Claude Code, which generates the response under the Claude Max subscription.
 
 **UC-2. Third-party agent on subscription budget.**
-The developer runs Aider configured with `OPENAI_API_BASE=http://127.0.0.1:4000/v1` and Aider's GPT-targeted calls are served by Codex CLI under the ChatGPT Pro subscription.
+The developer runs Aider configured with `OPENAI_API_BASE=http://127.0.0.1:64946/v1` and Aider's GPT-targeted calls are served by Codex CLI under the ChatGPT Pro subscription.
 
 **UC-3. DeepSeek for cost-sensitive bulk work.**
 A custom script calls `POST /v1/chat/completions` with `model: deepseek-reasoner` and Reverso forwards the request to the DeepSeek API.
@@ -47,7 +47,7 @@ The developer runs a tool that sends 20 sequential prompts to Reverso over an ho
 
 ### 3.1 Inbound HTTP API
 
-**F-INB-1.** The gateway binds to 127.0.0.1:4000 on startup. Any other bind address in configuration is a startup error.
+**F-INB-1.** The gateway binds to 127.0.0.1:64946 on startup. Any other bind address in configuration is a startup error.
 
 **F-INB-2.** The gateway exposes `POST /v1/chat/completions`, accepting the OpenAI Chat Completions request shape, returning the OpenAI Chat Completions response shape, including streaming SSE per the OpenAI spec.
 
@@ -55,7 +55,7 @@ The developer runs a tool that sends 20 sequential prompts to Reverso over an ho
 
 **F-INB-4.** The gateway exposes `GET /v1/models`, returning the list of registered models from `models.yaml` with their capability metadata.
 
-**F-INB-5.** The gateway exposes `GET /health/live` and `GET /health/ready` returning 200 when the gateway and session daemon are responsive.
+**F-INB-5.** The gateway exposes health endpoints for the loopback proxy. Readiness may report degraded wrapped-CLI session behavior when the session daemon is unavailable, but HTTP-forwarded provider profiles remain usable.
 
 **F-INB-6.** No authentication is required for any endpoint. The loopback bind is the security boundary.
 
@@ -67,7 +67,7 @@ The developer runs a tool that sends 20 sequential prompts to Reverso over an ho
 
 **F-ROUTE-1.** Routing is determined by the `model` field of the request body, looked up in the model registry.
 
-**F-ROUTE-2.** Every model in the registry is callable from both inbound surfaces. Surface ↔ backend mismatch triggers body translation (e.g., Anthropic-shape inbound + OpenAI-backend → translate inbound to OpenAI shape, send, translate response back to Anthropic shape).
+**F-ROUTE-2.** Every model in the registry is callable from both inbound surfaces. Surface ↔ backend mismatch triggers body translation (e.g., Anthropic-shape inbound + OpenAI-backend to translate inbound to OpenAI shape, send, translate response back to Anthropic shape).
 
 **F-ROUTE-3.** Unknown models (not in registry) return HTTP 404 with a clear error message.
 
@@ -99,7 +99,7 @@ The developer runs a tool that sends 20 sequential prompts to Reverso over an ho
 
 **F-HTTP-1.** Requests routed to DeepSeek or MiniMax are forwarded to the upstream API specified in the registry entry, with the API key injected from the macOS Keychain.
 
-**F-HTTP-2.** Body translation is applied if the inbound surface differs from the upstream API shape (e.g., Anthropic-shape inbound → translate to OpenAI shape for DeepSeek's OpenAI-compatible endpoint).
+**F-HTTP-2.** Body translation is applied if the inbound surface differs from the upstream API shape (e.g., Anthropic-shape inbound to translate to OpenAI shape for DeepSeek's OpenAI-compatible endpoint).
 
 **F-HTTP-3.** Streaming responses are streamed through to the inbound client.
 
@@ -187,7 +187,7 @@ The developer runs a tool that sends 20 sequential prompts to Reverso over an ho
 
 **F-CFG-2.** Configuration fields:
 - `bind_host`: must be `127.0.0.1`. Other values are startup errors.
-- `bind_port`: defaults to 4000.
+- `bind_port`: defaults to 64946.
 - `default_workspace`: absolute path used when inbound requests omit `x_gateway.workspace`. Defaults to the user's home directory.
 - `session_idle_timeout_minutes`: defaults to 30.
 - `session_recycle_sweep_minutes`: defaults to 60.

@@ -13,7 +13,7 @@ Read this before touching anything in this repo.
 
 ## What this project is
 
-Reverso is a subscription-backed local LLM gateway. It runs on `127.0.0.1:4000`, wraps Claude Code CLI and Codex CLI as session-managed subprocess workers, HTTP-forwards DeepSeek and MiniMax, and exposes standard OpenAI and Anthropic HTTP APIs to any local tool that wants them.
+Reverso is a subscription-backed local LLM gateway. It runs on `127.0.0.1:64946`, wraps Claude Code CLI and Codex CLI as session-managed subprocess workers, HTTP-forwards DeepSeek and MiniMax, and exposes standard OpenAI and Anthropic HTTP APIs to any local tool that wants them.
 
 **Why it exists:** The developer pays flat-rate for Claude Max and ChatGPT Pro subscriptions. Those subscriptions include CLI tools with unlimited use at the margin. Reverso lets any HTTP-speaking tool (agents, IDE plugins, scripts) consume those subscriptions instead of requiring separate metered API accounts.
 
@@ -33,7 +33,7 @@ All design decisions live in `docs/`. Read before writing code.
 ## Stack
 
 - **Language:** Python 3.12+, managed with `uv`
-- **HTTP server:** LiteLLM proxy (inbound, port 4000)
+- **HTTP server:** LiteLLM proxy (inbound, port 64946)
 - **Async:** asyncio throughout
 - **Service manager:** launchd (macOS), two LaunchAgents
 - **Dependencies:** LiteLLM, httpx, asyncio, psutil (Phase 2+)
@@ -44,7 +44,7 @@ Two long-lived processes:
 
 ```
 launchd
-  |-- LiteLLM proxy process (:4000)
+  |-- LiteLLM proxy process (:64946)
   |     |-- anthropic_cli_provider.py   (custom LiteLLM provider)
   |     |-- openai_cli_provider.py      (custom LiteLLM provider)
   |     |-- x_gateway middleware        (response envelope)
@@ -133,7 +133,7 @@ Do not skip Phase 0 deliverables. Architecture details in Phase 1+ depend on Pha
 
 ## Hard rules (apply everywhere)
 
-- **Bind to `127.0.0.1:4000` only.** No other bind address. This is the only security boundary. Reject config that changes this.
+- **Bind to `127.0.0.1:64946` only.** No other bind address. This is the only security boundary. Reject config that changes this.
 - **No secrets in version control.** Secrets live in macOS Keychain. Use `security find-generic-password` to read them.
 - **No em-dashes (U+2014).** Use hyphens (-) in all text files including docs, comments, and commit messages.
 - **No en-dashes (U+2013).** Use hyphens (-) for all structural breaks.
@@ -148,7 +148,7 @@ Reverso replaces the existing `codex-litellm-responses-shim` setup. The followin
 - `~/.local/bin/codex-litellm-responses-shim` - normalization functions to port: `normalize_function_call_arguments`, `sanitize_input_tool_sequence`, `compact_input_items`, `strip_think_blocks`, `normalize_responses_payload`
 - `~/.config/litellm/minimax-codex.yaml` - MiniMax model aliases to absorb into `config/models.yaml`
 - `~/.config/litellm/deepseek-codex.yaml` - DeepSeek model aliases to absorb
-- `~/.codex/config.toml` - update `model_providers` and `profiles` to point at `http://127.0.0.1:4000`
+- `~/.codex/config.toml` - update `model_providers` and `profiles` to point at `http://127.0.0.1:64946`
 
 The existing LaunchAgents (`com.andres.codex-litellm-minimax.plist`, `com.andres.codex-litellm-deepseek.plist`) are decommissioned after Reverso's LaunchAgents are verified working. Do not remove them manually; the install script handles decommission.
 

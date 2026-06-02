@@ -1,0 +1,104 @@
+# LiteLLM proxy configuration for the Reverso gateway.
+# This file is passed to LiteLLM via `litellm --config litellm_config.yaml`
+# or via the proxy_server config path.
+#
+# Model list is inlined from models.yaml content (LiteLLM does not natively
+# support YAML includes; use `reverso-proxy` entrypoint which pre-processes
+# this or keep them in sync manually).
+
+model_list:
+  # ── Anthropic / Claude Code (cli-wrapped) ──────────────────────────────────
+  - model_name: claude-sonnet-4-6
+    litellm_params:
+      model: custom/claude-sonnet-4-6
+      custom_llm_provider: anthropic_cli
+
+  - model_name: claude-sonnet
+    litellm_params:
+      model: custom/claude-sonnet-4-6
+      custom_llm_provider: anthropic_cli
+
+  - model_name: claude
+    litellm_params:
+      model: custom/claude-sonnet-4-6
+      custom_llm_provider: anthropic_cli
+
+  - model_name: claude-opus-4-7
+    litellm_params:
+      model: custom/claude-opus-4-7
+      custom_llm_provider: anthropic_cli
+
+  - model_name: claude-opus
+    litellm_params:
+      model: custom/claude-opus-4-7
+      custom_llm_provider: anthropic_cli
+
+  # ── OpenAI / Codex CLI (cli-wrapped) ──────────────────────────────────────
+  - model_name: gpt-5.5
+    litellm_params:
+      model: custom/gpt-5.5
+      custom_llm_provider: openai_cli
+
+  - model_name: gpt-4.1
+    litellm_params:
+      model: custom/gpt-4.1
+      custom_llm_provider: openai_cli
+
+  # ── DeepSeek (http-forwarded) ──────────────────────────────────────────────
+  - model_name: deepseek-reasoner
+    litellm_params:
+      model: openai/deepseek-reasoner
+      api_base: https://api.deepseek.com/v1
+      api_key: "os.environ/DEEPSEEK_API_KEY"
+
+  - model_name: deepseek-chat
+    litellm_params:
+      model: openai/deepseek-chat
+      api_base: https://api.deepseek.com/v1
+      api_key: "os.environ/DEEPSEEK_API_KEY"
+
+  # ── MiniMax (http-forwarded) ───────────────────────────────────────────────
+  - model_name: MiniMax-M2.7-highspeed
+    litellm_params:
+      model: openai/MiniMax-M2.7-highspeed
+      api_base: https://api.minimax.io/v1
+      api_key: "os.environ/MINIMAX_API_KEY"
+
+  - model_name: minimax-fast
+    litellm_params:
+      model: openai/MiniMax-M2.7-highspeed
+      api_base: https://api.minimax.io/v1
+      api_key: "os.environ/MINIMAX_API_KEY"
+
+  - model_name: MiniMax-M2.7
+    litellm_params:
+      model: openai/MiniMax-M2.7
+      api_base: https://api.minimax.io/v1
+      api_key: "os.environ/MINIMAX_API_KEY"
+
+  - model_name: minimax
+    litellm_params:
+      model: openai/MiniMax-M2.7
+      api_base: https://api.minimax.io/v1
+      api_key: "os.environ/MINIMAX_API_KEY"
+
+litellm_settings:
+  # Drop unrecognised params instead of erroring so that upstream clients
+  # sending Codex/Responses-style extras do not break the proxy.
+  drop_params: true
+
+  # Add x_gateway envelope to every response via custom success callback.
+  # The callback module is loaded from reverso.middleware.
+  # success_callback disabled - see comment above
+
+general_settings:
+  master_key: "os.environ/REVERSO_MASTER_KEY"   # optional; set to restrict access
+  port: 4000
+  host: "127.0.0.1"
+
+environment_variables:
+  # Populated at startup by reverso-proxy from macOS Keychain
+  # (service names: reverso/DEEPSEEK_API_KEY, reverso/MINIMAX_API_KEY).
+  # Do not hardcode values here; this block documents which vars are expected.
+  DEEPSEEK_API_KEY: ""
+  MINIMAX_API_KEY: ""

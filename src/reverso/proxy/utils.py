@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -58,13 +59,33 @@ def call_daemon(
 
 def strip_think_blocks(value: str) -> str:
     """Remove <think>...</think> blocks from assistant text."""
-    if not isinstance(value, str) or _THINK_START not in value:
+    if not isinstance(value, str):
+        return value
+    if _THINK_START not in value and _THINK_END not in value:
         return value
     value = _THINK_BLOCK_RE.sub("", value)
     start = value.find(_THINK_START)
     if start != -1:
         value = value[:start]
+    end = value.find(_THINK_END)
+    if end != -1:
+        value = value[end + len(_THINK_END):]
     return value.lstrip()
+
+
+def resolve_cli_command(name: str, env_var: str | None = None) -> str:
+    """Resolve a CLI command under both shells and launchd."""
+    if env_var:
+        configured = os.environ.get(env_var)
+        if configured:
+            return configured
+    if found := shutil.which(name):
+        return found
+    for prefix in ("/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"):
+        candidate = Path(prefix) / name
+        if candidate.exists():
+            return str(candidate)
+    return name
 
 
 def _longest_suffix_prefix(value: str, prefix: str) -> int:
@@ -106,6 +127,12 @@ class StreamingThinkStripper:
                 continue
 
             start = text.find(_THINK_START, index)
+            stray_end = text.find(_THINK_END, index)
+            if stray_end != -1 and (start == -1 or stray_end < start):
+                index = stray_end + len(_THINK_END)
+                while index < len(text) and text[index] in " \t\r\n":
+                    index += 1
+                continue
             if start == -1:
                 tail = _longest_suffix_prefix(text[index:], _THINK_START)
                 if tail:

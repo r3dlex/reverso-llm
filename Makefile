@@ -12,7 +12,7 @@ proxy:  ## Start the LiteLLM proxy in the foreground (dev mode)
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
-smoke:  ## Run smoke tests against a running proxy (127.0.0.1:4000)
+smoke:  ## Run smoke tests against a running proxy (127.0.0.1:64946)
 	bash scripts/smoke.sh
 
 test:  ## Run unit tests

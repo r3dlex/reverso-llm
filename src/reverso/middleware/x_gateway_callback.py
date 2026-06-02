@@ -1,6 +1,6 @@
 """LiteLLM success callback: inject x_gateway envelope into every response.
 
-Registered in litellm_config.yaml under litellm_settings.success_callback.
+Registered programmatically by reverso.proxy.bootstrap before LiteLLM starts.
 LiteLLM calls this after each successful completion; we attach the x_gateway
 dict (session_id, observations, provider, warnings) to the response object's
 _hidden_params so downstream clients can read it from the JSON body.
@@ -15,17 +15,46 @@ from typing import Any
 
 
 _MODEL_TO_PROVIDER: dict[str, str] = {
+    "claude-opus-4-8": "anthropic",
+    "claude-sonnet-4-6": "anthropic",
+    "claude-haiku-4-6": "anthropic",
+    "claude-opus": "anthropic",
+    "claude-sonnet": "anthropic",
+    "claude-haiku": "anthropic",
+    "claude": "anthropic",
+    "gpt-5.5": "openai",
+    "gpt-5.4": "openai",
+    "gpt-5.4-mini": "openai",
+    "gpt-5.3-codex-spark": "openai",
+    "gpt-4.1": "openai",
+    "deepseek-v4-pro": "deepseek",
+    "deepseek-v4-flash": "deepseek",
     "deepseek-reasoner": "deepseek",
     "deepseek-chat": "deepseek",
-    "MiniMax-M2.7-highspeed": "minimax",
-    "minimax-fast": "minimax",
-    "MiniMax-M2.7": "minimax",
+    "MiniMax-M3": "minimax",
     "minimax": "minimax",
 }
 
 
+def _normalise_model(model: str) -> str:
+    return model.split("/", 1)[1] if "/" in model else model
+
+
 def _infer_provider(model: str) -> str:
-    return _MODEL_TO_PROVIDER.get(model, "unknown")
+    normalised = _normalise_model(model)
+    provider = _MODEL_TO_PROVIDER.get(normalised)
+    if provider is not None:
+        return provider
+    lowered = normalised.lower()
+    if lowered.startswith("claude-"):
+        return "anthropic"
+    if lowered.startswith("gpt-"):
+        return "openai"
+    if lowered.startswith("deepseek-"):
+        return "deepseek"
+    if lowered.startswith("minimax-"):
+        return "minimax"
+    return "unknown"
 
 
 def success_callback(kwargs: dict[str, Any], response_obj: Any, start_time: Any, end_time: Any) -> None:
@@ -37,7 +66,7 @@ def success_callback(kwargs: dict[str, Any], response_obj: Any, start_time: Any,
         response_obj._hidden_params = {}
 
     if "x_gateway" not in response_obj._hidden_params:
-        # HTTP-forwarded model – build a minimal envelope
+        # HTTP-forwarded model - build a minimal envelope
         model = getattr(response_obj, "model", "") or ""
         response_obj._hidden_params["x_gateway"] = {
             "session_id": None,

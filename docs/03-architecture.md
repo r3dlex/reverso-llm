@@ -22,7 +22,7 @@ Two long-lived processes per Reverso installation:
 +--------------+   +-----------------+
 | LiteLLM      |   | Session Daemon  |
 | Python proc  |   | Python proc     |
-| :4000        |   | UDS socket      |
+| :64946        |   | UDS socket      |
 +------+-------+   +--------+--------+
        |                    |
        | UDS http calls     |
@@ -36,7 +36,7 @@ Two long-lived processes per Reverso installation:
        +-------------+
 ```
 
-**LiteLLM process.** Hosts the inbound HTTP API on `127.0.0.1:4000`. Handles request parsing, body translation between OpenAI and Anthropic shapes, response streaming. Loads `models.yaml` and uses it as its `model_list`. Custom providers route subprocess-backed models to the session daemon.
+**LiteLLM process.** Hosts the inbound HTTP API on `127.0.0.1:64946`. Handles request parsing, body translation between OpenAI and Anthropic shapes, response streaming. Loads `models.yaml` and uses it as its `model_list`. Custom providers route subprocess-backed models to the session daemon.
 
 **Session daemon process.** Owns all wrapped CLI subprocesses. Maintains session table. Implements session lifecycle (spawn, turn, idle detection, recycle). Exposes a small internal HTTP API over a Unix-domain socket. Not exposed on TCP at all.
 
@@ -64,7 +64,7 @@ The two processes communicate over a Unix-domain socket at `~/Library/applicatio
 | Component | Responsibility |
 |---|---|
 | Internal HTTP server | Accepts `POST /session/turn` from LiteLLM custom providers over UDS |
-| Session table | In-memory dict mapping (machine, workspace, provider) → Session object |
+| Session table | In-memory dict mapping (machine, workspace, provider) to Session object |
 | Session lifecycle | Spawn, turn execution, idle detection, recycle |
 | Subprocess manager | Owns wrapped CLI processes via `asyncio.subprocess` |
 | Output parser | Per-CLI module that extracts assistant text and tool-call events from CLI output |
@@ -76,7 +76,7 @@ The two processes communicate over a Unix-domain socket at `~/Library/applicatio
 
 ### 3.1 Wrapped-CLI request (subscription-backed)
 
-1. Client sends `POST /v1/chat/completions` to `127.0.0.1:4000` with body `{model: "claude-sonnet-4-5", messages: [...], x_gateway: {workspace: "/Users/andre/Ws/foo"}}`.
+1. Client sends `POST /v1/chat/completions` to `127.0.0.1:64946` with body `{model: "claude-sonnet-4-5", messages: [...], x_gateway: {workspace: "/Users/andre/Ws/foo"}}`.
 2. LiteLLM parses the request, looks up `claude-sonnet-4-5` in `model_list`, sees it routes to the custom provider `anthropic_cli_provider`.
 3. The custom provider extracts the latest user message and workspace, calls the session daemon over UDS: `POST /session/turn {workspace: "/Users/andre/Ws/foo", provider: "anthropic", user_message: "..."}`.
 4. The session daemon computes the session key `(machine, "/Users/andre/Ws/foo", "anthropic")`, looks it up in its session table.
@@ -164,9 +164,9 @@ This mapping is data-driven, defined per-provider in a `tool_mappings.yaml` file
 
 ### 6.1 Configuration files (committed to git)
 
-- `models.yaml` — model registry (per Q13).
-- `config.yaml` — runtime config (paths, timeouts, ports).
-- `tool_mappings.yaml` — inbound-tool to CLI-tool mapping.
+- `models.yaml` - model registry (per Q13).
+- `config.yaml` - runtime config (paths, timeouts, ports).
+- `tool_mappings.yaml` - inbound-tool to CLI-tool mapping.
 
 ### 6.2 Secrets (not in git)
 
@@ -182,9 +182,9 @@ Both processes (LiteLLM and the session daemon) read Keychain on startup via the
 
 ### 7.1 Two launchd LaunchAgents
 
-`com.user.reverso-daemon.plist` — Session daemon. Starts first, listens on the UDS.
+`com.user.reverso-daemon.plist` - Session daemon. Starts first, listens on the UDS.
 
-`com.user.reverso-proxy.plist` — LiteLLM proxy. Starts after the daemon is ready. The proxy fails to start if the daemon is not reachable.
+`com.user.reverso-proxy.plist` - LiteLLM proxy. Starts independently on loopback. When the daemon transport is unavailable, times out, or closes unexpectedly, wrapped-CLI providers record a warning and degrade to a stateless one-turn CLI subprocess so local Codex profiles keep working; session continuity is cold for that turn. Daemon HTTP status errors are surfaced and are not masked by stateless fallback.
 
 Both run under the developer's user account, both restart on crash via launchd's `KeepAlive`, both log to `~/Library/Logs/reverso/`.
 
@@ -248,7 +248,7 @@ loopback/
 | Failure | Detection | Recovery |
 |---|---|---|
 | Wrapped CLI crashes mid-turn | Subprocess exits before assistant text complete | Return HTTP 500 with populated observations; remove session from table |
-| Session daemon crashes | LiteLLM custom provider gets UDS connection error | LiteLLM returns HTTP 503; launchd restarts the daemon; on next request, sessions are cold |
+| Session daemon transport unavailable | LiteLLM custom provider gets UDS connection, timeout, or remote protocol error | Provider records a warning, runs one stateless CLI turn when the CLI binary is available, and launchd restarts the daemon; session continuity is cold for that degraded turn. Daemon HTTP status errors are surfaced. |
 | LiteLLM crashes | launchd notices process exit | launchd restarts; daemon is unaffected; existing sessions remain alive |
 | Workspace path invalid | Validated at request time | HTTP 400 returned to client; no session created |
 | Two requests for same session arrive concurrently | Session daemon detects via per-session asyncio lock | Second request blocks until first completes; daemon processes serially per session |
@@ -277,4 +277,4 @@ These are explicitly deferred but worth noting so v1 design choices accommodate 
 - **Tool execution mediation (IV-strict).** v1 is IV-pragmatic; v2 could intercept and require client approval before tool execution if the wrapped CLIs gain support for this mode.
 - **Token usage accounting.** Either via wrapped CLI cooperation or via tiktoken-based estimation.
 - **Authentication for tunnel access.** A v2 concern paired with multi-machine; not relevant for v1.
-- **An Elixir/Phoenix rewrite if maintenance burden grows.** The architecture maps cleanly. Daemon → GenServer-per-session under Supervisor. UDS → Phoenix endpoint on a different port. The model registry, configuration, operational scripts, and overall design transfer intact.
+- **An Elixir/Phoenix rewrite if maintenance burden grows.** The architecture maps cleanly. Daemon to GenServer-per-session under Supervisor. UDS to Phoenix endpoint on a different port. The model registry, configuration, operational scripts, and overall design transfer intact.

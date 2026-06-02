@@ -3,13 +3,13 @@
 
 **Project codename.** Reverso. Working name pending; reflects the strict 127.0.0.1 binding.
 
-**Document version.** 0.2 (draft incorporating Q1–Q18 decisions)
+**Document version.** 0.2 (draft incorporating Q1-Q18 decisions)
 
 **Author.** Andre
 
 **Date.** 2026-05-26
 
-**Audience.** Two readers. The first half (Sections 1–3) is written for a non-technical reader who needs to understand why this project exists and what business value it produces. The second half (Sections 4–11) is a personal rationale for future-Andre and for anyone who finds this repo on GitHub and wants to know the reasoning behind the design.
+**Audience.** Two readers. The first half (Sections 1-3) is written for a non-technical reader who needs to understand why this project exists and what business value it produces. The second half (Sections 4-11) is a personal rationale for future-Andre and for anyone who finds this repo on GitHub and wants to know the reasoning behind the design.
 
 ---
 
@@ -78,7 +78,7 @@ If this project is still running in 2027, the design assumptions that mattered m
 
 ### 5.1 Primary
 
-- Expose OpenAI Chat Completions (`POST /v1/chat/completions`) and Anthropic Messages (`POST /v1/messages`) APIs on the loopback interface, port 4000.
+- Expose OpenAI Chat Completions (`POST /v1/chat/completions`) and Anthropic Messages (`POST /v1/messages`) APIs on the loopback interface, port 64946.
 - Route requests to one of four providers based on the `model` field:
   - **Anthropic** via wrapped Claude Code subprocess.
   - **OpenAI** via wrapped Codex CLI subprocess.
@@ -103,7 +103,7 @@ If this project is still running in 2027, the design assumptions that mattered m
 - Not metered or quota-aware. The gateway does not track subscription allowances. Upstream rate limits and errors surface to inbound clients unmodified.
 - Not a shared service. If a colleague wants the same setup, they fork the repo and run their own instance under their own subscriptions.
 
-## 6. Decisions Made (from Q1–Q18)
+## 6. Decisions Made (from Q1-Q18)
 
 The following decisions are locked. Detailed justifications appear in the PRD; the BRD records them so the reasoning is preserved.
 
@@ -133,7 +133,7 @@ The following decisions are locked. Detailed justifications appear in the PRD; t
 Twelve weeks after first install:
 
 - The developer is no longer running metered Anthropic or OpenAI API accounts for personal tooling.
-- At least one cross-vendor workflow is in regular use (Codex CLI → Claude, or Claude Code → GPT).
+- At least one cross-vendor workflow is in regular use (Codex CLI to Claude, or Claude Code to GPT).
 - Session continuity through the gateway is indistinguishable in quality from direct CLI use for the workflows the developer actually runs.
 - `x_gateway.observations` data has been used at least once for debugging or auditing.
 - The developer has not had to restart the gateway manually more than twice per month.

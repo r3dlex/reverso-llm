@@ -3,7 +3,7 @@
 # (REVERSO_HOST, REVERSO_PORT, etc.) for local development.
 
 bind_host: "127.0.0.1"
-port: 4000
+port: 64946
 
 # Default workspace directory used when the request does not include
 # x_gateway.workspace. Expanded at runtime.

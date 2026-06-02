@@ -2,7 +2,7 @@
 # Test the OpenAI/Codex CLI provider (gpt-4.1) through the gateway.
 #
 # Prerequisites:
-#   - reverso-proxy running on 127.0.0.1:4000
+#   - reverso-proxy running on 127.0.0.1:64946
 #   - codex CLI on PATH and authenticated
 #
 # Usage:
@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-BASE="http://127.0.0.1:4000"
+BASE="http://127.0.0.1:64946"
 
 echo "==> Testing gpt-4.1 via gateway..."
 PAYLOAD='{"model":"gpt-4.1","messages":[{"role":"user","content":"Say hello and identify yourself briefly."}]}'

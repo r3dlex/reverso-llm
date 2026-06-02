@@ -2,7 +2,7 @@
 # Smoke tests for the Reverso gateway.
 #
 # Prerequisites:
-#   - reverso-proxy running on 127.0.0.1:4000
+#   - reverso-proxy running on 127.0.0.1:64946
 #   - curl available
 #
 # Usage:
@@ -12,7 +12,7 @@
 
 set -euo pipefail
 
-BASE="http://127.0.0.1:4000"
+BASE="http://127.0.0.1:64946"
 PASS=0
 FAIL=0
 
@@ -39,19 +39,19 @@ echo "==> Smoke: /v1/models"
 R=$(curl -sf "${BASE}/v1/models" 2>&1 || echo "CONNECTION_ERROR")
 check "models endpoint" "${R}" "data"
 
-echo "==> Smoke: deepseek-chat single turn"
-PAYLOAD='{"model":"deepseek-chat","messages":[{"role":"user","content":"Reply with exactly: SMOKE_OK"}]}'
-R=$(curl -sf -X POST "${BASE}/v1/chat/completions" \
+echo "==> Smoke: deepseek profile GPT-level alias"
+PAYLOAD='{"model":"gpt-5.5","messages":[{"role":"user","content":"Reply with exactly: SMOKE_OK"}]}'
+R=$(curl -sf -X POST "${BASE}/deepseek/v1/chat/completions" \
     -H "Content-Type: application/json" \
     -d "${PAYLOAD}" 2>&1 || echo "CONNECTION_ERROR")
-check "deepseek-chat response" "${R}" "choices"
+check "deepseek profile response" "${R}" "choices"
 
-echo "==> Smoke: minimax single turn"
-PAYLOAD='{"model":"minimax","messages":[{"role":"user","content":"Reply with exactly: SMOKE_OK"}]}'
-R=$(curl -sf -X POST "${BASE}/v1/chat/completions" \
+echo "==> Smoke: minimax profile GPT-level alias"
+PAYLOAD='{"model":"gpt-5.5","messages":[{"role":"user","content":"Reply with exactly: SMOKE_OK"}]}'
+R=$(curl -sf -X POST "${BASE}/minimax/v1/chat/completions" \
     -H "Content-Type: application/json" \
     -d "${PAYLOAD}" 2>&1 || echo "CONNECTION_ERROR")
-check "minimax response" "${R}" "choices"
+check "minimax profile response" "${R}" "choices"
 
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"

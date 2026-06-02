@@ -65,3 +65,13 @@ def test_streaming_stripper_split_across_chunks():
     # Block split across two chunks
     assert stripper.strip_delta("<think>rea") == ""
     assert stripper.strip_delta("soning</think>answer") == "answer"
+
+
+def test_resolve_cli_command_uses_env(monkeypatch, tmp_path):
+    from reverso.proxy.utils import resolve_cli_command
+
+    fake = tmp_path / "fake-cli"
+    fake.write_text("#!/bin/sh\n")
+    monkeypatch.setenv("REVERSO_FAKE_BIN", str(fake))
+
+    assert resolve_cli_command("missing-cli", "REVERSO_FAKE_BIN") == str(fake)

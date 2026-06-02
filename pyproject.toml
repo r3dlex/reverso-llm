@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Local LLM gateway wrapping Claude Code and Codex CLIs with session persistence"
 requires-python = ">=3.11"
 dependencies = [
-    "litellm>=1.0",
+    "litellm[proxy]>=1.0",
     "httpx",
     "pyyaml",
     "uvicorn",

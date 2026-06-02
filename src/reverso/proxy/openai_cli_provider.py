@@ -2,7 +2,7 @@
 
 Phase 1: each request spawns one `codex exec` subprocess (stateless).
 Phase 2: routes through the session daemon over UDS when available, with
-stateless fallback on connection failure.
+stateless fallback when the daemon cannot complete the turn.
 
 Spike findings (spike-notes.md):
 - Invoke: `codex exec "prompt" --json -s workspace-write`
@@ -25,11 +25,12 @@ import logging
 import subprocess
 import time
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, AsyncIterator, Iterator
 
 import httpx
 import litellm
-from litellm import CustomLLM, ModelResponse
+from litellm import ModelResponse
+from litellm.llms.custom_llm import CustomLLM
 from litellm.types.utils import GenericStreamingChunk
 
 from reverso.proxy.utils import (
@@ -37,6 +38,7 @@ from reverso.proxy.utils import (
     daemon_available,
     daemon_sock_path,
     last_user_message,
+    resolve_cli_command,
     strip_think_blocks,
 )
 
@@ -44,6 +46,9 @@ logger = logging.getLogger(__name__)
 
 _MODEL_FLAG_MAP: dict[str, str] = {
     "gpt-4.1": "gpt-4.1",
+    "gpt-5.3-codex-spark": "gpt-5.3-codex-spark",
+    "gpt-5.4-mini": "gpt-5.4-mini",
+    "gpt-5.4": "gpt-5.4",
     "gpt-5.5": "gpt-5.5",
 }
 _DEFAULT_MODEL_FLAG = "gpt-4.1"
@@ -90,7 +95,7 @@ def _invoke_codex(prompt: str, model_flag: str, workspace: str | None = None, ti
     """Spawn `codex exec` and return its parsed output dict."""
     cwd = str(Path(workspace).expanduser().resolve()) if workspace else None
     cmd = [
-        "codex", "exec", prompt,
+        resolve_cli_command("codex", "REVERSO_CODEX_BIN"), "exec", prompt,
         "--json", "-s", "workspace-write",
         "--model", model_flag,
         "-c", "skip_git_repo_check=true",
@@ -134,8 +139,8 @@ def _run_turn(
                 resp.get("observations", []),
                 warnings,
             )
-        except (httpx.ConnectError, httpx.RemoteProtocolError) as exc:
-            logger.warning("Daemon unreachable (%s); falling back to stateless mode", exc)
+        except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout, httpx.RemoteProtocolError) as exc:
+            logger.warning("Daemon turn failed (%s); falling back to stateless mode", exc)
             warnings.append(f"daemon_unavailable: {exc}")
 
     result = _invoke_codex(prompt, model_flag, workspace=workspace, timeout=cli_timeout)
@@ -157,11 +162,12 @@ class OpenAICLIProvider(CustomLLM):
         api_key: str | None = None,
         logging_obj: Any = None,
         optional_params: dict | None = None,
-        acompletion: bool = False,
-        litellm_params: dict | None = None,
+        acompletion: Any = None,
+        litellm_params: Any = None,
         logger_fn: Any = None,
         headers: dict | None = None,
-        timeout: int | float | None = None,
+        timeout: Any = None,
+        client: Any = None,
         **kwargs: Any,
     ) -> ModelResponse:
         t_start = time.monotonic()
@@ -178,7 +184,7 @@ class OpenAICLIProvider(CustomLLM):
             x_gateway["warnings"] = warnings
 
         response = model_response or ModelResponse()
-        response.choices = [{"index": 0, "message": {"role": "assistant", "content": assistant_text}, "finish_reason": "stop"}]
+        setattr(response, "choices", [{"index": 0, "message": {"role": "assistant", "content": assistant_text}, "finish_reason": "stop"}])
         response.model = model
         response._hidden_params = {"x_gateway": x_gateway, "elapsed_seconds": time.monotonic() - t_start}
         return response
@@ -195,10 +201,12 @@ class OpenAICLIProvider(CustomLLM):
         api_key: str | None = None,
         logging_obj: Any = None,
         optional_params: dict | None = None,
-        litellm_params: dict | None = None,
+        acompletion: Any = None,
+        litellm_params: Any = None,
         logger_fn: Any = None,
         headers: dict | None = None,
-        timeout: int | float | None = None,
+        timeout: Any = None,
+        client: Any = None,
         **kwargs: Any,
     ) -> Iterator[GenericStreamingChunk]:
         """Yield response as a single chunk. True streaming deferred to Phase 3."""
@@ -211,6 +219,17 @@ class OpenAICLIProvider(CustomLLM):
 
         yield {"text": assistant_text, "is_finished": False, "finish_reason": "", "usage": None, "index": 0}
         yield {"text": "", "is_finished": True, "finish_reason": "stop", "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}, "index": 0}
+
+    async def acompletion(self, *args: Any, **kwargs: Any) -> ModelResponse:
+        import asyncio
+        return await asyncio.to_thread(self.completion, *args, **kwargs)
+
+    async def astreaming(self, *args: Any, **kwargs: Any) -> AsyncIterator[GenericStreamingChunk]:  # pyright: ignore[reportIncompatibleMethodOverride]
+        import asyncio
+
+        chunks = await asyncio.to_thread(lambda: list(self.streaming(*args, **kwargs)))
+        for chunk in chunks:
+            yield chunk
 
 
 openai_cli = OpenAICLIProvider()

@@ -13,7 +13,7 @@ build/
 .venv/
 # uv.lock is intentionally tracked for reproducibility
 
-# Environment / secrets – never commit
+# Environment / secrets - never commit
 .env
 .env.*
 *.key
@@ -40,3 +40,9 @@ htmlcov/
 
 # Spike notes are per-machine operational notes, not committed (see docs/04-mvp.md)
 docs/spike-notes.md
+
+# Local runtime / backup artifacts
+.omc/sessions/
+config/*.bak
+config/*.bak*
+config/*backup

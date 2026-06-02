@@ -50,7 +50,7 @@ for AGENT in "${AGENTS[@]}"; do
 
     echo "Written: ${DEST}"
 
-    # Unload if already loaded (ignore errors – agent may not be loaded yet)
+    # Unload if already loaded (ignore errors - agent may not be loaded yet)
     launchctl unload "${DEST}" 2>/dev/null || true
     launchctl load "${DEST}"
     echo "Loaded:  ${AGENT}"

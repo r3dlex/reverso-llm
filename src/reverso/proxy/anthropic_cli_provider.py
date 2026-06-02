@@ -2,7 +2,7 @@
 
 Phase 1: each request spawns one `claude -p` subprocess (stateless).
 Phase 2: routes through the session daemon over UDS when available, with
-stateless fallback on connection failure.
+stateless fallback when the daemon cannot complete the turn.
 
 Usage in litellm_config.yaml::
 
@@ -19,11 +19,12 @@ import logging
 import subprocess
 import time
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, AsyncIterator, Iterator
 
 import httpx
 import litellm
-from litellm import CustomLLM, ModelResponse
+from litellm import ModelResponse
+from litellm.llms.custom_llm import CustomLLM
 from litellm.types.utils import GenericStreamingChunk
 
 from reverso.proxy.utils import (
@@ -31,14 +32,17 @@ from reverso.proxy.utils import (
     daemon_available,
     daemon_sock_path,
     last_user_message,
+    resolve_cli_command,
     strip_think_blocks,
 )
+from reverso.proxy.profile_routing import CURRENT_PROFILE_WORKSPACE
 
 logger = logging.getLogger(__name__)
 
 _MODEL_FLAG_MAP: dict[str, str] = {
     "claude-sonnet-4-6": "claude-sonnet-4-6",
-    "claude-opus-4-7": "claude-opus-4-7",
+    "claude-opus-4-8": "claude-opus-4-8",
+    "claude-haiku-4-6": "claude-haiku-4-6",
 }
 _DEFAULT_MODEL_FLAG = "claude-sonnet-4-6"
 
@@ -52,16 +56,24 @@ def _make_x_gateway(session_id: str | None = None) -> dict[str, Any]:
     return {"session_id": session_id, "observations": [], "provider": "anthropic", "warnings": []}
 
 
-def _invoke_claude(prompt: str, model_flag: str, timeout: int = 300) -> dict[str, Any]:
+def _request_workspace(kwargs: dict[str, Any]) -> str | None:
+    x_gateway = kwargs.get("x_gateway")
+    if isinstance(x_gateway, dict) and isinstance(x_gateway.get("workspace"), str) and x_gateway["workspace"].strip():
+        return x_gateway["workspace"]
+    return CURRENT_PROFILE_WORKSPACE.get()
+
+
+def _invoke_claude(prompt: str, model_flag: str, workspace: str | None = None, timeout: int = 300) -> dict[str, Any]:
     """Spawn `claude -p` and return its parsed JSON result."""
+    cwd = str(Path(workspace).expanduser().resolve()) if workspace else None
     cmd = [
-        "claude", "-p", prompt,
+        resolve_cli_command("claude", "REVERSO_CLAUDE_BIN"), "-p", prompt,
         "--output-format", "json",
         "--model", model_flag,
         "--dangerously-skip-permissions",
     ]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, cwd=cwd)
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError(f"claude CLI timed out after {timeout}s") from exc
     except FileNotFoundError as exc:
@@ -102,11 +114,11 @@ def _run_turn(
                 resp.get("observations", []),
                 warnings,
             )
-        except (httpx.ConnectError, httpx.RemoteProtocolError) as exc:
-            logger.warning("Daemon unreachable (%s); falling back to stateless mode", exc)
+        except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout, httpx.RemoteProtocolError) as exc:
+            logger.warning("Daemon turn failed (%s); falling back to stateless mode", exc)
             warnings.append(f"daemon_unavailable: {exc}")
 
-    result = _invoke_claude(prompt, model_flag, timeout=cli_timeout)
+    result = _invoke_claude(prompt, model_flag, workspace=workspace, timeout=cli_timeout)
     return strip_think_blocks(result.get("result", "")), result.get("session_id"), [], warnings
 
 
@@ -125,18 +137,19 @@ class AnthropicCLIProvider(CustomLLM):
         api_key: str | None = None,
         logging_obj: Any = None,
         optional_params: dict | None = None,
-        acompletion: bool = False,
-        litellm_params: dict | None = None,
+        acompletion: Any = None,
+        litellm_params: Any = None,
         logger_fn: Any = None,
         headers: dict | None = None,
-        timeout: int | float | None = None,
+        timeout: Any = None,
+        client: Any = None,
         **kwargs: Any,
     ) -> ModelResponse:
         t_start = time.monotonic()
         prompt = last_user_message(messages)
         model_flag = _model_flag(model)
         cli_timeout = int(timeout) if isinstance(timeout, (int, float)) else 300
-        workspace = (kwargs.get("x_gateway") or {}).get("workspace") if isinstance(kwargs.get("x_gateway"), dict) else None
+        workspace = _request_workspace(kwargs)
 
         assistant_text, session_id, observations, warnings = _run_turn(prompt, model_flag, workspace, cli_timeout)
 
@@ -146,7 +159,7 @@ class AnthropicCLIProvider(CustomLLM):
             x_gateway["warnings"] = warnings
 
         response = model_response or ModelResponse()
-        response.choices = [{"index": 0, "message": {"role": "assistant", "content": assistant_text}, "finish_reason": "stop"}]
+        setattr(response, "choices", [{"index": 0, "message": {"role": "assistant", "content": assistant_text}, "finish_reason": "stop"}])
         response.model = model
         response._hidden_params = {"x_gateway": x_gateway, "elapsed_seconds": time.monotonic() - t_start}
         return response
@@ -163,22 +176,35 @@ class AnthropicCLIProvider(CustomLLM):
         api_key: str | None = None,
         logging_obj: Any = None,
         optional_params: dict | None = None,
-        litellm_params: dict | None = None,
+        acompletion: Any = None,
+        litellm_params: Any = None,
         logger_fn: Any = None,
         headers: dict | None = None,
-        timeout: int | float | None = None,
+        timeout: Any = None,
+        client: Any = None,
         **kwargs: Any,
     ) -> Iterator[GenericStreamingChunk]:
         """Yield response as a single chunk. True streaming deferred to Phase 3."""
         prompt = last_user_message(messages)
         model_flag = _model_flag(model)
         cli_timeout = int(timeout) if isinstance(timeout, (int, float)) else 300
-        workspace = (kwargs.get("x_gateway") or {}).get("workspace") if isinstance(kwargs.get("x_gateway"), dict) else None
+        workspace = _request_workspace(kwargs)
 
         assistant_text, _sid, _obs, _warn = _run_turn(prompt, model_flag, workspace, cli_timeout)
 
         yield {"text": assistant_text, "is_finished": False, "finish_reason": "", "usage": None, "index": 0}
         yield {"text": "", "is_finished": True, "finish_reason": "stop", "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}, "index": 0}
+
+    async def acompletion(self, *args: Any, **kwargs: Any) -> ModelResponse:
+        import asyncio
+        return await asyncio.to_thread(self.completion, *args, **kwargs)
+
+    async def astreaming(self, *args: Any, **kwargs: Any) -> AsyncIterator[GenericStreamingChunk]:  # pyright: ignore[reportIncompatibleMethodOverride]
+        import asyncio
+
+        chunks = await asyncio.to_thread(lambda: list(self.streaming(*args, **kwargs)))
+        for chunk in chunks:
+            yield chunk
 
 
 anthropic_cli = AnthropicCLIProvider()

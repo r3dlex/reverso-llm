@@ -2,7 +2,7 @@
 # Test the Anthropic CLI provider (claude-sonnet-4-6) through the gateway.
 #
 # Prerequisites:
-#   - reverso-proxy running on 127.0.0.1:4000
+#   - reverso-proxy running on 127.0.0.1:64946
 #   - claude CLI on PATH and authenticated
 #
 # Usage:
@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-BASE="http://127.0.0.1:4000"
+BASE="http://127.0.0.1:64946"
 
 echo "==> Testing claude-sonnet-4-6 via gateway..."
 PAYLOAD='{"model":"claude-sonnet-4-6","messages":[{"role":"user","content":"Say hello and identify yourself briefly."}]}'

@@ -26,6 +26,7 @@ from pydantic import BaseModel
 from reverso.daemon.parsers.claude_code import ClaudeCodeParser
 from reverso.daemon.parsers.codex_cli import CodexCLIParser
 from reverso.daemon.session_table import Session, SessionTable
+from reverso.proxy.utils import resolve_cli_command
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +130,7 @@ async def _run_claude_turn(
     """
     resolved = _resolve_workspace(workspace)
     cmd = [
-        "claude",
+        resolve_cli_command("claude", "REVERSO_CLAUDE_BIN"),
         "-p", user_message,
         "--output-format", "stream-json",
         "--verbose",
@@ -198,7 +199,7 @@ async def _run_codex_turn(
     if session.cli_session_id:
         # Resume an existing thread.
         cmd = [
-            "codex",
+            resolve_cli_command("codex", "REVERSO_CODEX_BIN"),
             "exec", "resume", session.cli_session_id, user_message,
             "--json",
             "-s", "workspace-write",
@@ -207,7 +208,7 @@ async def _run_codex_turn(
         ]
     else:
         cmd = [
-            "codex",
+            resolve_cli_command("codex", "REVERSO_CODEX_BIN"),
             "exec", user_message,
             "--json",
             "-s", "workspace-write",

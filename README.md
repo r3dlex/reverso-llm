@@ -6,7 +6,7 @@ last_updated: 2026-05-27
 
 # Reverso
 
-A subscription-backed local LLM gateway. Runs on `127.0.0.1:4000`. Wraps Claude Code CLI and Codex CLI as subprocess workers and HTTP-forwards DeepSeek and MiniMax. Exposes standard OpenAI and Anthropic HTTP APIs on the loopback interface.
+A subscription-backed local LLM gateway. Runs on `127.0.0.1:64946`. Wraps Claude Code CLI and Codex CLI as subprocess workers and HTTP-forwards DeepSeek and MiniMax. Exposes standard OpenAI and Anthropic HTTP APIs on the loopback interface.
 
 **Personal use only.** Single user, single machine. Not for sharing or resale.
 
@@ -49,30 +49,49 @@ This expands the plist template with your local paths, creates `~/Library/Logs/r
 
 To verify it is running:
 ```bash
-curl http://127.0.0.1:4000/health/live
+curl http://127.0.0.1:64946/health/live
 ```
 
 ### 3. Configure Codex CLI to use Reverso
 
-Add the following to `~/.codex/config.toml`:
+Add the provider endpoints to `~/.codex/config.toml`:
 
 ```toml
-[model_providers.reverso_gateway]
-name = "Reverso gateway"
-base_url = "http://127.0.0.1:4000/v1"
+[model_providers.reverso_minimax]
+name = "Reverso MiniMax profile"
+base_url = "http://127.0.0.1:64946/minimax/v1"
 wire_api = "responses"
 
-[profiles.reverso-claude]
-model_provider = "reverso_gateway"
-model = "claude-sonnet-4-6"
-model_context_window = 120000
-model_auto_compact_token_limit = 90000
+[model_providers.reverso_deepseek]
+name = "Reverso DeepSeek profile"
+base_url = "http://127.0.0.1:64946/deepseek/v1"
+wire_api = "responses"
 
-[profiles.reverso-deepseek]
-model_provider = "reverso_gateway"
-model = "deepseek-reasoner"
-model_context_window = 64000
-model_auto_compact_token_limit = 48000
+[model_providers.reverso_claude]
+name = "Reverso Claude profile"
+base_url = "http://127.0.0.1:64946/claude/v1"
+wire_api = "responses"
+```
+
+Codex 0.134+ profile files can then keep GPT-level model names. Example `~/.codex/minimax.config.toml`:
+
+```toml
+model_provider = "reverso_minimax"
+model = "gpt-5.5"
+```
+
+Example `~/.codex/deepseek.config.toml`:
+
+```toml
+model_provider = "reverso_deepseek"
+model = "gpt-5.5"
+```
+
+Example `~/.codex/claude.config.toml`:
+
+```toml
+model_provider = "reverso_claude"
+model = "gpt-5.5"
 ```
 
 ---
@@ -82,28 +101,28 @@ model_auto_compact_token_limit = 48000
 ### Test DeepSeek (HTTP-forwarded, no CLI wrapper):
 
 ```bash
-curl -s http://127.0.0.1:4000/v1/chat/completions \
+curl -s http://127.0.0.1:64946/deepseek/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model": "deepseek-chat", "messages": [{"role": "user", "content": "say hello"}]}' \
+  -d '{"model": "gpt-5.5", "messages": [{"role": "user", "content": "say hello"}]}' \
   | python3 -c "import json,sys; r=json.load(sys.stdin); print(r['choices'][0]['message']['content'][:100])"
 ```
 
 ### Test Claude (subscription-backed, CLI wrapper):
 
 ```bash
-curl -s http://127.0.0.1:4000/v1/messages \
+curl -s http://127.0.0.1:64946/claude/v1/messages \
   -H "Content-Type: application/json" \
   -H "x-api-key: placeholder" \
-  -d '{"model": "claude-sonnet-4-6", "max_tokens": 64, "messages": [{"role": "user", "content": "say hello"}]}' \
+  -d '{"model": "gpt-5.5", "max_tokens": 64, "messages": [{"role": "user", "content": "say hello"}]}' \
   | python3 -c "import json,sys; r=json.load(sys.stdin); print(r['content'][0]['text'][:100])"
 ```
 
 ### Test MiniMax (HTTP-forwarded):
 
 ```bash
-curl -s http://127.0.0.1:4000/v1/chat/completions \
+curl -s http://127.0.0.1:64946/minimax/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model": "minimax-fast", "messages": [{"role": "user", "content": "say hello"}]}' \
+  -d '{"model": "gpt-5.5", "messages": [{"role": "user", "content": "say hello"}]}' \
   | python3 -c "import json,sys; r=json.load(sys.stdin); print(r['choices'][0]['message']['content'][:100])"
 ```
 
@@ -126,7 +145,7 @@ launchctl unload ~/Library/LaunchAgents/com.andres.codex-litellm-minimax.plist
 launchctl unload ~/Library/LaunchAgents/com.andres.codex-litellm-deepseek.plist
 ```
 
-Update `~/.codex/config.toml`: point your active profiles at `reverso_gateway` instead of `minimax_gateway` / `deepseek_gateway`.
+Update `~/.codex/config.toml`: point your active profiles at `reverso_minimax`, `reverso_deepseek`, or `reverso_claude` instead of the legacy `minimax_gateway` / `deepseek_gateway` providers.
 
 **Do not remove the old plist files until Reverso has been running stably for at least a week.**
 
@@ -144,7 +163,7 @@ Update `~/.codex/config.toml`: point your active profiles at `reverso_gateway` i
 
 Two processes, both managed by launchd:
 
-1. **LiteLLM proxy** (`com.user.reverso-proxy`) - inbound HTTP on `127.0.0.1:4000`, routing, body translation, streaming.
+1. **LiteLLM proxy** (`com.user.reverso-proxy`) - inbound HTTP on `127.0.0.1:64946`, routing, body translation, streaming.
 2. **Session daemon** (`com.user.reverso-daemon`) - owns wrapped CLI subprocesses, session table, idle detection. *(Phase 2, not yet active)*
 
 See `docs/03-architecture.md` for the full component diagram.

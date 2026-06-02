@@ -6,7 +6,7 @@ They are skipped in CI unless REVERSO_INTEGRATION=1 is set.
 Run manually:
     REVERSO_INTEGRATION=1 pytest tests/integration/test_session_continuity.py -v
 
-Gateway must be listening on http://127.0.0.1:4000 and the session daemon
+Gateway must be listening on http://127.0.0.1:64946 and the session daemon
 must have its UDS at ~/Library/Application Support/reverso/daemon.sock.
 """
 from __future__ import annotations
@@ -24,7 +24,7 @@ pytestmark = [
     ),
 ]
 
-GATEWAY_URL = os.environ.get("REVERSO_GATEWAY_URL", "http://127.0.0.1:4000")
+GATEWAY_URL = os.environ.get("REVERSO_GATEWAY_URL", "http://127.0.0.1:64946")
 # A workspace directory that exists on the developer machine.
 TEST_WORKSPACE = os.environ.get("REVERSO_TEST_WORKSPACE", os.path.expanduser("~/tmp/reverso-test"))
 
