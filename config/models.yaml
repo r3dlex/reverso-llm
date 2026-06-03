@@ -62,7 +62,7 @@ model_list:
       model: custom/claude-haiku-4-6
       custom_llm_provider: anthropic_cli
     model_info:
-      description: "Claude Haiku 4.6 via Claude Code CLI for very simple profile aliases"
+      description: "Claude Haiku 4.6 via Claude Code CLI direct alias"
       provider_kind: cli-wrapped
       cli: claude
       aliases:

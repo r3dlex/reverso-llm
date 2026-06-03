@@ -34,9 +34,31 @@ def test_resolve_claude_profile_models_by_tier() -> None:
     assert resolve_profile_model("claude", "custom/gpt-5.5") == "claude-opus-4-8"
     assert resolve_profile_model("claude", "custom/gpt-5.4") == "claude-opus-4-8"
     assert resolve_profile_model("claude", "gpt-5.4-mini") == "claude-sonnet-4-6"
-    assert resolve_profile_model("claude", "gpt-5.3-codex-spark") == "claude-haiku-4-6"
+    assert resolve_profile_model("claude", "gpt-5.3-codex-spark") == "claude-sonnet-4-6"
+    assert resolve_profile_model("claude", "gpt-5.3-codex-spark") != "claude-haiku-4-6"
     assert resolve_profile_model("claude", "gpt-5.5") != "claude-opus-4-7"
     assert resolve_profile_model("claude", "gpt-5.4") != "claude-opus-4-7"
+
+
+@pytest.mark.parametrize(
+    ("profile", "model", "expected"),
+    [
+        ("minimax", "gpt-5.5", "MiniMax-M3"),
+        ("minimax", "gpt-5.4", "MiniMax-M3"),
+        ("minimax", "gpt-5.4-mini", "MiniMax-M3"),
+        ("minimax", "gpt-5.3-codex-spark", "MiniMax-M3"),
+        ("deepseek", "gpt-5.5", "deepseek-v4-pro"),
+        ("deepseek", "gpt-5.4", "deepseek-v4-pro"),
+        ("deepseek", "gpt-5.4-mini", "deepseek-v4-flash"),
+        ("deepseek", "gpt-5.3-codex-spark", "deepseek-v4-flash"),
+        ("claude", "gpt-5.5", "claude-opus-4-8"),
+        ("claude", "gpt-5.4", "claude-opus-4-8"),
+        ("claude", "gpt-5.4-mini", "claude-sonnet-4-6"),
+        ("claude", "gpt-5.3-codex-spark", "claude-sonnet-4-6"),
+    ],
+)
+def test_requested_provider_profile_mapping_matrix(profile: str, model: str, expected: str) -> None:
+    assert resolve_profile_model(profile, model) == expected
 
 
 def test_split_profile_path() -> None:
@@ -418,3 +440,31 @@ def test_claude_profile_active_configs_do_not_expose_opus_4_7() -> None:
 
     assert "claude-opus-4-8" in active_model_values
     assert "claude-opus-4-7" not in active_model_values
+
+
+def test_direct_codex_route_keeps_gpt_model_names() -> None:
+    captured = {}
+
+    async def app(scope, receive, send):
+        captured["path"] = scope["path"]
+        message = await receive()
+        captured["body"] = json.loads(message["body"])
+
+    middleware = ProfileRoutingMiddleware(app)
+
+    async def receive():
+        return {
+            "type": "http.request",
+            "body": b'{"model":"gpt-5.5","input":"hello"}',
+            "more_body": False,
+        }
+
+    async def send(_message):
+        return None
+
+    asyncio.run(middleware({"type": "http", "method": "POST", "path": "/v1/responses"}, receive, send))
+
+    assert captured == {
+        "path": "/v1/responses",
+        "body": {"model": "gpt-5.5", "input": "hello"},
+    }

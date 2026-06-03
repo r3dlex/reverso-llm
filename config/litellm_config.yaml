@@ -4,7 +4,7 @@
 # Codex profile paths are supported by reverso.proxy.profile_routing:
 #   /minimax/v1  maps GPT-level names to MiniMax-M3
 #   /deepseek/v1 maps GPT-level names to DeepSeek-V4-Pro or DeepSeek-V4-Flash
-#   /claude/v1   maps GPT-level names to Claude Opus, Sonnet, or Haiku
+#   /claude/v1   maps GPT-level names to Claude Opus or Claude Sonnet
 
 # Drop Codex/Responses-style extras that OpenAI-compatible upstreams reject.
 _codex_drop_params: &codex_drop_params

@@ -15,7 +15,6 @@ Scope = dict[str, Any]
 Send = Callable[[dict[str, Any]], Awaitable[None]]
 
 FRONTIER_GPT_MODELS = frozenset({"gpt-5.5", "gpt-5.4"})
-VERY_SIMPLE_GPT_MODELS = frozenset({"gpt-5.3-codex-spark"})
 KNOWN_GPT_MODELS = frozenset({
     "gpt-5.5",
     "gpt-5.4",
@@ -46,8 +45,6 @@ def resolve_profile_model(profile: str, model: str) -> str:
     if profile == "claude":
         if normalized in FRONTIER_GPT_MODELS:
             return "claude-opus-4-8"
-        if normalized in VERY_SIMPLE_GPT_MODELS:
-            return "claude-haiku-4-6"
         if normalized in KNOWN_GPT_MODELS:
             return "claude-sonnet-4-6"
         return normalized

@@ -94,6 +94,17 @@ model_provider = "reverso_claude"
 model = "gpt-5.5"
 ```
 
+Provider profile routing keeps Codex metadata stable by letting Codex see GPT model names while Reverso rewrites requests after they enter a provider profile path. Do not put provider model ids in Codex profile files. Use `model = "gpt-5.5"`, `model = "gpt-5.4"`, `model = "gpt-5.4-mini"`, or `model = "gpt-5.3-codex-spark"` in the profile file and select the provider with `model_provider`.
+
+| Codex profile model | MiniMax profile | DeepSeek profile | Claude profile | Direct Codex /v1 |
+|---|---|---|---|---|
+| `gpt-5.5` | `MiniMax-M3` | `deepseek-v4-pro` | `claude-opus-4-8` | `gpt-5.5` |
+| `gpt-5.4` | `MiniMax-M3` | `deepseek-v4-pro` | `claude-opus-4-8` | `gpt-5.4` |
+| `gpt-5.4-mini` | `MiniMax-M3` | `deepseek-v4-flash` | `claude-sonnet-4-6` | `gpt-5.4-mini` |
+| `gpt-5.3-codex-spark` | `MiniMax-M3` | `deepseek-v4-flash` | `claude-sonnet-4-6` | `gpt-5.3-codex-spark` |
+
+Use Direct Codex /v1 only for GPT-backed Codex routing. It is intentionally not a provider profile and Reverso must not rewrite GPT model names there.
+
 ---
 
 ## Smoke tests
@@ -145,7 +156,7 @@ launchctl unload ~/Library/LaunchAgents/com.andres.codex-litellm-minimax.plist
 launchctl unload ~/Library/LaunchAgents/com.andres.codex-litellm-deepseek.plist
 ```
 
-Update `~/.codex/config.toml`: point your active profiles at `reverso_minimax`, `reverso_deepseek`, or `reverso_claude` instead of the legacy `minimax_gateway` / `deepseek_gateway` providers.
+Update `~/.codex/config.toml`: point your active profiles at `reverso_minimax`, `reverso_deepseek`, or `reverso_claude` instead of the legacy `minimax_gateway` / `deepseek_gateway` providers. Keep profile `model` values as GPT names so Codex loads its own model metadata and Reverso handles provider model ids internally.
 
 **Do not remove the old plist files until Reverso has been running stably for at least a week.**
 
