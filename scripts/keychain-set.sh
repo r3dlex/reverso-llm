@@ -3,7 +3,6 @@
 #
 # Usage:
 #   scripts/keychain-set.sh DEEPSEEK_API_KEY   <key_value>
-#   scripts/keychain-set.sh MINIMAX_API_KEY    <key_value>
 #
 # The service name written to Keychain is "reverso/<KEY_NAME>".
 # reverso-proxy reads these at startup via `security find-generic-password`.
@@ -12,7 +11,7 @@ set -euo pipefail
 
 if [[ $# -ne 2 ]]; then
     echo "Usage: $0 <KEY_NAME> <key_value>" >&2
-    echo "  KEY_NAME: DEEPSEEK_API_KEY | MINIMAX_API_KEY" >&2
+    echo "  KEY_NAME: DEEPSEEK_API_KEY" >&2
     exit 1
 fi
 

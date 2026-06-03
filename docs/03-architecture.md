@@ -1,3 +1,8 @@
+---
+type: architecture
+project: reverso
+---
+
 # Architecture Sketch
 ## Reverso Gateway
 
@@ -56,7 +61,7 @@ The two processes communicate over a Unix-domain socket at `~/Library/applicatio
 | `models.yaml` loader | Parsed once at startup, expanded into LiteLLM's `model_list` |
 | `anthropic_cli_provider.py` | LiteLLM custom provider; forwards Anthropic-backend requests to the session daemon |
 | `openai_cli_provider.py` | LiteLLM custom provider; forwards OpenAI-backend requests to the session daemon |
-| HTTP-forwarded providers | Standard LiteLLM behavior for DeepSeek and MiniMax (no custom code) |
+| HTTP-forwarded provider | Standard LiteLLM behavior for DeepSeek (no custom code) |
 | `x_gateway` injector | Middleware that wraps responses to add the `x_gateway` envelope |
 
 ### 2.2 Session daemon (Process 2)
@@ -90,7 +95,7 @@ The two processes communicate over a Unix-domain socket at `~/Library/applicatio
 10. The custom provider constructs an OpenAI Chat Completions response shape with the assistant text and adds the `x_gateway` envelope (session_id, observations, etc.).
 11. LiteLLM returns the response to the client.
 
-### 3.2 HTTP-forwarded request (DeepSeek/MiniMax)
+### 3.2 HTTP-forwarded request (DeepSeek)
 
 1. Client sends `POST /v1/chat/completions` with `model: "deepseek-reasoner"`.
 2. LiteLLM looks up the model, sees it routes to the native LiteLLM DeepSeek backend.
@@ -173,8 +178,7 @@ This mapping is data-driven, defined per-provider in a `tool_mappings.yaml` file
 Stored in macOS Keychain under the namespace `reverso/<KEY_NAME>`:
 
 - `DEEPSEEK_API_KEY`
-- `MINIMAX_API_KEY`
-- (No Anthropic or OpenAI keys are needed; the wrapped CLIs authenticate via their own ChatGPT/Claude subscription tokens.)
+- No Anthropic or OpenAI keys are needed; the wrapped CLIs authenticate via their own ChatGPT/Claude subscription tokens.
 
 Both processes (LiteLLM and the session daemon) read Keychain on startup via the `security` CLI, populate env vars, and pass them to upstream HTTP calls.
 

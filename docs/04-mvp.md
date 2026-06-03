@@ -1,3 +1,8 @@
+---
+type: mvp-plan
+project: reverso
+---
+
 # MVP Scope and Phased Implementation Plan
 ## Reverso Gateway
 
@@ -36,20 +41,20 @@
 
 ## Phase 1: Skeleton (one weekend)
 
-**Goal.** A working gateway that handles HTTP-forwarded providers (DeepSeek, MiniMax) and does *stateless* wrapped-CLI provider calls (no sessions, one subprocess per request). End-to-end usable for single-turn requests.
+**Goal.** A working gateway that handles HTTP-forwarded provider (DeepSeek) and does *stateless* wrapped-CLI provider calls (no sessions, one subprocess per request). End-to-end usable for single-turn requests.
 
 **In scope.**
 
 - Repository skeleton per Architecture Section 7.2.
-- `models.yaml` with all eight planned entries.
+- `models.yaml` with the planned Reverso entries.
 - `config.yaml` with default values.
 - `litellm_config.yaml` that references `models.yaml`.
 - LiteLLM custom providers (`anthropic_cli_provider.py`, `openai_cli_provider.py`) that spawn the wrapped CLI per-request, capture output, return final assistant text. No session reuse, no observation parsing.
-- The two HTTP-forwarded providers (DeepSeek, MiniMax) configured natively in LiteLLM, no custom code.
+- The HTTP-forwarded provider DeepSeek configured natively in LiteLLM, no custom code.
 - The `x_gateway` envelope on responses (with `observations: []` and `session_id: null` for now).
 - launchd LaunchAgents (one for LiteLLM only; daemon comes in Phase 2).
 - Keychain integration for secrets.
-- Codex CLI profiles configured for all four providers.
+- Codex CLI profiles configured for Reverso providers plus direct MiniMax.
 - Claude Code `ANTHROPIC_BASE_URL` configured.
 - Smoke tests for both inbound surfaces.
 - `README.md` with quick-start instructions.
@@ -148,7 +153,7 @@
 - Log rotation via macOS `newsyslog.d` config.
 - `GET /v1/models` endpoint returning capability metadata from the registry.
 - `gitleaks` pre-commit hook installed via `scripts/install-hooks.sh`.
-- Integration tests that exercise both inbound surfaces with all four backends.
+- Integration tests that exercise both inbound surfaces with all Reverso backends.
 - Documentation: `docs/codex-cli-setup.md`, `docs/claude-code-setup.md`, troubleshooting guide.
 - README polished for public-repo discoverability.
 
@@ -199,11 +204,11 @@ All three scenarios are real possibilities. Phase 0 exists precisely to find out
 | Phase | Effort | Outcome |
 |---|---|---|
 | Phase 0 | 1 evening | Open questions resolved |
-| Phase 1 | 1 weekend | Stateless single-turn gateway, all four providers |
-| Phase 2 | 1–2 weekends | Sessions and multi-turn |
-| Phase 3 | 1–2 weekends | Tool-use observations |
+| Phase 1 | 1 weekend | Stateless single-turn gateway, all Reverso providers plus direct MiniMax where applicable |
+| Phase 2 | 1-2 weekends | Sessions and multi-turn |
+| Phase 3 | 1-2 weekends | Tool-use observations |
 | Phase 4 | Ongoing | Hardening, docs, polish |
-| **Total to v1-full** | **4–6 weekends + ongoing** | |
+| **Total to v1-full** | **4-6 weekends + ongoing** | |
 
 This matches the BRD's stated estimate. The estimate has substantial uncertainty because Phase 0's findings can shift Phase 2 and Phase 3 effort materially.
 

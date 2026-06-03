@@ -1,3 +1,8 @@
+---
+type: brd
+project: reverso
+---
+
 # Business Requirements Document
 ## Reverso: Subscription-Backed Local LLM Gateway
 
@@ -21,7 +26,7 @@ A growing number of useful tools (third-party agents, IDE plugins, custom script
 
 Reverso removes that cost. It is a small piece of software that runs on the developer's own workstation, exposes the standard OpenAI and Anthropic API surfaces on the loopback network interface, and serves those API requests by driving the official CLIs as background subprocesses. The subscriptions become the inference budget for any tool that speaks the standard APIs. No new metered accounts. No vendor terms of service complications, because the gateway invokes the legitimately licensed CLIs the developer paid for, on the developer's own machine, for the developer's personal use.
 
-In addition to the subscription-backed providers, the gateway also routes to DeepSeek and MiniMax over their standard HTTP APIs, providing a single unified endpoint for all of the developer's AI tools.
+In addition to the subscription-backed providers, the gateway also routes to DeepSeek over its standard HTTP API, providing a single unified endpoint for all of the developer's AI tools.
 
 The project is built strictly for personal use on a single trusted machine. It is not designed to be shared, resold, or exposed to the network. Sharing it would void the personal-use assumption that makes the design legally sound. The repository is public so that other developers can adapt it for their own personal use, with their own subscriptions.
 
@@ -47,7 +52,7 @@ The gateway is one small process per workstation. It survives reboots via the op
 
 - **The developer (Andre).** Owner, primary user, operator.
 - **Anthropic and OpenAI.** Upstream subscription vendors. The developer's relationship with them is governed by their consumer terms, which permit personal use of the CLI tools and prohibit account sharing or resale.
-- **DeepSeek and MiniMax.** Pay-per-use API vendors. Standard API usage, unchanged from how the developer uses them today.
+- **DeepSeek.** Pay-per-use API vendor. Standard API usage, unchanged from how the developer uses them today.
 - **Future readers of the public GitHub repository.** Developers who find the repo, understand the personal-use framing, and adapt it for their own personal use under their own subscriptions.
 
 ---
@@ -79,11 +84,10 @@ If this project is still running in 2027, the design assumptions that mattered m
 ### 5.1 Primary
 
 - Expose OpenAI Chat Completions (`POST /v1/chat/completions`) and Anthropic Messages (`POST /v1/messages`) APIs on the loopback interface, port 64946.
-- Route requests to one of four providers based on the `model` field:
+- Route Reverso requests to one of three providers based on the `model` field. MiniMax is configured directly in Codex and is outside Reverso routing:
   - **Anthropic** via wrapped Claude Code subprocess.
   - **OpenAI** via wrapped Codex CLI subprocess.
   - **DeepSeek** via direct HTTP forward.
-  - **MiniMax** via direct HTTP forward.
 - Maintain long-lived subprocess sessions for the two wrapped-CLI providers, keyed by (machine, workspace, provider).
 - Intercept tool-use events from the wrapped CLIs and surface them in an `x_gateway.observations` extension field on every response.
 - Bind to 127.0.0.1 only. Reject any attempt to bind to a non-loopback interface.
@@ -115,7 +119,7 @@ The following decisions are locked. Detailed justifications appear in the PRD; t
 | 4 | No max age, no max turn count | Accept infinite session lifetime as a feature. |
 | 5 | Gateway restart is full reset, documented as expected | No persistence layer. Simplest honest answer. |
 | 6 | Tool-use interception: IV-pragmatic | CLIs execute their own tools; gateway reports observations after the fact. |
-| 7 | DeepSeek and MiniMax are HTTP backends only | No subprocess management for these. |
+| 7 | DeepSeek is an HTTP backend only | No subprocess management for it. |
 | 8 | `x_gateway` extension envelope always present | Consistent across all providers, including HTTP-forwarded. |
 | 9 | Bind to 127.0.0.1 is the only security boundary | Loopback is trusted. Personal Mac assumption. |
 | 10 | Detect conflicting CLI processes and warn | No enforcement, just visibility. |
@@ -164,7 +168,7 @@ Twelve weeks after first install:
 - Claude Code and Codex CLI remain distributed as subscription-authenticated CLIs with some form of non-interactive invocation mode (`-p`, `exec`, or equivalent).
 - Both CLIs continue to be runnable on Apple Silicon.
 - Both CLIs continue to produce output that is parseable enough to extract assistant text and tool-use events. The exact format is a known liability; see Risks.
-- DeepSeek and MiniMax continue to offer OpenAI-compatible chat endpoints.
+- DeepSeek continues to offer OpenAI-compatible chat endpoints.
 - The developer's two subscriptions remain in good standing.
 
 ## 11. Open Questions
@@ -186,7 +190,7 @@ Phase 0 of the MVP plan resolves these. If any answer turns out to be "no, this 
 - **Loopback interface.** 127.0.0.1; the only interface Reverso binds to.
 - **Wrapped CLI.** Claude Code or Codex CLI, run as a subprocess under the gateway.
 - **Inbound surface.** One of the two HTTP endpoints the gateway exposes: OpenAI Chat Completions (`/v1/chat/completions`) or Anthropic Messages (`/v1/messages`).
-- **Provider.** A logical inference source. Four: Anthropic, OpenAI, DeepSeek, MiniMax.
+- **Provider.** A logical inference source. Three through Reverso: Anthropic, OpenAI, DeepSeek. MiniMax is direct Codex-only.
 - **Session.** A long-lived conversation state, materialized as a wrapped-CLI subprocess, keyed by (machine, workspace, provider).
 - **Workspace.** A directory path treated as the project root.
 - **Turn.** One request-response cycle within a session.

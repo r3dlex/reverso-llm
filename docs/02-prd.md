@@ -1,3 +1,8 @@
+---
+type: prd
+project: reverso
+---
+
 # Product Requirements Document
 ## Reverso Gateway
 
@@ -13,7 +18,7 @@
 
 ## 1. Product Summary
 
-Reverso is a single-process gateway that runs on a developer workstation, exposes the OpenAI and Anthropic standard HTTP APIs on the loopback interface, and serves those requests by either driving wrapped vendor CLIs as subprocesses (Anthropic and OpenAI providers) or forwarding to upstream HTTP APIs (DeepSeek, MiniMax). The gateway preserves multi-turn conversation state per workspace, intercepts tool-use events from wrapped CLIs, and reports them to inbound clients via an extension envelope.
+Reverso is a single-process gateway that runs on a developer workstation, exposes the OpenAI and Anthropic standard HTTP APIs on the loopback interface, and serves those requests by either driving wrapped vendor CLIs as subprocesses (Anthropic and OpenAI providers) or forwarding to upstream HTTP APIs (DeepSeek). The gateway preserves multi-turn conversation state per workspace, intercepts tool-use events from wrapped CLIs, and reports them to inbound clients via an extension envelope.
 
 ## 2. Users and Use Cases
 
@@ -95,17 +100,17 @@ The developer runs a tool that sends 20 sequential prompts to Reverso over an ho
 
 **F-CLI-9.** Before spawning a new session, the gateway scans for other wrapped-CLI processes whose working directory matches the requested workspace. If found, the gateway logs a structured warning to its log file. The gateway does not refuse the request.
 
-### 3.4 HTTP-forwarded providers (DeepSeek, MiniMax)
+### 3.4 HTTP-forwarded provider (DeepSeek)
 
-**F-HTTP-1.** Requests routed to DeepSeek or MiniMax are forwarded to the upstream API specified in the registry entry, with the API key injected from the macOS Keychain.
+**F-HTTP-1.** Requests routed to DeepSeek are forwarded to the upstream API specified in the registry entry, with the API key injected from the macOS Keychain.
 
 **F-HTTP-2.** Body translation is applied if the inbound surface differs from the upstream API shape (e.g., Anthropic-shape inbound to translate to OpenAI shape for DeepSeek's OpenAI-compatible endpoint).
 
 **F-HTTP-3.** Streaming responses are streamed through to the inbound client.
 
-**F-HTTP-4.** HTTP-forwarded providers do not have sessions. Each request is independent.
+**F-HTTP-4.** The HTTP-forwarded provider does not have sessions. Each request is independent.
 
-**F-HTTP-5.** The `x_gateway` envelope on responses from HTTP-forwarded providers has `session_id: null` and `observations: []`.
+**F-HTTP-5.** The `x_gateway` envelope on responses from the HTTP-forwarded provider has `session_id: null` and `observations: []`.
 
 ### 3.5 Tool-use interception (IV-pragmatic)
 
@@ -130,7 +135,7 @@ The developer runs a tool that sends 20 sequential prompts to Reverso over an ho
   "session_id": string | null,
   "machine": string,
   "workspace": string,
-  "provider": "anthropic" | "openai" | "deepseek" | "minimax",
+  "provider": "anthropic" | "openai" | "deepseek",
   "model_inbound": string,
   "model_backend": string,
   "observations": [Observation],
@@ -175,7 +180,7 @@ The developer runs a tool that sends 20 sequential prompts to Reverso over an ho
   notes: "Default Claude model for general work"
 ```
 
-**F-REG-4.** Backend kinds: `anthropic-cli`, `openai-cli`, `deepseek-http`, `minimax-http`.
+**F-REG-4.** Backend kinds: `anthropic-cli`, `openai-cli`, `deepseek-http`.
 
 **F-REG-5.** HTTP backend entries additionally specify `api_base` (URL) and `api_key_keychain_name` (the Keychain service identifier for the API key).
 
@@ -228,7 +233,7 @@ The developer runs a tool that sends 20 sequential prompts to Reverso over an ho
 
 **NFR-5. Reliability.** The gateway must not crash on malformed inbound requests, on wrapped-CLI exit during a turn, or on upstream HTTP errors. All such conditions surface as structured error responses.
 
-**NFR-6. Security.** No secrets are present in any file under version control. The gateway accepts no connection from any address other than 127.0.0.1. No outbound network traffic is initiated by the gateway except DeepSeek and MiniMax API calls; all Anthropic and OpenAI traffic is initiated by the wrapped CLI subprocesses.
+**NFR-6. Security.** No secrets are present in any file under version control. The gateway accepts no connection from any address other than 127.0.0.1. No outbound network traffic is initiated by the gateway except DeepSeek API calls; all Anthropic and OpenAI traffic is initiated by the wrapped CLI subprocesses.
 
 **NFR-7. Observability.** All session lifecycle events and all inbound request/response pairs are logged.
 

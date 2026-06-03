@@ -5,7 +5,7 @@ LiteLLM calls this after each successful completion; we attach the x_gateway
 dict (session_id, observations, provider, warnings) to the response object's
 _hidden_params so downstream clients can read it from the JSON body.
 
-For HTTP-forwarded models (DeepSeek, MiniMax) the custom providers do not
+For HTTP-forwarded DeepSeek models the custom providers do not
 set _hidden_params["x_gateway"], so we synthesise a minimal envelope here
 using the model name to infer the provider string.
 """
@@ -31,7 +31,6 @@ _MODEL_TO_PROVIDER: dict[str, str] = {
     "deepseek-v4-flash": "deepseek",
     "deepseek-reasoner": "deepseek",
     "deepseek-chat": "deepseek",
-    "MiniMax-M3": "minimax",
 }
 
 
@@ -51,8 +50,6 @@ def _infer_provider(model: str) -> str:
         return "openai"
     if lowered.startswith("deepseek-"):
         return "deepseek"
-    if lowered.startswith("minimax-"):
-        return "minimax"
     return "unknown"
 
 

@@ -91,7 +91,7 @@ def test_error_envelope_post_body_receive_waits_for_client_event() -> None:
         if calls == 1:
             return {
                 "type": "http.request",
-                "body": b'{"model":"MiniMax-M3"}',
+                "body": b'{"model":"deepseek-chat"}',
                 "more_body": False,
             }
         await release.wait()
@@ -100,10 +100,10 @@ def test_error_envelope_post_body_receive_waits_for_client_event() -> None:
     async def send(message):
         sent.append(message)
 
-    asyncio.run(middleware({"type": "http", "path": "/minimax/v1/chat/completions"}, receive, send))
+    asyncio.run(middleware({"type": "http", "path": "/deepseek/v1/chat/completions"}, receive, send))
 
     assert captured == {
-        "first": {"model": "MiniMax-M3"},
+        "first": {"model": "deepseek-chat"},
         "second": {"type": "http.disconnect"},
     }
     assert sent[1]["body"] == b'{"ok":true}'
@@ -162,7 +162,7 @@ def test_error_envelope_infers_direct_deepseek_model_from_request_body() -> None
     assert body["x_gateway"]["provider"] == "deepseek"
 
 
-def test_error_envelope_infers_direct_minimax_model_from_request_body() -> None:
+def test_error_envelope_no_longer_infers_direct_minimax_model_from_request_body() -> None:
     async def app(scope, receive, send):
         await receive()
         await send({
@@ -188,4 +188,4 @@ def test_error_envelope_infers_direct_minimax_model_from_request_body() -> None:
     asyncio.run(middleware({"type": "http", "path": "/v1/chat/completions"}, receive, send))
 
     body = json.loads(sent[1]["body"])
-    assert body["x_gateway"]["provider"] == "minimax"
+    assert body["x_gateway"]["provider"] == "unknown"

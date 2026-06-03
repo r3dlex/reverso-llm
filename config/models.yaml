@@ -1,9 +1,10 @@
 # Reverso model registry in LiteLLM model_list format.
 #
 # Reverso supports provider-profile paths for Codex:
-#   /minimax/v1, /deepseek/v1, /claude/v1
+#   /deepseek/v1, /claude/v1
 # Those paths let Codex profiles keep GPT-level model names while Reverso
-# rewrites them to concrete provider model ids internally.
+# rewrites them to concrete provider model ids internally. MiniMax is direct
+# Codex-only and is not routed through Reverso.
 
 model_list:
   # Anthropic / Claude Code (cli-wrapped)
@@ -158,14 +159,4 @@ model_list:
       api_key: "os.environ/DEEPSEEK_API_KEY"
     model_info:
       description: "DeepSeek chat legacy direct alias"
-      provider_kind: http-forwarded
-
-  # MiniMax (http-forwarded)
-  - model_name: MiniMax-M3
-    litellm_params:
-      model: custom_openai/MiniMax-M3
-      api_base: https://api.minimax.io/v1
-      api_key: "os.environ/MINIMAX_API_KEY"
-    model_info:
-      description: "MiniMax-M3 for MiniMax profile routing"
       provider_kind: http-forwarded

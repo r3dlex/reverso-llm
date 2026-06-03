@@ -13,7 +13,7 @@ Read this before touching anything in this repo.
 
 ## What this project is
 
-Reverso is a subscription-backed local LLM gateway. It runs on `127.0.0.1:64946`, wraps Claude Code CLI and Codex CLI as session-managed subprocess workers, HTTP-forwards DeepSeek and MiniMax, and exposes standard OpenAI and Anthropic HTTP APIs to any local tool that wants them.
+Reverso is a subscription-backed local LLM gateway. It runs on `127.0.0.1:64946`, wraps Claude Code CLI and Codex CLI as session-managed subprocess workers, HTTP-forwards DeepSeek, and exposes standard OpenAI and Anthropic HTTP APIs to any local tool that wants them. MiniMax is direct Codex-only and is not routed through Reverso.
 
 **Why it exists:** The developer pays flat-rate for Claude Max and ChatGPT Pro subscriptions. Those subscriptions include CLI tools with unlimited use at the margin. Reverso lets any HTTP-speaking tool (agents, IDE plugins, scripts) consume those subscriptions instead of requiring separate metered API accounts.
 
@@ -48,7 +48,7 @@ launchd
   |     |-- anthropic_cli_provider.py   (custom LiteLLM provider)
   |     |-- openai_cli_provider.py      (custom LiteLLM provider)
   |     |-- x_gateway middleware        (response envelope)
-  |     |-- HTTP-forwarded: DeepSeek, MiniMax (standard LiteLLM, no custom code)
+  |     |-- HTTP-forwarded: DeepSeek (standard LiteLLM, no custom code)
   |
   |-- Session daemon process (UDS only, no TCP)
         |-- Internal HTTP API over ~/Library/Application Support/reverso/daemon.sock
@@ -82,7 +82,7 @@ reverso/
       middleware/
         x_gateway.py       # Response envelope injector
   config/
-    models.yaml            # Model registry (all 8 entries)
+    models.yaml            # Model registry for Reverso-supported models
     config.yaml            # Runtime config (port, timeouts, paths)
     litellm_config.yaml    # LiteLLM-specific config
     tool_mappings.yaml     # Inbound-tool to CLI-tool mappings
@@ -124,7 +124,7 @@ See `docs/04-mvp.md` for full exit criteria per phase.
 | Phase | Goal | Key deliverable |
 |---|---|---|
 | Phase 0 (spike) | Answer 6 open questions about CLI non-interactive behavior | `docs/spike-notes.md` + go/no-go decision |
-| Phase 1 (skeleton) | Stateless single-turn gateway, all 4 providers | Working gateway, smoke tests, launchd agent for LiteLLM |
+| Phase 1 (skeleton) | Stateless single-turn gateway, Reverso providers | Working gateway, smoke tests, launchd agent for LiteLLM |
 | Phase 2 (sessions) | Multi-turn sessions, session daemon | Session daemon, second launchd agent |
 | Phase 3 (interception) | Tool-use observation parsing | `x_gateway.observations` populated |
 | Phase 4 (hardening) | Production reliability | Timeouts, log rotation, polished README |
@@ -146,7 +146,7 @@ Do not skip Phase 0 deliverables. Architecture details in Phase 1+ depend on Pha
 Reverso replaces the existing `codex-litellm-responses-shim` setup. The following files are the source of ported logic:
 
 - `~/.local/bin/codex-litellm-responses-shim` - normalization functions to port: `normalize_function_call_arguments`, `sanitize_input_tool_sequence`, `compact_input_items`, `strip_think_blocks`, `normalize_responses_payload`
-- `~/.config/litellm/minimax-codex.yaml` - MiniMax model aliases to absorb into `config/models.yaml`
+- `~/.config/litellm/minimax-codex.yaml` - legacy MiniMax shim config; do not absorb into Reverso because MiniMax is direct Codex-only
 - `~/.config/litellm/deepseek-codex.yaml` - DeepSeek model aliases to absorb
 - `~/.codex/config.toml` - update `model_providers` and `profiles` to point at `http://127.0.0.1:64946`
 
@@ -171,4 +171,4 @@ The existing LaunchAgents (`com.andres.codex-litellm-minimax.plist`, `com.andres
 
 <!-- MANUAL: Add manually curated notes below this line. They are preserved on regeneration. -->
 
-- Codex profile files should use GPT model names. Provider slugs are resolved by `/minimax/v1`, `/deepseek/v1`, and `/claude/v1` profile routing so Codex keeps its own model metadata.
+- Reverso Codex profile files should use GPT model names. Provider slugs are resolved by `/deepseek/v1` and `/claude/v1` profile routing so Codex keeps its own model metadata. MiniMax is direct Codex-only and should use `model = "MiniMax-M3"` with `model_provider = "minimax"`.
