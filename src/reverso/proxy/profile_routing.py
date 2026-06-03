@@ -91,6 +91,8 @@ class ProfileRoutingMiddleware:
         new_scope = dict(scope)
         new_scope["path"] = path_info.rewritten_path
         new_scope["raw_path"] = path_info.rewritten_path.encode("utf-8")
+        new_scope["reverso_profile"] = path_info.profile
+        new_scope["reverso_split_visible_deltas"] = True
 
         body = await _read_body(receive)
         if body is None:

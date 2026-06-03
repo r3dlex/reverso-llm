@@ -10,8 +10,8 @@ from reverso.proxy import anthropic_cli_provider, openai_cli_provider
 async def test_anthropic_astreaming_is_async_iterator(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         anthropic_cli_provider,
-        "_run_turn",
-        lambda prompt, model_flag, workspace, timeout: ("OK", "sid", [], []),
+        "_run_turn_stream",
+        lambda prompt, model_flag, workspace, timeout: iter(["O", "K"]),
     )
 
     stream = anthropic_cli_provider.anthropic_cli.astreaming(
@@ -20,7 +20,7 @@ async def test_anthropic_astreaming_is_async_iterator(monkeypatch: pytest.Monkey
     )
 
     chunks = [chunk async for chunk in stream]
-    assert chunks[0]["text"] == "OK"
+    assert [chunk["text"] for chunk in chunks[:-1]] == ["O", "K"]
     assert chunks[-1]["is_finished"] is True
 
 
@@ -28,8 +28,8 @@ async def test_anthropic_astreaming_is_async_iterator(monkeypatch: pytest.Monkey
 async def test_openai_astreaming_is_async_iterator(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         openai_cli_provider,
-        "_run_turn",
-        lambda prompt, model_flag, workspace, timeout: ("OK", "sid", [], []),
+        "_run_turn_stream",
+        lambda prompt, model_flag, workspace, timeout: iter(["O", "K"]),
     )
 
     stream = openai_cli_provider.openai_cli.astreaming(
@@ -38,7 +38,50 @@ async def test_openai_astreaming_is_async_iterator(monkeypatch: pytest.MonkeyPat
     )
 
     chunks = [chunk async for chunk in stream]
-    assert chunks[0]["text"] == "OK"
+    assert [chunk["text"] for chunk in chunks[:-1]] == ["O", "K"]
+    assert chunks[-1]["is_finished"] is True
+
+
+def test_anthropic_streaming_uses_daemon_deltas_and_strips_think(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(anthropic_cli_provider, "daemon_available", lambda sock: True)
+    monkeypatch.setattr(
+        anthropic_cli_provider,
+        "stream_daemon",
+        lambda *args, **kwargs: iter([
+            {"type": "delta", "delta": "<think>hidden"},
+            {"type": "delta", "delta": "</think>Hello"},
+            {"type": "delta", "delta": " there"},
+            {"type": "completed", "assistant_text": "Hello there", "session_id": "sid", "observations": []},
+        ]),
+    )
+
+    chunks = list(anthropic_cli_provider.anthropic_cli.streaming(
+        model="custom/claude-sonnet-4-6",
+        messages=[{"role": "user", "content": "hello"}],
+    ))
+
+    assert [chunk["text"] for chunk in chunks[:-1]] == ["Hello", " there"]
+    assert chunks[-1]["is_finished"] is True
+
+
+def test_openai_streaming_uses_daemon_deltas(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(openai_cli_provider, "daemon_available", lambda sock: True)
+    monkeypatch.setattr(
+        openai_cli_provider,
+        "stream_daemon",
+        lambda *args, **kwargs: iter([
+            {"type": "delta", "delta": "one"},
+            {"type": "delta", "delta": " two"},
+            {"type": "completed", "assistant_text": "one two", "session_id": "sid", "observations": []},
+        ]),
+    )
+
+    chunks = list(openai_cli_provider.openai_cli.streaming(
+        model="custom/gpt-5.5",
+        messages=[{"role": "user", "content": "hello"}],
+    ))
+
+    assert [chunk["text"] for chunk in chunks[:-1]] == ["one", " two"]
     assert chunks[-1]["is_finished"] is True
 
 

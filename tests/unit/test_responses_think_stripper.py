@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 
-from reverso.middleware.responses_think_stripper import ResponsesThinkStripperMiddleware
+from reverso.middleware.responses_think_stripper import _strip_sse_payload, ResponsesThinkStripperMiddleware
 
 
 def _body(sent: list[dict]) -> bytes:
@@ -402,3 +402,34 @@ def test_does_not_modify_non_responses_sse_streams() -> None:
     asyncio.run(middleware({"type": "http", "path": "/v1/chat/completions"}, receive, send))
 
     assert b"<think>visible here</think>" in _body(sent)
+
+
+def test_responses_think_stripper_splits_large_visible_delta() -> None:
+    payload = {
+        "type": "response.output_text.delta",
+        "item_id": "item_1",
+        "output_index": 0,
+        "content_index": 0,
+        "delta": "abcdefghijklmnopqrstuvwxyz" * 4,
+    }
+
+    rewritten = _strip_sse_payload(payload, {}, {}, set(), set(), split_visible_deltas=True)
+
+    deltas = [event["delta"] for event in rewritten if event.get("type") == "response.output_text.delta"]
+    assert len(deltas) >= 2
+    assert "".join(deltas) == payload["delta"]
+
+
+def test_responses_think_stripper_does_not_split_large_delta_without_profile_flag() -> None:
+    payload = {
+        "type": "response.output_text.delta",
+        "item_id": "item_1",
+        "output_index": 0,
+        "content_index": 0,
+        "delta": "abcdefghijklmnopqrstuvwxyz" * 4,
+    }
+
+    rewritten = _strip_sse_payload(payload, {}, {}, set(), set())
+
+    deltas = [event["delta"] for event in rewritten if event.get("type") == "response.output_text.delta"]
+    assert deltas == [payload["delta"]]

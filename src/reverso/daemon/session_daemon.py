@@ -21,9 +21,10 @@ from pathlib import Path
 from typing import Any, AsyncIterator
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from reverso.daemon.parsers.claude_code import ClaudeCodeParser
+from reverso.daemon.parsers.claude_code import ClaudeCodeParser, _obs_type_for_tool
 from reverso.daemon.parsers.codex_cli import CodexCLIParser
 from reverso.daemon.session_table import Session, SessionTable
 from reverso.proxy.utils import resolve_cli_command
@@ -262,6 +263,202 @@ async def _run_codex_turn(
     return assistant_text, observations, thread_id
 
 
+
+async def _stream_claude_turn(
+    session: Session,
+    user_message: str,
+    model: str,
+    workspace: str,
+    timeout: float = 300,
+) -> AsyncIterator[dict[str, Any]]:
+    """Execute one Claude Code turn and yield text delta events before completion."""
+    resolved = _resolve_workspace(workspace)
+    cmd = [
+        resolve_cli_command("claude", "REVERSO_CLAUDE_BIN"),
+        "-p", user_message,
+        "--output-format", "stream-json",
+        "--verbose",
+        "--model", model,
+        "--dangerously-skip-permissions",
+    ]
+    if session.cli_session_id:
+        cmd.extend(["--resume", session.cli_session_id])
+
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        cwd=resolved,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    assert proc.stdout is not None
+
+    pending: dict[str, dict[str, Any]] = {}
+    observations: list[dict[str, Any]] = []
+    assistant_parts: list[str] = []
+    session_id: str | None = None
+    seen_text_by_index: dict[int, str] = {}
+
+    async def emit_text(value: str) -> AsyncIterator[dict[str, Any]]:
+        if value:
+            assistant_parts.append(value)
+            yield {"type": "delta", "delta": value}
+
+    try:
+        async with asyncio.timeout(timeout):
+            async for raw_line in _aiter_lines(proc.stdout):
+                line = raw_line.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
+                event_type = event.get("type")
+                if event_type == "assistant":
+                    if not session_id:
+                        session_id = event.get("session_id")
+                    msg = event.get("message", {})
+                    content_list = msg.get("content", [])
+                    if not isinstance(content_list, list):
+                        continue
+                    for index, content_item in enumerate(content_list):
+                        if not isinstance(content_item, dict):
+                            continue
+                        item_type = content_item.get("type")
+                        if item_type == "text":
+                            text = str(content_item.get("text", ""))
+                            previous = seen_text_by_index.get(index, "")
+                            if text.startswith(previous):
+                                delta = text[len(previous):]
+                            elif text != previous:
+                                delta = text
+                            else:
+                                delta = ""
+                            seen_text_by_index[index] = text
+                            async for item in emit_text(delta):
+                                yield item
+                        elif item_type == "tool_use":
+                            tool_id = content_item.get("id", "")
+                            pending[tool_id] = {
+                                "tool_name": content_item.get("name", ""),
+                                "args": content_item.get("input", {}),
+                                "timestamp": datetime.now(timezone.utc).isoformat(),
+                            }
+                elif event_type == "user":
+                    msg = event.get("message", {})
+                    content_list = msg.get("content", [])
+                    if not isinstance(content_list, list):
+                        continue
+                    for content_item in content_list:
+                        if not isinstance(content_item, dict) or content_item.get("type") != "tool_result":
+                            continue
+                        tool_use_id = content_item.get("tool_use_id", "")
+                        raw_content = content_item.get("content", "")
+                        if isinstance(raw_content, list):
+                            result_text = "".join(
+                                block.get("text", "") if isinstance(block, dict) else str(block)
+                                for block in raw_content
+                            )
+                        else:
+                            result_text = str(raw_content) if raw_content else ""
+                        pending_item = pending.pop(tool_use_id, {"tool_name": "", "args": {}, "timestamp": datetime.now(timezone.utc).isoformat()})
+                        tool_name = str(pending_item["tool_name"])
+                        observations.append({
+                            "type": _obs_type_for_tool(tool_name),
+                            "tool_name": tool_name,
+                            "args": pending_item["args"],
+                            "is_error": bool(content_item.get("is_error", False)),
+                            "result_summary": result_text[:200],
+                            "timestamp": pending_item["timestamp"],
+                        })
+                elif event_type == "result":
+                    if not session_id:
+                        session_id = event.get("session_id")
+                    final_text = str(event.get("result", ""))
+                    current_text = "".join(assistant_parts)
+                    if final_text and not current_text:
+                        async for item in emit_text(final_text):
+                            yield item
+                    elif final_text.startswith(current_text) and len(final_text) > len(current_text):
+                        async for item in emit_text(final_text[len(current_text):]):
+                            yield item
+
+        await proc.wait()
+        if proc.returncode != 0:
+            stderr_bytes = await proc.stderr.read() if proc.stderr else b""
+            stderr_text = stderr_bytes.decode("utf-8", errors="replace")[:500]
+            raise RuntimeError(f"claude exited {proc.returncode}; stderr: {stderr_text}")
+    except TimeoutError as exc:
+        proc.kill()
+        await proc.wait()
+        raise RuntimeError(f"Claude turn timed out after {timeout}s") from exc
+    finally:
+        if proc.returncode is None:
+            proc.kill()
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=5)
+            except asyncio.TimeoutError:
+                pass
+
+    yield {
+        "type": "completed",
+        "assistant_text": "".join(assistant_parts),
+        "observations": observations,
+        "session_id": session_id,
+    }
+
+
+async def _stream_turn_events(req: TurnRequest) -> AsyncIterator[str]:
+    """Yield one turn as newline-delimited JSON for proxy-side streaming."""
+    workspace = _resolve_workspace(req.workspace)
+    provider = req.provider.lower()
+    model = req.model
+
+    if provider not in ("anthropic", "openai"):
+        raise HTTPException(status_code=400, detail=f"Unknown provider: {provider!r}")
+
+    if provider == "anthropic":
+        async def spawn_fn(ws: str, prov: str) -> asyncio.subprocess.Process:
+            return await _spawn_claude(ws, model)
+    else:
+        async def spawn_fn(ws: str, prov: str) -> asyncio.subprocess.Process:
+            return await _spawn_codex(ws, model)
+
+    session = await _session_table.get_or_create(workspace, provider, spawn_fn)
+
+    async with session.lock:
+        session.last_request_at = datetime.now(timezone.utc)
+        try:
+            if provider == "anthropic":
+                async for event in _stream_claude_turn(session, req.user_message, model, workspace):
+                    if event.get("type") == "completed":
+                        session.turn_count += 1
+                        if event.get("session_id"):
+                            session.cli_session_id = str(event["session_id"])
+                        if not event.get("session_id"):
+                            machine, ws, prov = session.key
+                            event["session_id"] = f"{prov}:{machine}:{ws}"
+                    yield json.dumps(event, separators=(",", ":")) + "\n"
+            else:
+                assistant_text, observations, cli_id = await _run_codex_turn(session, req.user_message, model, workspace)
+                if assistant_text:
+                    yield json.dumps({"type": "delta", "delta": assistant_text}, separators=(",", ":")) + "\n"
+                session.turn_count += 1
+                if cli_id:
+                    session.cli_session_id = cli_id
+                machine, ws, prov = session.key
+                yield json.dumps({
+                    "type": "completed",
+                    "assistant_text": assistant_text,
+                    "observations": observations,
+                    "session_id": cli_id or f"{prov}:{machine}:{ws}",
+                }, separators=(",", ":")) + "\n"
+        except RuntimeError as exc:
+            await _session_table.remove(session.key)
+            logger.error("Streaming turn failed for session %s: %s", session.key, exc)
+            yield json.dumps({"type": "error", "error": str(exc)}, separators=(",", ":")) + "\n"
+
 # ---------------------------------------------------------------------------
 # FastAPI endpoints
 # ---------------------------------------------------------------------------
@@ -270,6 +467,14 @@ async def _run_codex_turn(
 async def health() -> dict[str, str]:
     """Liveness probe."""
     return {"status": "ok", "sessions": str(len(_session_table))}
+
+
+@app.post("/session/turn/stream")
+async def session_turn_stream(req: TurnRequest) -> StreamingResponse:
+    """Execute one turn and stream newline-delimited JSON events."""
+    if req.provider.lower() not in ("anthropic", "openai"):
+        raise HTTPException(status_code=400, detail=f"Unknown provider: {req.provider!r}")
+    return StreamingResponse(_stream_turn_events(req), media_type="application/x-ndjson")
 
 
 @app.post("/session/turn", response_model=TurnResponse)

@@ -5,7 +5,7 @@ import os
 import re
 import shutil
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 import httpx
 import yaml
@@ -56,6 +56,41 @@ def call_daemon(
         resp.raise_for_status()
         return resp.json()
 
+
+
+def stream_daemon(
+    sock_path: str,
+    workspace: str,
+    provider: str,
+    user_message: str,
+    model: str,
+    timeout: float = 300,
+) -> Iterator[dict[str, Any]]:
+    """POST /session/turn/stream on the daemon over UDS and yield NDJSON events."""
+    transport = httpx.HTTPTransport(uds=sock_path)
+    with httpx.Client(transport=transport, base_url="http://daemon", timeout=timeout) as client:
+        with client.stream(
+            "POST",
+            "/session/turn/stream",
+            json={"workspace": workspace, "provider": provider, "user_message": user_message, "model": model},
+        ) as resp:
+            resp.raise_for_status()
+            for line in resp.iter_lines():
+                if not line:
+                    continue
+                yield json_loads(line)
+
+
+def json_loads(value: str | bytes) -> dict[str, Any]:
+    """Parse an NDJSON line from daemon streaming output."""
+    import json
+
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", errors="replace")
+    parsed = json.loads(value)
+    if not isinstance(parsed, dict):
+        raise ValueError("daemon stream event is not an object")
+    return parsed
 
 def strip_think_blocks(value: str) -> str:
     """Remove <think>...</think> blocks from assistant text."""

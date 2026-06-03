@@ -121,6 +121,8 @@ model_list:
       model: custom_openai/MiniMax-M3
       api_base: https://api.minimax.io/v1
       api_key: "os.environ/MINIMAX_API_KEY"
+      extra_body:
+        reasoning_split: true
       additional_drop_params: *codex_drop_params
 
 

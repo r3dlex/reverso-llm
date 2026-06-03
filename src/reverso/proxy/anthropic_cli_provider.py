@@ -29,11 +29,13 @@ from litellm.types.utils import GenericStreamingChunk
 
 from reverso.proxy.utils import (
     call_daemon,
+    stream_daemon,
     daemon_available,
     daemon_sock_path,
     last_user_message,
     resolve_cli_command,
     strip_think_blocks,
+    StreamingThinkStripper,
 )
 from reverso.proxy.profile_routing import CURRENT_PROFILE_WORKSPACE
 
@@ -122,6 +124,38 @@ def _run_turn(
     return strip_think_blocks(result.get("result", "")), result.get("session_id"), [], warnings
 
 
+def _run_turn_stream(
+    prompt: str,
+    model_flag: str,
+    workspace: str | None,
+    cli_timeout: int,
+) -> Iterator[str]:
+    """Yield visible assistant text deltas via daemon streaming when available."""
+    sock = daemon_sock_path()
+    if daemon_available(sock):
+        effective_ws = workspace or str(Path.home())
+        stripper = StreamingThinkStripper()
+        try:
+            for event in stream_daemon(sock, effective_ws, "anthropic", prompt, model_flag, float(cli_timeout)):
+                event_type = event.get("type")
+                if event_type == "delta":
+                    delta = stripper.strip_delta(str(event.get("delta", "")))
+                    if delta:
+                        yield delta
+                elif event_type == "error":
+                    raise RuntimeError(str(event.get("error", "daemon stream error")))
+            tail = stripper.strip_delta("")
+            if tail:
+                yield tail
+            return
+        except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout, httpx.RemoteProtocolError):
+            logger.warning("Daemon stream failed; falling back to aggregate turn", exc_info=True)
+
+    assistant_text, _sid, _obs, _warn = _run_turn(prompt, model_flag, workspace, cli_timeout)
+    if assistant_text:
+        yield assistant_text
+
+
 class AnthropicCLIProvider(CustomLLM):
     """LiteLLM custom provider backed by the Claude Code CLI."""
 
@@ -184,15 +218,14 @@ class AnthropicCLIProvider(CustomLLM):
         client: Any = None,
         **kwargs: Any,
     ) -> Iterator[GenericStreamingChunk]:
-        """Yield response as a single chunk. True streaming deferred to Phase 3."""
+        """Yield assistant text chunks as they arrive from the daemon stream."""
         prompt = last_user_message(messages)
         model_flag = _model_flag(model)
         cli_timeout = int(timeout) if isinstance(timeout, (int, float)) else 300
         workspace = _request_workspace(kwargs)
 
-        assistant_text, _sid, _obs, _warn = _run_turn(prompt, model_flag, workspace, cli_timeout)
-
-        yield {"text": assistant_text, "is_finished": False, "finish_reason": "", "usage": None, "index": 0}
+        for delta in _run_turn_stream(prompt, model_flag, workspace, cli_timeout):
+            yield {"text": delta, "is_finished": False, "finish_reason": "", "usage": None, "index": 0}
         yield {"text": "", "is_finished": True, "finish_reason": "stop", "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}, "index": 0}
 
     async def acompletion(self, *args: Any, **kwargs: Any) -> ModelResponse:
@@ -201,10 +234,28 @@ class AnthropicCLIProvider(CustomLLM):
 
     async def astreaming(self, *args: Any, **kwargs: Any) -> AsyncIterator[GenericStreamingChunk]:  # pyright: ignore[reportIncompatibleMethodOverride]
         import asyncio
+        import threading
 
-        chunks = await asyncio.to_thread(lambda: list(self.streaming(*args, **kwargs)))
-        for chunk in chunks:
-            yield chunk
+        queue: asyncio.Queue[GenericStreamingChunk | BaseException | None] = asyncio.Queue()
+        loop = asyncio.get_running_loop()
+
+        def produce() -> None:
+            try:
+                for chunk in self.streaming(*args, **kwargs):
+                    loop.call_soon_threadsafe(queue.put_nowait, chunk)
+            except BaseException as exc:
+                loop.call_soon_threadsafe(queue.put_nowait, exc)
+            finally:
+                loop.call_soon_threadsafe(queue.put_nowait, None)
+
+        threading.Thread(target=produce, daemon=True).start()
+        while True:
+            item = await queue.get()
+            if item is None:
+                break
+            if isinstance(item, BaseException):
+                raise item
+            yield item
 
 
 anthropic_cli = AnthropicCLIProvider()
