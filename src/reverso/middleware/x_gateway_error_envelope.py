@@ -14,7 +14,6 @@ Send = Callable[[dict[str, Any]], Awaitable[None]]
 _PROFILE_TO_PROVIDER = {
     "claude": "anthropic",
     "deepseek": "deepseek",
-    "minimax": "minimax",
 }
 
 

@@ -243,11 +243,11 @@ def test_profile_responses_stack_rewrites_model_and_inserts_completed() -> None:
     async def send(message):
         sent.append(message)
 
-    asyncio.run(stack({"type": "http", "method": "POST", "path": "/minimax/v1/responses"}, receive, send))
+    asyncio.run(stack({"type": "http", "method": "POST", "path": "/deepseek/v1/responses"}, receive, send))
 
     assert captured == {
         "path": "/v1/responses",
-        "body": {"model": "MiniMax-M3", "input": "hello", "stream": True},
+        "body": {"model": "deepseek-v4-pro", "input": "hello", "stream": True},
     }
     payloads = _sse_payloads(sent)
     assert payloads[-1]["type"] == "response.completed"

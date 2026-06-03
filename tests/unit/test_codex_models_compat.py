@@ -28,7 +28,7 @@ def test_codex_models_compat_adds_models_field() -> None:
     async def send(message):
         sent.append(message)
 
-    asyncio.run(CodexModelsCompatMiddleware(app)({"type": "http", "path": "/minimax/v1/models", "query_string": b"client_version=0.136.0"}, receive, send))
+    asyncio.run(CodexModelsCompatMiddleware(app)({"type": "http", "path": "/deepseek/v1/models", "query_string": b"client_version=0.136.0"}, receive, send))
 
     payload = json.loads(sent[1]["body"])
     assert payload["data"][0]["id"] == "gpt-5.5"

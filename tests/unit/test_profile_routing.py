@@ -15,10 +15,9 @@ from reverso.proxy.profile_routing import (
 )
 
 
-def test_resolve_minimax_profile_models_to_m3() -> None:
-    assert resolve_profile_model("minimax", "gpt-5.5") == "MiniMax-M3"
-    assert resolve_profile_model("minimax", "gpt-5.4-mini") == "MiniMax-M3"
-    assert resolve_profile_model("minimax", "gpt-5.3-codex-spark") == "MiniMax-M3"
+def test_minimax_is_not_a_reverso_profile() -> None:
+    assert split_profile_path("/minimax/v1/responses") is None
+    assert resolve_profile_model("minimax", "gpt-5.5") == "gpt-5.5"
 
 
 def test_resolve_deepseek_profile_models_by_tier() -> None:
@@ -43,10 +42,6 @@ def test_resolve_claude_profile_models_by_tier() -> None:
 @pytest.mark.parametrize(
     ("profile", "model", "expected"),
     [
-        ("minimax", "gpt-5.5", "MiniMax-M3"),
-        ("minimax", "gpt-5.4", "MiniMax-M3"),
-        ("minimax", "gpt-5.4-mini", "MiniMax-M3"),
-        ("minimax", "gpt-5.3-codex-spark", "MiniMax-M3"),
         ("deepseek", "gpt-5.5", "deepseek-v4-pro"),
         ("deepseek", "gpt-5.4", "deepseek-v4-pro"),
         ("deepseek", "gpt-5.4-mini", "deepseek-v4-flash"),
@@ -234,14 +229,14 @@ def test_non_claude_profiles_do_not_forward_x_gateway_to_custom_openai() -> None
         {
             "type": "http",
             "method": "POST",
-            "path": "/minimax/v1/responses",
+            "path": "/deepseek/v1/responses",
             "headers": [(b"x-codex-turn-metadata", json.dumps(metadata).encode("utf-8"))],
         },
         receive,
         send,
     ))
 
-    assert captured["body"] == {"model": "MiniMax-M3", "input": "hello"}
+    assert captured["body"] == {"model": "deepseek-v4-pro", "input": "hello"}
     assert captured["context_workspace"] == "/tmp/explicit"
     assert CURRENT_PROFILE_WORKSPACE.get() is None
 
@@ -320,7 +315,6 @@ def test_profile_middleware_post_body_receive_waits_for_client_event() -> None:
 @pytest.mark.parametrize(
     ("path", "expected_model"),
     [
-        ("/minimax/v1/chat/completions", "MiniMax-M3"),
         ("/deepseek/v1/chat/completions", "deepseek-v4-pro"),
         ("/claude/v1/chat/completions", "claude-opus-4-8"),
     ],
@@ -396,7 +390,7 @@ def test_profile_middleware_replays_disconnect_without_looping() -> None:
     async def send(_message):
         return None
 
-    asyncio.run(middleware({"type": "http", "method": "POST", "path": "/minimax/v1/responses"}, receive, send))
+    asyncio.run(middleware({"type": "http", "method": "POST", "path": "/deepseek/v1/responses"}, receive, send))
 
     assert calls == 1
     assert captured == {
@@ -417,7 +411,7 @@ def test_profile_routing_targets_exist_in_configs() -> None:
     registry_names = {entry["model_name"] for entry in registry_config["model_list"]}
     routed_models = {
         resolve_profile_model(profile, model)
-        for profile in ("minimax", "deepseek", "claude")
+        for profile in ("deepseek", "claude")
         for model in ("gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex-spark", "gpt-4.1")
     }
 

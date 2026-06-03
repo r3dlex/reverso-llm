@@ -23,7 +23,7 @@ KNOWN_GPT_MODELS = frozenset({
     "gpt-4.1",
 })
 
-PROVIDER_PREFIXES = frozenset({"minimax", "deepseek", "claude"})
+PROVIDER_PREFIXES = frozenset({"deepseek", "claude"})
 CURRENT_PROFILE_WORKSPACE: ContextVar[str | None] = ContextVar("CURRENT_PROFILE_WORKSPACE", default=None)
 
 
@@ -34,8 +34,6 @@ def _normalise_model(model: str) -> str:
 def resolve_profile_model(profile: str, model: str) -> str:
     """Resolve a Codex GPT-level model name for a Reverso provider profile."""
     normalized = _normalise_model(model)
-    if profile == "minimax":
-        return "MiniMax-M3" if normalized in KNOWN_GPT_MODELS else normalized
     if profile == "deepseek":
         if normalized in FRONTIER_GPT_MODELS:
             return "deepseek-v4-pro"
@@ -73,6 +71,7 @@ class ProfileRoutingMiddleware:
 
     Example: POST /deepseek/v1/responses with {"model":"gpt-5.5"}
     becomes POST /v1/responses with {"model":"deepseek-v4-pro"}.
+    MiniMax is not a Reverso profile; Codex should call MiniMax directly.
     """
 
     def __init__(self, app: Callable[[Scope, Receive, Send], Awaitable[None]]):

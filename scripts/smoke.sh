@@ -46,13 +46,6 @@ R=$(curl -sf -X POST "${BASE}/deepseek/v1/chat/completions" \
     -d "${PAYLOAD}" 2>&1 || echo "CONNECTION_ERROR")
 check "deepseek profile response" "${R}" "choices"
 
-echo "==> Smoke: minimax profile GPT-level alias"
-PAYLOAD='{"model":"gpt-5.5","messages":[{"role":"user","content":"Reply with exactly: SMOKE_OK"}]}'
-R=$(curl -sf -X POST "${BASE}/minimax/v1/chat/completions" \
-    -H "Content-Type: application/json" \
-    -d "${PAYLOAD}" 2>&1 || echo "CONNECTION_ERROR")
-check "minimax profile response" "${R}" "choices"
-
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [[ ${FAIL} -eq 0 ]]

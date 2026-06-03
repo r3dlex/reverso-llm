@@ -21,23 +21,21 @@ def test_litellm_uses_programmatic_extensions() -> None:
     assert "success_callback" not in cfg["litellm_settings"]
 
 
-def test_minimax_litellm_config_exposes_only_m3_model_group() -> None:
+def test_minimax_is_not_in_reverso_litellm_config() -> None:
     models = _model_map(CONFIG_PATH)
 
-    assert models["MiniMax-M3"]["litellm_params"]["model"] == "custom_openai/MiniMax-M3"
-    assert models["MiniMax-M3"]["litellm_params"]["additional_drop_params"]
+    assert "MiniMax-M3" not in models
     assert "MiniMax-M2.7-highspeed" not in models
     assert "MiniMax-M2.7" not in models
     assert "minimax-fast" not in models
     assert "minimax" not in models
 
 
-def test_minimax_registry_has_no_legacy_aliases() -> None:
+def test_minimax_is_not_in_reverso_registry() -> None:
     models = _model_map(MODELS_PATH)
 
-    assert models["MiniMax-M3"]["litellm_params"]["model"] == "custom_openai/MiniMax-M3"
+    assert "MiniMax-M3" not in models
     assert "MiniMax-M2.7-highspeed" not in models
     assert "MiniMax-M2.7" not in models
     assert "minimax-fast" not in models
     assert "minimax" not in models
-    assert "aliases" not in models["MiniMax-M3"].get("model_info", {})

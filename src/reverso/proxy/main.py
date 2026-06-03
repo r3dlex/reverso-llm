@@ -23,7 +23,6 @@ def _resolve_config_path() -> Path:
 _CONFIG_PATH = _resolve_config_path()
 _KEYCHAIN_KEYS = {
     "DEEPSEEK_API_KEY": "reverso/DEEPSEEK_API_KEY",
-    "MINIMAX_API_KEY": "reverso/MINIMAX_API_KEY",
 }
 
 

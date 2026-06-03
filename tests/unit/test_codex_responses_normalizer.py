@@ -93,6 +93,6 @@ def test_normalizer_middleware_applies_before_profile_routing() -> None:
     async def send(message):
         return None
 
-    asyncio.run(middleware({"type": "http", "method": "POST", "path": "/minimax/v1/responses"}, receive, send))
+    asyncio.run(middleware({"type": "http", "method": "POST", "path": "/deepseek/v1/responses"}, receive, send))
 
-    assert captured == {"path": "/minimax/v1/responses", "body": {"model": "gpt-5.5", "input": "hello"}}
+    assert captured == {"path": "/deepseek/v1/responses", "body": {"model": "gpt-5.5", "input": "hello"}}
