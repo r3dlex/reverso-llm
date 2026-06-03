@@ -170,3 +170,5 @@ The existing LaunchAgents (`com.andres.codex-litellm-minimax.plist`, `com.andres
 - Tool-use interception is IV-pragmatic: CLIs execute their own tools, gateway reports observations after the fact.
 
 <!-- MANUAL: Add manually curated notes below this line. They are preserved on regeneration. -->
+
+- Codex profile files should use GPT model names. Provider slugs are resolved by `/minimax/v1`, `/deepseek/v1`, and `/claude/v1` profile routing so Codex keeps its own model metadata.
