@@ -33,6 +33,8 @@
     <dict>
         <!-- Keychain secrets are loaded at process startup by reverso-proxy. -->
         <!-- Add any static env overrides here if needed. -->
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:{{USER_HOME}}/.local/bin</string>
         <key>REVERSO_HOST</key>
         <string>127.0.0.1</string>
         <key>REVERSO_PORT</key>

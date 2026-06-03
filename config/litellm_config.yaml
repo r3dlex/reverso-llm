@@ -123,12 +123,6 @@ model_list:
       api_key: "os.environ/MINIMAX_API_KEY"
       additional_drop_params: *codex_drop_params
 
-  - model_name: minimax
-    litellm_params:
-      model: custom_openai/MiniMax-M3
-      api_base: https://api.minimax.io/v1
-      api_key: "os.environ/MINIMAX_API_KEY"
-      additional_drop_params: *codex_drop_params
 
 litellm_settings:
   drop_params: true

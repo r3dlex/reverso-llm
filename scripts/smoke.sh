@@ -20,7 +20,7 @@ check() {
     local name="$1"
     local result="$2"
     local expected="$3"
-    if echo "${result}" | grep -q "${expected}"; then
+    if echo "${result}" | grep -Fq "${expected}"; then
         echo "  PASS: ${name}"
         PASS=$((PASS + 1))
     else
@@ -31,9 +31,9 @@ check() {
     fi
 }
 
-echo "==> Smoke: /healthz"
-R=$(curl -sf "${BASE}/healthz" 2>&1 || echo "CONNECTION_ERROR")
-check "healthz" "${R}" "."
+echo "==> Smoke: /health/readiness"
+R=$(curl -sf "${BASE}/health/readiness" 2>&1 || echo "CONNECTION_ERROR")
+check "health readiness" "${R}" '"status":"healthy"'
 
 echo "==> Smoke: /v1/models"
 R=$(curl -sf "${BASE}/v1/models" 2>&1 || echo "CONNECTION_ERROR")

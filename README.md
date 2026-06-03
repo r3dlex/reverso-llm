@@ -49,7 +49,7 @@ This expands the plist template with your local paths, creates `~/Library/Logs/r
 
 To verify it is running:
 ```bash
-curl http://127.0.0.1:64946/health/live
+curl http://127.0.0.1:64946/health/readiness
 ```
 
 ### 3. Configure Codex CLI to use Reverso

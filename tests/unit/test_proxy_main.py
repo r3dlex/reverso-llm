@@ -3,7 +3,13 @@ from __future__ import annotations
 
 import pytest
 
-from reverso.proxy.main import _resolve_host
+from reverso.proxy.main import _CONFIG_PATH, _resolve_host
+
+
+def test_config_path_points_to_reverso_config() -> None:
+    assert _CONFIG_PATH.name == "litellm_config.yaml"
+    assert _CONFIG_PATH.parent.name == "config"
+    assert _CONFIG_PATH.exists()
 
 
 def test_resolve_host_defaults_to_loopback(monkeypatch: pytest.MonkeyPatch) -> None:

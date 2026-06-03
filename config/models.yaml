@@ -167,16 +167,5 @@ model_list:
       api_base: https://api.minimax.io/v1
       api_key: "os.environ/MINIMAX_API_KEY"
     model_info:
-      description: "MiniMax-M3 for all MiniMax GPT-level aliases"
-      provider_kind: http-forwarded
-      aliases:
-        - minimax
-
-  - model_name: minimax
-    litellm_params:
-      model: custom_openai/MiniMax-M3
-      api_base: https://api.minimax.io/v1
-      api_key: "os.environ/MINIMAX_API_KEY"
-    model_info:
-      description: "Alias for MiniMax-M3"
+      description: "MiniMax-M3 for MiniMax profile routing"
       provider_kind: http-forwarded

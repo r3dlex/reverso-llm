@@ -32,7 +32,6 @@ _MODEL_TO_PROVIDER: dict[str, str] = {
     "deepseek-reasoner": "deepseek",
     "deepseek-chat": "deepseek",
     "MiniMax-M3": "minimax",
-    "minimax": "minimax",
 }
 
 

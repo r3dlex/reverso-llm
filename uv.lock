@@ -2178,11 +2178,13 @@ name = "reverso"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "fastapi" },
     { name = "httpx" },
     { name = "litellm", extra = ["proxy"] },
     { name = "psutil" },
     { name = "pyyaml" },
     { name = "uvicorn" },
+    { name = "websockets" },
 ]
 
 [package.optional-dependencies]
@@ -2193,6 +2195,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "fastapi" },
     { name = "httpx" },
     { name = "litellm", extras = ["proxy"], specifier = ">=1.0" },
     { name = "psutil" },
@@ -2200,6 +2203,7 @@ requires-dist = [
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23" },
     { name = "pyyaml" },
     { name = "uvicorn" },
+    { name = "websockets" },
 ]
 provides-extras = ["dev"]
 

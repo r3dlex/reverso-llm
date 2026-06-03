@@ -1,1 +1,1 @@
-"""Session daemon process – owns wrapped CLI subprocesses and session table."""
+"""Session daemon process - owns wrapped CLI subprocesses and session table."""

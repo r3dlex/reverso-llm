@@ -6,8 +6,10 @@ requires-python = ">=3.11"
 dependencies = [
     "litellm[proxy]>=1.0",
     "httpx",
+    "fastapi",
     "pyyaml",
     "uvicorn",
+    "websockets",
     "psutil",
 ]
 
