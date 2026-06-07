@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0",
+  "source": {
+    "type": "git",
+    "url": "git@github.com:br4vesirrobin/reverso.git",
+    "ref": "main"
+  },
+  "via": "r3dlex/ai-tool-workspace",
+  "pinned_sha": "TBD-ON-FIRST-PUSH",
+  "update_date": "2026-06-07",
+  "sync_script": "scripts/sync-upstream.sh"
+}

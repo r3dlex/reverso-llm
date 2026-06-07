@@ -6,7 +6,7 @@
   "sync_strategy": "physical-copy",
   "upstream_authority": {
     "type": "git",
-    "url": "git@github.com:r3dlex/reverso.git",
+    "url": "git@github.com:br4vesirrobin/reverso.git",
     "ref": "main"
   },
   "managed_repositories": [],
