@@ -1,4 +1,5 @@
 """Shared utilities for Reverso CLI providers."""
+
 from __future__ import annotations
 
 import os
@@ -50,12 +51,16 @@ def call_daemon(
     with httpx.Client(transport=transport, base_url="http://daemon") as client:
         resp = client.post(
             "/session/turn",
-            json={"workspace": workspace, "provider": provider, "user_message": user_message, "model": model},
+            json={
+                "workspace": workspace,
+                "provider": provider,
+                "user_message": user_message,
+                "model": model,
+            },
             timeout=timeout,
         )
         resp.raise_for_status()
         return resp.json()
-
 
 
 def stream_daemon(
@@ -68,11 +73,18 @@ def stream_daemon(
 ) -> Iterator[dict[str, Any]]:
     """POST /session/turn/stream on the daemon over UDS and yield NDJSON events."""
     transport = httpx.HTTPTransport(uds=sock_path)
-    with httpx.Client(transport=transport, base_url="http://daemon", timeout=timeout) as client:
+    with httpx.Client(
+        transport=transport, base_url="http://daemon", timeout=timeout
+    ) as client:
         with client.stream(
             "POST",
             "/session/turn/stream",
-            json={"workspace": workspace, "provider": provider, "user_message": user_message, "model": model},
+            json={
+                "workspace": workspace,
+                "provider": provider,
+                "user_message": user_message,
+                "model": model,
+            },
         ) as resp:
             resp.raise_for_status()
             for line in resp.iter_lines():
@@ -92,6 +104,7 @@ def json_loads(value: str | bytes) -> dict[str, Any]:
         raise ValueError("daemon stream event is not an object")
     return parsed
 
+
 def strip_think_blocks(value: str) -> str:
     """Remove <think>...</think> blocks from assistant text."""
     if not isinstance(value, str):
@@ -104,7 +117,7 @@ def strip_think_blocks(value: str) -> str:
         value = value[:start]
     end = value.find(_THINK_END)
     if end != -1:
-        value = value[end + len(_THINK_END):]
+        value = value[end + len(_THINK_END) :]
     return value.lstrip()
 
 
@@ -153,7 +166,7 @@ class StreamingThinkStripper:
                 end = text.find(_THINK_END, index)
                 if end == -1:
                     keep = _longest_suffix_prefix(text[index:], _THINK_END)
-                    self.pending = text[len(text) - keep:] if keep else ""
+                    self.pending = text[len(text) - keep :] if keep else ""
                     return "".join(output)
                 index = end + len(_THINK_END)
                 self.in_think = False
@@ -171,8 +184,8 @@ class StreamingThinkStripper:
             if start == -1:
                 tail = _longest_suffix_prefix(text[index:], _THINK_START)
                 if tail:
-                    output.append(text[index: len(text) - tail])
-                    self.pending = text[len(text) - tail:]
+                    output.append(text[index : len(text) - tail])
+                    self.pending = text[len(text) - tail :]
                 else:
                     output.append(text[index:])
                 break

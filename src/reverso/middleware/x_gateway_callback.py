@@ -9,6 +9,7 @@ For HTTP-forwarded DeepSeek models the custom providers do not
 set _hidden_params["x_gateway"], so we synthesise a minimal envelope here
 using the model name to infer the provider string.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -53,7 +54,9 @@ def _infer_provider(model: str) -> str:
     return "unknown"
 
 
-def success_callback(kwargs: dict[str, Any], response_obj: Any, start_time: Any, end_time: Any) -> None:
+def success_callback(
+    kwargs: dict[str, Any], response_obj: Any, start_time: Any, end_time: Any
+) -> None:
     """Attach x_gateway envelope to the response hidden params.
 
     Called by LiteLLM after every successful completion.

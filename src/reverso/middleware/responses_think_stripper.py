@@ -1,4 +1,5 @@
 """Strip provider reasoning tags from Responses API output."""
+
 from __future__ import annotations
 
 import json
@@ -13,12 +14,14 @@ Send = Callable[[dict[str, Any]], Awaitable[None]]
 
 _DONE_LINE = b"data: [DONE]"
 _VISIBLE_DELTA_CHUNK_SIZE = 48
-_DROP_SSE_EVENT_TYPES = frozenset({
-    "response.reasoning_summary_text.delta",
-    "response.reasoning_summary_text.done",
-    "response.reasoning_summary_part.added",
-    "response.reasoning_summary_part.done",
-})
+_DROP_SSE_EVENT_TYPES = frozenset(
+    {
+        "response.reasoning_summary_text.delta",
+        "response.reasoning_summary_text.done",
+        "response.reasoning_summary_part.added",
+        "response.reasoning_summary_part.done",
+    }
+)
 
 
 def _is_responses_path(path: str) -> bool:
@@ -39,11 +42,15 @@ def _is_json(headers: list[tuple[bytes, bytes]]) -> bool:
     return False
 
 
-def _without_content_length(headers: list[tuple[bytes, bytes]]) -> list[tuple[bytes, bytes]]:
+def _without_content_length(
+    headers: list[tuple[bytes, bytes]],
+) -> list[tuple[bytes, bytes]]:
     return [(key, value) for key, value in headers if key.lower() != b"content-length"]
 
 
-def _strip_text_fields(value: Any, stripper: StreamingThinkStripper | None = None) -> Any:
+def _strip_text_fields(
+    value: Any, stripper: StreamingThinkStripper | None = None
+) -> Any:
     if isinstance(value, list):
         list_stripper = stripper or StreamingThinkStripper()
         return [
@@ -56,9 +63,13 @@ def _strip_text_fields(value: Any, stripper: StreamingThinkStripper | None = Non
     stripped: dict[str, Any] = {}
     for key, child in value.items():
         if key == "content" and isinstance(child, list):
-            stripped[key] = _collapse_leading_output_text_reasoning(_strip_text_fields(child, stripper))
+            stripped[key] = _collapse_leading_output_text_reasoning(
+                _strip_text_fields(child, stripper)
+            )
         elif key in {"text", "delta"} and isinstance(child, str):
-            stripped[key] = stripper.strip_delta(child) if stripper else strip_think_blocks(child)
+            stripped[key] = (
+                stripper.strip_delta(child) if stripper else strip_think_blocks(child)
+            )
         else:
             stripped[key] = _strip_text_fields(child, stripper)
     return stripped
@@ -70,7 +81,9 @@ def _collapse_leading_output_text_reasoning(value: Any) -> Any:
     text_indexes = [
         index
         for index, item in enumerate(value)
-        if isinstance(item, dict) and item.get("type") == "output_text" and isinstance(item.get("text"), str)
+        if isinstance(item, dict)
+        and item.get("type") == "output_text"
+        and isinstance(item.get("text"), str)
     ]
     non_empty = [index for index in text_indexes if value[index]["text"].strip()]
     if len(non_empty) <= 1:
@@ -97,26 +110,39 @@ def _data_line(payload: dict[str, Any]) -> bytes:
     return b"data: " + json.dumps(payload, separators=(",", ":")).encode("utf-8")
 
 
-def _split_visible_delta(payload: dict[str, Any], enabled: bool) -> list[dict[str, Any]]:
+def _split_visible_delta(
+    payload: dict[str, Any], enabled: bool
+) -> list[dict[str, Any]]:
     """Split large visible deltas so Codex renders progress before completion."""
     delta = payload.get("delta")
-    if not enabled or not isinstance(delta, str) or len(delta) <= _VISIBLE_DELTA_CHUNK_SIZE:
+    if (
+        not enabled
+        or not isinstance(delta, str)
+        or len(delta) <= _VISIBLE_DELTA_CHUNK_SIZE
+    ):
         return [payload]
     chunks = [
-        delta[index:index + _VISIBLE_DELTA_CHUNK_SIZE]
+        delta[index : index + _VISIBLE_DELTA_CHUNK_SIZE]
         for index in range(0, len(delta), _VISIBLE_DELTA_CHUNK_SIZE)
     ]
     return [dict(payload, delta=chunk) for chunk in chunks if chunk]
 
 
 def _is_reasoning_output_item(payload: dict[str, Any]) -> bool:
-    if payload.get("type") not in {"response.output_item.added", "response.output_item.done"}:
+    if payload.get("type") not in {
+        "response.output_item.added",
+        "response.output_item.done",
+    }:
         return False
     item = payload.get("item")
     return isinstance(item, dict) and item.get("type") == "reasoning"
 
 
-def _synthetic_text_preamble(payload: dict[str, Any], sent_items: set[Any], sent_content_parts: set[tuple[Any, Any, Any]]) -> list[dict[str, Any]]:
+def _synthetic_text_preamble(
+    payload: dict[str, Any],
+    sent_items: set[Any],
+    sent_content_parts: set[tuple[Any, Any, Any]],
+) -> list[dict[str, Any]]:
     key = _stream_key(payload)
     item_id = payload.get("item_id")
     output_index = payload.get("output_index", 0)
@@ -130,7 +156,11 @@ def _synthetic_text_preamble(payload: dict[str, Any], sent_items: set[Any], sent
             "role": "assistant",
             "content": [],
         }
-        event = {"type": "response.output_item.added", "output_index": output_index, "item": item}
+        event = {
+            "type": "response.output_item.added",
+            "output_index": output_index,
+            "item": item,
+        }
         if isinstance(payload.get("model"), str):
             event["model"] = payload["model"]
         events.append(event)
@@ -169,15 +199,21 @@ def _strip_sse_payload(
         part = payload.get("part")
         if isinstance(part, dict) and part.get("type") == "output_text":
             sent_content_parts.add(_stream_key(payload))
-    if event_type == "response.output_text.delta" and isinstance(payload.get("delta"), str):
+    if event_type == "response.output_text.delta" and isinstance(
+        payload.get("delta"), str
+    ):
         key = _stream_key(payload)
         stripper = stream_strippers.setdefault(key, StreamingThinkStripper())
         payload = dict(payload)
         payload["delta"] = stripper.strip_delta(payload["delta"])
         if payload["delta"] == "":
             return []
-        return _synthetic_text_preamble(payload, sent_items, sent_content_parts) + _split_visible_delta(payload, split_visible_deltas)
-    if event_type == "response.output_text.done" and isinstance(payload.get("text"), str):
+        return _synthetic_text_preamble(
+            payload, sent_items, sent_content_parts
+        ) + _split_visible_delta(payload, split_visible_deltas)
+    if event_type == "response.output_text.done" and isinstance(
+        payload.get("text"), str
+    ):
         key = _stream_key(payload)
         payload = _strip_text_fields(payload)
         completed_texts[key] = str(payload.get("text", ""))
@@ -185,7 +221,11 @@ def _strip_sse_payload(
     if event_type == "response.content_part.done":
         key = _stream_key(payload)
         part = payload.get("part")
-        if isinstance(part, dict) and part.get("type") != "output_text" and key in completed_texts:
+        if (
+            isinstance(part, dict)
+            and part.get("type") != "output_text"
+            and key in completed_texts
+        ):
             payload = dict(payload)
             payload["part"] = {
                 "type": "output_text",
@@ -212,7 +252,14 @@ def _rewrite_sse_line(
         return [line]
     if not isinstance(payload, dict):
         return [line]
-    payloads = _strip_sse_payload(payload, stream_strippers, completed_texts, sent_items, sent_content_parts, split_visible_deltas)
+    payloads = _strip_sse_payload(
+        payload,
+        stream_strippers,
+        completed_texts,
+        sent_items,
+        sent_content_parts,
+        split_visible_deltas,
+    )
     return [_data_line(payload) for payload in payloads]
 
 
@@ -228,9 +275,16 @@ def _rewrite_sse_block(
     rewritten_lines: list[bytes] = []
     for line in keepends:
         content = line.rstrip(b"\r\n")
-        rewritten = _rewrite_sse_line(content, stream_strippers, completed_texts, sent_items, sent_content_parts, split_visible_deltas)
+        rewritten = _rewrite_sse_line(
+            content,
+            stream_strippers,
+            completed_texts,
+            sent_items,
+            sent_content_parts,
+            split_visible_deltas,
+        )
         for index, rewritten_line in enumerate(rewritten):
-            suffix = line[len(content):] if index == len(rewritten) - 1 else b"\n\n"
+            suffix = line[len(content) :] if index == len(rewritten) - 1 else b"\n\n"
             rewritten_lines.append(rewritten_line + suffix)
     return b"".join(rewritten_lines)
 
@@ -240,7 +294,9 @@ def _rewrite_json_body(body: bytes) -> bytes:
         payload = json.loads(body)
     except json.JSONDecodeError:
         return body
-    return json.dumps(_strip_text_fields(payload), separators=(",", ":")).encode("utf-8")
+    return json.dumps(_strip_text_fields(payload), separators=(",", ":")).encode(
+        "utf-8"
+    )
 
 
 class ResponsesThinkStripperMiddleware:
@@ -250,7 +306,9 @@ class ResponsesThinkStripperMiddleware:
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope.get("type") != "http" or not _is_responses_path(str(scope.get("path", ""))):
+        if scope.get("type") != "http" or not _is_responses_path(
+            str(scope.get("path", ""))
+        ):
             await self.app(scope, receive, send)
             return
 
@@ -275,7 +333,9 @@ class ResponsesThinkStripperMiddleware:
                 await send(message)
                 return
 
-            if message.get("type") != "http.response.body" or not (is_responses_sse or is_responses_json):
+            if message.get("type") != "http.response.body" or not (
+                is_responses_sse or is_responses_json
+            ):
                 await send(message)
                 return
 
@@ -288,11 +348,25 @@ class ResponsesThinkStripperMiddleware:
                     if split_at == -1:
                         pending = body
                         return
-                    pending = body[split_at + 1:]
-                    rewritten = _rewrite_sse_block(body[:split_at + 1], stream_strippers, completed_texts, sent_items, sent_content_parts, split_visible_deltas)
+                    pending = body[split_at + 1 :]
+                    rewritten = _rewrite_sse_block(
+                        body[: split_at + 1],
+                        stream_strippers,
+                        completed_texts,
+                        sent_items,
+                        sent_content_parts,
+                        split_visible_deltas,
+                    )
                     await send({**message, "body": rewritten})
                     return
-                rewritten = _rewrite_sse_block(body, stream_strippers, completed_texts, sent_items, sent_content_parts, split_visible_deltas)
+                rewritten = _rewrite_sse_block(
+                    body,
+                    stream_strippers,
+                    completed_texts,
+                    sent_items,
+                    sent_content_parts,
+                    split_visible_deltas,
+                )
                 await send({**message, "body": rewritten})
                 return
 

@@ -1,4 +1,5 @@
 """ASGI middleware that adds x_gateway to JSON error responses."""
+
 from __future__ import annotations
 
 import json
@@ -42,8 +43,12 @@ def _is_json(headers: list[tuple[bytes, bytes]]) -> bool:
     return False
 
 
-def _with_content_length(headers: list[tuple[bytes, bytes]], length: int) -> list[tuple[bytes, bytes]]:
-    filtered = [(key, value) for key, value in headers if key.lower() != b"content-length"]
+def _with_content_length(
+    headers: list[tuple[bytes, bytes]], length: int
+) -> list[tuple[bytes, bytes]]:
+    filtered = [
+        (key, value) for key, value in headers if key.lower() != b"content-length"
+    ]
     filtered.append((b"content-length", str(length).encode("ascii")))
     return filtered
 
@@ -78,7 +83,9 @@ async def _read_body(receive: Receive) -> tuple[bytes | None, bool]:
             return b"".join(chunks), False
 
 
-def _receive_replay(body: bytes | None, disconnected: bool, source_receive: Receive) -> Receive:
+def _receive_replay(
+    body: bytes | None, disconnected: bool, source_receive: Receive
+) -> Receive:
     sent = False
 
     async def receive() -> dict[str, Any]:
@@ -129,11 +136,21 @@ class XGatewayErrorEnvelopeMiddleware:
                 if message.get("more_body", False):
                     return
                 error_body = _add_x_gateway(b"".join(body_chunks), provider)
-                start_message["headers"] = _with_content_length(start_message["headers"], len(error_body))
+                start_message["headers"] = _with_content_length(
+                    start_message["headers"], len(error_body)
+                )
                 await send(start_message)
-                await send({"type": "http.response.body", "body": error_body, "more_body": False})
+                await send(
+                    {
+                        "type": "http.response.body",
+                        "body": error_body,
+                        "more_body": False,
+                    }
+                )
                 return
 
             await send(message)
 
-        await self.app(scope, _receive_replay(body, disconnected, receive), wrapped_send)
+        await self.app(
+            scope, _receive_replay(body, disconnected, receive), wrapped_send
+        )

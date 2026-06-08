@@ -1,4 +1,5 @@
 """Add Codex model-refresh compatibility fields to LiteLLM model lists."""
+
 from __future__ import annotations
 
 import json
@@ -21,14 +22,21 @@ def _is_codex_refresh(scope: Scope) -> bool:
 
 
 def _is_json(headers: list[tuple[bytes, bytes]]) -> bool:
-    return any(key.lower() == b"content-type" and b"json" in value.lower() for key, value in headers)
+    return any(
+        key.lower() == b"content-type" and b"json" in value.lower()
+        for key, value in headers
+    )
 
 
-def _without_content_length(headers: list[tuple[bytes, bytes]]) -> list[tuple[bytes, bytes]]:
+def _without_content_length(
+    headers: list[tuple[bytes, bytes]],
+) -> list[tuple[bytes, bytes]]:
     return [(key, value) for key, value in headers if key.lower() != b"content-length"]
 
 
-def _with_content_length(headers: list[tuple[bytes, bytes]], length: int) -> list[tuple[bytes, bytes]]:
+def _with_content_length(
+    headers: list[tuple[bytes, bytes]], length: int
+) -> list[tuple[bytes, bytes]]:
     filtered = _without_content_length(headers)
     filtered.append((b"content-length", str(length).encode("ascii")))
     return filtered
@@ -64,7 +72,11 @@ class CodexModelsCompatMiddleware:
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope.get("type") != "http" or not _is_models_path(str(scope.get("path", ""))) or not _is_codex_refresh(scope):
+        if (
+            scope.get("type") != "http"
+            or not _is_models_path(str(scope.get("path", "")))
+            or not _is_codex_refresh(scope)
+        ):
             await self.app(scope, receive, send)
             return
 
@@ -92,7 +104,9 @@ class CodexModelsCompatMiddleware:
                 return
             body = _normalize_models_body(b"".join(body_parts))
             if start_message is not None:
-                start_message["headers"] = _with_content_length(list(start_message.get("headers", [])), len(body))
+                start_message["headers"] = _with_content_length(
+                    list(start_message.get("headers", [])), len(body)
+                )
                 await send(start_message)
                 start_message = None
             await send({"type": "http.response.body", "body": body, "more_body": False})

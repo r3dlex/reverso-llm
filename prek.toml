@@ -25,5 +25,8 @@ hooks = [
 repo = "https://github.com/pre-commit/mirrors-mypy"
 rev = "v1.11.0"
 hooks = [
-  { id = "mypy", pass_filenames = false, additional_dependencies = ["types-PyYAML", "types-python-dateutil"] },
+  # pass_filenames = false so we control the target list; point mypy at the
+  # actual package source. Without args, mypy exits with "Missing target
+  # module, package, files, or command."
+  { id = "mypy", pass_filenames = false, args = ["src/reverso"], additional_dependencies = ["types-PyYAML", "types-python-dateutil"] },
 ]

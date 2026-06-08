@@ -12,6 +12,7 @@ Usage in litellm_config.yaml::
           model: custom/claude-sonnet-4-6
           custom_llm_provider: anthropic_cli
 """
+
 from __future__ import annotations
 
 import json
@@ -22,7 +23,6 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Iterator
 
 import httpx
-import litellm
 from litellm import ModelResponse
 from litellm.llms.custom_llm import CustomLLM
 from litellm.types.utils import GenericStreamingChunk
@@ -55,34 +55,53 @@ def _model_flag(litellm_model: str) -> str:
 
 
 def _make_x_gateway(session_id: str | None = None) -> dict[str, Any]:
-    return {"session_id": session_id, "observations": [], "provider": "anthropic", "warnings": []}
+    return {
+        "session_id": session_id,
+        "observations": [],
+        "provider": "anthropic",
+        "warnings": [],
+    }
 
 
 def _request_workspace(kwargs: dict[str, Any]) -> str | None:
     x_gateway = kwargs.get("x_gateway")
-    if isinstance(x_gateway, dict) and isinstance(x_gateway.get("workspace"), str) and x_gateway["workspace"].strip():
+    if (
+        isinstance(x_gateway, dict)
+        and isinstance(x_gateway.get("workspace"), str)
+        and x_gateway["workspace"].strip()
+    ):
         return x_gateway["workspace"]
     return CURRENT_PROFILE_WORKSPACE.get()
 
 
-def _invoke_claude(prompt: str, model_flag: str, workspace: str | None = None, timeout: int = 300) -> dict[str, Any]:
+def _invoke_claude(
+    prompt: str, model_flag: str, workspace: str | None = None, timeout: int = 300
+) -> dict[str, Any]:
     """Spawn `claude -p` and return its parsed JSON result."""
     cwd = str(Path(workspace).expanduser().resolve()) if workspace else None
     cmd = [
-        resolve_cli_command("claude", "REVERSO_CLAUDE_BIN"), "-p", prompt,
-        "--output-format", "json",
-        "--model", model_flag,
+        resolve_cli_command("claude", "REVERSO_CLAUDE_BIN"),
+        "-p",
+        prompt,
+        "--output-format",
+        "json",
+        "--model",
+        model_flag,
         "--dangerously-skip-permissions",
     ]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, cwd=cwd)
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout, cwd=cwd
+        )
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError(f"claude CLI timed out after {timeout}s") from exc
     except FileNotFoundError as exc:
         raise RuntimeError("claude CLI not found on PATH") from exc
 
     if proc.returncode != 0:
-        raise RuntimeError(f"claude CLI exited {proc.returncode}. stderr: {proc.stderr.strip()[:500]}")
+        raise RuntimeError(
+            f"claude CLI exited {proc.returncode}. stderr: {proc.stderr.strip()[:500]}"
+        )
 
     stdout = proc.stdout.strip()
     if not stdout:
@@ -91,7 +110,9 @@ def _invoke_claude(prompt: str, model_flag: str, workspace: str | None = None, t
     try:
         return json.loads(stdout)
     except json.JSONDecodeError as exc:
-        raise RuntimeError(f"claude CLI output is not valid JSON: {exc}\nraw: {stdout[:300]}") from exc
+        raise RuntimeError(
+            f"claude CLI output is not valid JSON: {exc}\nraw: {stdout[:300]}"
+        ) from exc
 
 
 def _run_turn(
@@ -109,19 +130,35 @@ def _run_turn(
     if daemon_available(sock):
         effective_ws = workspace or str(Path.home())
         try:
-            resp = call_daemon(sock, effective_ws, "anthropic", prompt, model_flag, float(cli_timeout))
+            resp = call_daemon(
+                sock, effective_ws, "anthropic", prompt, model_flag, float(cli_timeout)
+            )
             return (
                 strip_think_blocks(resp.get("assistant_text", "")),
                 resp.get("session_id"),
                 resp.get("observations", []),
                 warnings,
             )
-        except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout, httpx.RemoteProtocolError) as exc:
-            logger.warning("Daemon turn failed (%s); falling back to stateless mode", exc)
+        except (
+            httpx.ConnectError,
+            httpx.ConnectTimeout,
+            httpx.ReadTimeout,
+            httpx.RemoteProtocolError,
+        ) as exc:
+            logger.warning(
+                "Daemon turn failed (%s); falling back to stateless mode", exc
+            )
             warnings.append(f"daemon_unavailable: {exc}")
 
-    result = _invoke_claude(prompt, model_flag, workspace=workspace, timeout=cli_timeout)
-    return strip_think_blocks(result.get("result", "")), result.get("session_id"), [], warnings
+    result = _invoke_claude(
+        prompt, model_flag, workspace=workspace, timeout=cli_timeout
+    )
+    return (
+        strip_think_blocks(result.get("result", "")),
+        result.get("session_id"),
+        [],
+        warnings,
+    )
 
 
 def _run_turn_stream(
@@ -136,7 +173,9 @@ def _run_turn_stream(
         effective_ws = workspace or str(Path.home())
         stripper = StreamingThinkStripper()
         try:
-            for event in stream_daemon(sock, effective_ws, "anthropic", prompt, model_flag, float(cli_timeout)):
+            for event in stream_daemon(
+                sock, effective_ws, "anthropic", prompt, model_flag, float(cli_timeout)
+            ):
                 event_type = event.get("type")
                 if event_type == "delta":
                     delta = stripper.strip_delta(str(event.get("delta", "")))
@@ -148,10 +187,19 @@ def _run_turn_stream(
             if tail:
                 yield tail
             return
-        except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout, httpx.RemoteProtocolError):
-            logger.warning("Daemon stream failed; falling back to aggregate turn", exc_info=True)
+        except (
+            httpx.ConnectError,
+            httpx.ConnectTimeout,
+            httpx.ReadTimeout,
+            httpx.RemoteProtocolError,
+        ):
+            logger.warning(
+                "Daemon stream failed; falling back to aggregate turn", exc_info=True
+            )
 
-    assistant_text, _sid, _obs, _warn = _run_turn(prompt, model_flag, workspace, cli_timeout)
+    assistant_text, _sid, _obs, _warn = _run_turn(
+        prompt, model_flag, workspace, cli_timeout
+    )
     if assistant_text:
         yield assistant_text
 
@@ -185,7 +233,9 @@ class AnthropicCLIProvider(CustomLLM):
         cli_timeout = int(timeout) if isinstance(timeout, (int, float)) else 300
         workspace = _request_workspace(kwargs)
 
-        assistant_text, session_id, observations, warnings = _run_turn(prompt, model_flag, workspace, cli_timeout)
+        assistant_text, session_id, observations, warnings = _run_turn(
+            prompt, model_flag, workspace, cli_timeout
+        )
 
         x_gateway = _make_x_gateway(session_id=session_id)
         x_gateway["observations"] = observations
@@ -193,9 +243,22 @@ class AnthropicCLIProvider(CustomLLM):
             x_gateway["warnings"] = warnings
 
         response = model_response or ModelResponse()
-        setattr(response, "choices", [{"index": 0, "message": {"role": "assistant", "content": assistant_text}, "finish_reason": "stop"}])
+        setattr(
+            response,
+            "choices",
+            [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": assistant_text},
+                    "finish_reason": "stop",
+                }
+            ],
+        )
         response.model = model
-        response._hidden_params = {"x_gateway": x_gateway, "elapsed_seconds": time.monotonic() - t_start}
+        response._hidden_params = {
+            "x_gateway": x_gateway,
+            "elapsed_seconds": time.monotonic() - t_start,
+        }
         return response
 
     def streaming(
@@ -225,18 +288,35 @@ class AnthropicCLIProvider(CustomLLM):
         workspace = _request_workspace(kwargs)
 
         for delta in _run_turn_stream(prompt, model_flag, workspace, cli_timeout):
-            yield {"text": delta, "is_finished": False, "finish_reason": "", "usage": None, "index": 0}
-        yield {"text": "", "is_finished": True, "finish_reason": "stop", "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}, "index": 0}
+            yield {
+                "text": delta,
+                "is_finished": False,
+                "finish_reason": "",
+                "usage": None,
+                "index": 0,
+            }
+        yield {
+            "text": "",
+            "is_finished": True,
+            "finish_reason": "stop",
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+            "index": 0,
+        }
 
     async def acompletion(self, *args: Any, **kwargs: Any) -> ModelResponse:
         import asyncio
+
         return await asyncio.to_thread(self.completion, *args, **kwargs)
 
-    async def astreaming(self, *args: Any, **kwargs: Any) -> AsyncIterator[GenericStreamingChunk]:  # pyright: ignore[reportIncompatibleMethodOverride]
+    async def astreaming(
+        self, *args: Any, **kwargs: Any
+    ) -> AsyncIterator[GenericStreamingChunk]:  # pyright: ignore[reportIncompatibleMethodOverride]
         import asyncio
         import threading
 
-        queue: asyncio.Queue[GenericStreamingChunk | BaseException | None] = asyncio.Queue()
+        queue: asyncio.Queue[GenericStreamingChunk | BaseException | None] = (
+            asyncio.Queue()
+        )
         loop = asyncio.get_running_loop()
 
         def produce() -> None:

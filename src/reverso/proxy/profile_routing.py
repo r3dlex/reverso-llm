@@ -3,6 +3,7 @@
 Codex profiles should keep GPT-level model names. Reverso rewrites those
 profile-local aliases to concrete provider model ids before LiteLLM routing.
 """
+
 from __future__ import annotations
 
 import json
@@ -15,16 +16,20 @@ Scope = dict[str, Any]
 Send = Callable[[dict[str, Any]], Awaitable[None]]
 
 FRONTIER_GPT_MODELS = frozenset({"gpt-5.5", "gpt-5.4"})
-KNOWN_GPT_MODELS = frozenset({
-    "gpt-5.5",
-    "gpt-5.4",
-    "gpt-5.4-mini",
-    "gpt-5.3-codex-spark",
-    "gpt-4.1",
-})
+KNOWN_GPT_MODELS = frozenset(
+    {
+        "gpt-5.5",
+        "gpt-5.4",
+        "gpt-5.4-mini",
+        "gpt-5.3-codex-spark",
+        "gpt-4.1",
+    }
+)
 
 PROVIDER_PREFIXES = frozenset({"deepseek", "claude"})
-CURRENT_PROFILE_WORKSPACE: ContextVar[str | None] = ContextVar("CURRENT_PROFILE_WORKSPACE", default=None)
+CURRENT_PROFILE_WORKSPACE: ContextVar[str | None] = ContextVar(
+    "CURRENT_PROFILE_WORKSPACE", default=None
+)
 
 
 def _normalise_model(model: str) -> str:
@@ -101,7 +106,9 @@ class ProfileRoutingMiddleware:
         method = str(scope.get("method", "GET")).upper()
         request_workspace: str | None = None
         if method in {"POST", "PUT", "PATCH"} and body:
-            metadata_workspace = _workspace_from_codex_turn_metadata(scope.get("headers", []))
+            metadata_workspace = _workspace_from_codex_turn_metadata(
+                scope.get("headers", [])
+            )
             request_workspace = _workspace_from_body(body) or metadata_workspace
             body = _rewrite_body_model(
                 body,
@@ -135,7 +142,9 @@ async def _read_body(receive: Receive) -> bytes | None:
     return b"".join(chunks)
 
 
-def _workspace_from_codex_turn_metadata(headers: list[tuple[bytes, bytes]]) -> str | None:
+def _workspace_from_codex_turn_metadata(
+    headers: list[tuple[bytes, bytes]],
+) -> str | None:
     metadata_raw: str | None = None
     for key, value in headers:
         if key.lower() == b"x-codex-turn-metadata":
@@ -160,7 +169,11 @@ def _with_workspace(payload: dict[str, Any], workspace: str | None) -> dict[str,
     if not workspace:
         return payload
     x_gateway = payload.get("x_gateway")
-    if isinstance(x_gateway, dict) and isinstance(x_gateway.get("workspace"), str) and x_gateway["workspace"].strip():
+    if (
+        isinstance(x_gateway, dict)
+        and isinstance(x_gateway.get("workspace"), str)
+        and x_gateway["workspace"].strip()
+    ):
         return payload
     payload = dict(payload)
     merged = dict(x_gateway) if isinstance(x_gateway, dict) else {}
@@ -183,7 +196,9 @@ def _workspace_from_body(body: bytes) -> str | None:
     return workspace if isinstance(workspace, str) and workspace.strip() else None
 
 
-def _rewrite_body_model(body: bytes, profile: str, workspace: str | None = None) -> bytes:
+def _rewrite_body_model(
+    body: bytes, profile: str, workspace: str | None = None
+) -> bytes:
     try:
         payload = json.loads(body)
     except json.JSONDecodeError:
@@ -202,8 +217,12 @@ def _rewrite_body_model(body: bytes, profile: str, workspace: str | None = None)
     return body
 
 
-def _headers_with_content_length(headers: list[tuple[bytes, bytes]], length: int) -> list[tuple[bytes, bytes]]:
-    filtered = [(key, value) for key, value in headers if key.lower() != b"content-length"]
+def _headers_with_content_length(
+    headers: list[tuple[bytes, bytes]], length: int
+) -> list[tuple[bytes, bytes]]:
+    filtered = [
+        (key, value) for key, value in headers if key.lower() != b"content-length"
+    ]
     filtered.append((b"content-length", str(length).encode("ascii")))
     return filtered
 

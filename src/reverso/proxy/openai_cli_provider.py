@@ -18,6 +18,7 @@ Usage in litellm_config.yaml::
           model: custom/gpt-4.1
           custom_llm_provider: openai_cli
 """
+
 from __future__ import annotations
 
 import json
@@ -28,7 +29,6 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Iterator
 
 import httpx
-import litellm
 from litellm import ModelResponse
 from litellm.llms.custom_llm import CustomLLM
 from litellm.types.utils import GenericStreamingChunk
@@ -62,7 +62,12 @@ def _model_flag(litellm_model: str) -> str:
 
 
 def _make_x_gateway(session_id: str | None = None) -> dict[str, Any]:
-    return {"session_id": session_id, "observations": [], "provider": "openai", "warnings": []}
+    return {
+        "session_id": session_id,
+        "observations": [],
+        "provider": "openai",
+        "warnings": [],
+    }
 
 
 def _parse_codex_output(stdout: str) -> dict[str, Any]:
@@ -90,27 +95,43 @@ def _parse_codex_output(stdout: str) -> dict[str, Any]:
         elif t == "turn.completed":
             usage = event.get("usage", {})
 
-    return {"thread_id": thread_id, "assistant_text": "\n".join(text_parts), "usage": usage}
+    return {
+        "thread_id": thread_id,
+        "assistant_text": "\n".join(text_parts),
+        "usage": usage,
+    }
 
 
-def _invoke_codex(prompt: str, model_flag: str, workspace: str | None = None, timeout: int = 300) -> dict[str, Any]:
+def _invoke_codex(
+    prompt: str, model_flag: str, workspace: str | None = None, timeout: int = 300
+) -> dict[str, Any]:
     """Spawn `codex exec` and return its parsed output dict."""
     cwd = str(Path(workspace).expanduser().resolve()) if workspace else None
     cmd = [
-        resolve_cli_command("codex", "REVERSO_CODEX_BIN"), "exec", prompt,
-        "--json", "-s", "workspace-write",
-        "--model", model_flag,
-        "-c", "skip_git_repo_check=true",
+        resolve_cli_command("codex", "REVERSO_CODEX_BIN"),
+        "exec",
+        prompt,
+        "--json",
+        "-s",
+        "workspace-write",
+        "--model",
+        model_flag,
+        "-c",
+        "skip_git_repo_check=true",
     ]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, cwd=cwd)
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout, cwd=cwd
+        )
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError(f"codex CLI timed out after {timeout}s") from exc
     except FileNotFoundError as exc:
         raise RuntimeError("codex CLI not found on PATH") from exc
 
     if proc.returncode != 0:
-        raise RuntimeError(f"codex CLI exited {proc.returncode}. stderr: {proc.stderr.strip()[:500]}")
+        raise RuntimeError(
+            f"codex CLI exited {proc.returncode}. stderr: {proc.stderr.strip()[:500]}"
+        )
 
     stdout = proc.stdout.strip()
     if not stdout:
@@ -134,19 +155,33 @@ def _run_turn(
     if daemon_available(sock):
         effective_ws = workspace or str(Path.home())
         try:
-            resp = call_daemon(sock, effective_ws, "openai", prompt, model_flag, float(cli_timeout))
+            resp = call_daemon(
+                sock, effective_ws, "openai", prompt, model_flag, float(cli_timeout)
+            )
             return (
                 strip_think_blocks(resp.get("assistant_text", "")),
                 resp.get("session_id"),
                 resp.get("observations", []),
                 warnings,
             )
-        except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout, httpx.RemoteProtocolError) as exc:
-            logger.warning("Daemon turn failed (%s); falling back to stateless mode", exc)
+        except (
+            httpx.ConnectError,
+            httpx.ConnectTimeout,
+            httpx.ReadTimeout,
+            httpx.RemoteProtocolError,
+        ) as exc:
+            logger.warning(
+                "Daemon turn failed (%s); falling back to stateless mode", exc
+            )
             warnings.append(f"daemon_unavailable: {exc}")
 
     result = _invoke_codex(prompt, model_flag, workspace=workspace, timeout=cli_timeout)
-    return strip_think_blocks(result["assistant_text"]), result.get("thread_id"), [], warnings
+    return (
+        strip_think_blocks(result["assistant_text"]),
+        result.get("thread_id"),
+        [],
+        warnings,
+    )
 
 
 def _run_turn_stream(
@@ -161,7 +196,9 @@ def _run_turn_stream(
         effective_ws = workspace or str(Path.home())
         stripper = StreamingThinkStripper()
         try:
-            for event in stream_daemon(sock, effective_ws, "openai", prompt, model_flag, float(cli_timeout)):
+            for event in stream_daemon(
+                sock, effective_ws, "openai", prompt, model_flag, float(cli_timeout)
+            ):
                 event_type = event.get("type")
                 if event_type == "delta":
                     delta = stripper.strip_delta(str(event.get("delta", "")))
@@ -173,10 +210,19 @@ def _run_turn_stream(
             if tail:
                 yield tail
             return
-        except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout, httpx.RemoteProtocolError):
-            logger.warning("Daemon stream failed; falling back to aggregate turn", exc_info=True)
+        except (
+            httpx.ConnectError,
+            httpx.ConnectTimeout,
+            httpx.ReadTimeout,
+            httpx.RemoteProtocolError,
+        ):
+            logger.warning(
+                "Daemon stream failed; falling back to aggregate turn", exc_info=True
+            )
 
-    assistant_text, _sid, _obs, _warn = _run_turn(prompt, model_flag, workspace, cli_timeout)
+    assistant_text, _sid, _obs, _warn = _run_turn(
+        prompt, model_flag, workspace, cli_timeout
+    )
     if assistant_text:
         yield assistant_text
 
@@ -208,9 +254,15 @@ class OpenAICLIProvider(CustomLLM):
         prompt = last_user_message(messages)
         model_flag = _model_flag(model)
         cli_timeout = int(timeout) if isinstance(timeout, (int, float)) else 300
-        workspace = (kwargs.get("x_gateway") or {}).get("workspace") if isinstance(kwargs.get("x_gateway"), dict) else None
+        workspace = (
+            (kwargs.get("x_gateway") or {}).get("workspace")
+            if isinstance(kwargs.get("x_gateway"), dict)
+            else None
+        )
 
-        assistant_text, session_id, observations, warnings = _run_turn(prompt, model_flag, workspace, cli_timeout)
+        assistant_text, session_id, observations, warnings = _run_turn(
+            prompt, model_flag, workspace, cli_timeout
+        )
 
         x_gateway = _make_x_gateway(session_id=session_id)
         x_gateway["observations"] = observations
@@ -218,9 +270,22 @@ class OpenAICLIProvider(CustomLLM):
             x_gateway["warnings"] = warnings
 
         response = model_response or ModelResponse()
-        setattr(response, "choices", [{"index": 0, "message": {"role": "assistant", "content": assistant_text}, "finish_reason": "stop"}])
+        setattr(
+            response,
+            "choices",
+            [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": assistant_text},
+                    "finish_reason": "stop",
+                }
+            ],
+        )
         response.model = model
-        response._hidden_params = {"x_gateway": x_gateway, "elapsed_seconds": time.monotonic() - t_start}
+        response._hidden_params = {
+            "x_gateway": x_gateway,
+            "elapsed_seconds": time.monotonic() - t_start,
+        }
         return response
 
     def streaming(
@@ -247,21 +312,42 @@ class OpenAICLIProvider(CustomLLM):
         prompt = last_user_message(messages)
         model_flag = _model_flag(model)
         cli_timeout = int(timeout) if isinstance(timeout, (int, float)) else 300
-        workspace = (kwargs.get("x_gateway") or {}).get("workspace") if isinstance(kwargs.get("x_gateway"), dict) else None
+        workspace = (
+            (kwargs.get("x_gateway") or {}).get("workspace")
+            if isinstance(kwargs.get("x_gateway"), dict)
+            else None
+        )
 
         for delta in _run_turn_stream(prompt, model_flag, workspace, cli_timeout):
-            yield {"text": delta, "is_finished": False, "finish_reason": "", "usage": None, "index": 0}
-        yield {"text": "", "is_finished": True, "finish_reason": "stop", "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}, "index": 0}
+            yield {
+                "text": delta,
+                "is_finished": False,
+                "finish_reason": "",
+                "usage": None,
+                "index": 0,
+            }
+        yield {
+            "text": "",
+            "is_finished": True,
+            "finish_reason": "stop",
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+            "index": 0,
+        }
 
     async def acompletion(self, *args: Any, **kwargs: Any) -> ModelResponse:
         import asyncio
+
         return await asyncio.to_thread(self.completion, *args, **kwargs)
 
-    async def astreaming(self, *args: Any, **kwargs: Any) -> AsyncIterator[GenericStreamingChunk]:  # pyright: ignore[reportIncompatibleMethodOverride]
+    async def astreaming(
+        self, *args: Any, **kwargs: Any
+    ) -> AsyncIterator[GenericStreamingChunk]:  # pyright: ignore[reportIncompatibleMethodOverride]
         import asyncio
         import threading
 
-        queue: asyncio.Queue[GenericStreamingChunk | BaseException | None] = asyncio.Queue()
+        queue: asyncio.Queue[GenericStreamingChunk | BaseException | None] = (
+            asyncio.Queue()
+        )
         loop = asyncio.get_running_loop()
 
         def produce() -> None:

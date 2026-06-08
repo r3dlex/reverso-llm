@@ -1,4 +1,5 @@
 """Guard Responses API SSE streams against missing completion events."""
+
 from __future__ import annotations
 
 import json
@@ -26,7 +27,9 @@ def _is_sse(headers: list[tuple[bytes, bytes]]) -> bool:
     return False
 
 
-def _without_content_length(headers: list[tuple[bytes, bytes]]) -> list[tuple[bytes, bytes]]:
+def _without_content_length(
+    headers: list[tuple[bytes, bytes]],
+) -> list[tuple[bytes, bytes]]:
     return [(key, value) for key, value in headers if key.lower() != b"content-length"]
 
 
@@ -39,7 +42,9 @@ def _completion_event(response_id: str) -> bytes:
             "status": "completed",
         },
     }
-    return b"data: " + json.dumps(payload, separators=(",", ":")).encode("utf-8") + b"\n\n"
+    return (
+        b"data: " + json.dumps(payload, separators=(",", ":")).encode("utf-8") + b"\n\n"
+    )
 
 
 def _extract_response_id(chunk: bytes, current: str) -> str:
@@ -63,7 +68,10 @@ def _extract_response_id(chunk: bytes, current: str) -> str:
 
 
 def _has_completed_marker(chunk: bytes) -> bool:
-    return _RESPONSE_COMPLETED_MARKER in chunk or _RESPONSE_COMPLETED_MARKER_SPACED in chunk
+    return (
+        _RESPONSE_COMPLETED_MARKER in chunk
+        or _RESPONSE_COMPLETED_MARKER_SPACED in chunk
+    )
 
 
 def _append_completion_before_done(body: bytes, completion: bytes) -> bytes:
@@ -84,7 +92,9 @@ class ResponsesSSECompletionMiddleware:
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope.get("type") != "http" or not _is_responses_path(str(scope.get("path", ""))):
+        if scope.get("type") != "http" or not _is_responses_path(
+            str(scope.get("path", ""))
+        ):
             await self.app(scope, receive, send)
             return
 
@@ -96,7 +106,13 @@ class ResponsesSSECompletionMiddleware:
         marker_tail = b""
 
         async def wrapped_send(message: dict[str, Any]) -> None:
-            nonlocal is_responses_sse, marker_tail, pending_body, response_id, saw_completed, saw_done
+            nonlocal \
+                is_responses_sse, \
+                marker_tail, \
+                pending_body, \
+                response_id, \
+                saw_completed, \
+                saw_done
             if message.get("type") == "http.response.start":
                 headers = list(message.get("headers", []))
                 is_responses_sse = _is_sse(headers)
@@ -121,7 +137,9 @@ class ResponsesSSECompletionMiddleware:
             marker_tail = marker_window[-64:]
 
             if message.get("more_body", False):
-                tail_size = max(len(_DONE_LINE), len(_RESPONSE_COMPLETED_MARKER_SPACED)) - 1
+                tail_size = (
+                    max(len(_DONE_LINE), len(_RESPONSE_COMPLETED_MARKER_SPACED)) - 1
+                )
                 if len(body) <= tail_size:
                     pending_body = body
                     return
@@ -132,12 +150,20 @@ class ResponsesSSECompletionMiddleware:
             if not saw_completed or not saw_done:
                 final_body = body
                 if not saw_completed:
-                    final_body = _append_completion_before_done(final_body, _completion_event(response_id))
+                    final_body = _append_completion_before_done(
+                        final_body, _completion_event(response_id)
+                    )
                     saw_completed = True
                 if not saw_done:
                     final_body += _DONE_EVENT
                     saw_done = True
-                await send({"type": "http.response.body", "body": final_body, "more_body": False})
+                await send(
+                    {
+                        "type": "http.response.body",
+                        "body": final_body,
+                        "more_body": False,
+                    }
+                )
                 return
 
             await send({**message, "body": body})

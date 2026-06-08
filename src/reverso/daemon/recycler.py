@@ -7,6 +7,7 @@ Every 60 minutes it walks the session table and terminates any session that:
 
 The 30-minute idle threshold matches config.yaml session_idle_timeout_minutes.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -40,7 +41,9 @@ def _has_live_descendants(pid: int) -> bool:
         return False
     except psutil.AccessDenied:
         # Cannot inspect the process - assume live to be conservative.
-        logger.warning("Access denied checking descendants of pid %d; assuming live", pid)
+        logger.warning(
+            "Access denied checking descendants of pid %d; assuming live", pid
+        )
         return True
 
 
@@ -59,7 +62,12 @@ async def _terminate_session(session: Session) -> None:
 
     # Check if already exited.
     if proc.returncode is not None:
-        logger.debug("Session %s process %d already exited (rc=%d)", session.key, pid, proc.returncode)
+        logger.debug(
+            "Session %s process %d already exited (rc=%d)",
+            session.key,
+            pid,
+            proc.returncode,
+        )
         return
 
     logger.info(
@@ -79,7 +87,9 @@ async def _terminate_session(session: Session) -> None:
         logger.debug("Session %s pid %d exited after SIGTERM", session.key, pid)
     except asyncio.TimeoutError:
         logger.warning(
-            "Session %s pid %d did not exit after SIGTERM; sending SIGKILL", session.key, pid
+            "Session %s pid %d did not exit after SIGTERM; sending SIGKILL",
+            session.key,
+            pid,
         )
         try:
             proc.send_signal(signal.SIGKILL)
@@ -88,7 +98,9 @@ async def _terminate_session(session: Session) -> None:
         try:
             await asyncio.wait_for(proc.wait(), timeout=5)
         except asyncio.TimeoutError:
-            logger.error("Session %s pid %d did not exit after SIGKILL", session.key, pid)
+            logger.error(
+                "Session %s pid %d did not exit after SIGKILL", session.key, pid
+            )
 
 
 class RecycleSweeper:
@@ -133,7 +145,7 @@ class RecycleSweeper:
         """One sweep pass over all current sessions."""
         sessions = self._table.all_sessions()
         logger.debug("RecycleSweeper sweeping %d session(s)", len(sessions))
-        threshold = timedelta(minutes=self._idle_threshold)
+        timedelta(minutes=self._idle_threshold)
 
         for session in sessions:
             idle_minutes = _minutes_since(session.last_request_at)

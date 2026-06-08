@@ -5,6 +5,7 @@ Parses the newline-delimited JSON stream produced by:
 
 See docs/spike-notes.md for the confirmed event format.
 """
+
 from __future__ import annotations
 
 import json
@@ -111,7 +112,10 @@ class ClaudeCodeParser:
                             # content is a list of content blocks
                             parts = []
                             for block in raw_content:
-                                if isinstance(block, dict) and block.get("type") == "text":
+                                if (
+                                    isinstance(block, dict)
+                                    and block.get("type") == "text"
+                                ):
                                     parts.append(block.get("text", ""))
                                 elif isinstance(block, str):
                                     parts.append(block)
