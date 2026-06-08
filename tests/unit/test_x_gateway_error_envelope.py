@@ -1,4 +1,5 @@
 """Unit tests for x_gateway error response envelope middleware."""
+
 from __future__ import annotations
 
 import asyncio
@@ -11,12 +12,16 @@ from reverso.middleware.x_gateway_error_envelope import XGatewayErrorEnvelopeMid
 
 def test_error_envelope_adds_profile_provider_to_json_errors() -> None:
     async def app(scope, receive, send):
-        await send({
-            "type": "http.response.start",
-            "status": 400,
-            "headers": [(b"content-type", b"application/json")],
-        })
-        await send({"type": "http.response.body", "body": b'{"error":{"message":"bad model"}}'})
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 400,
+                "headers": [(b"content-type", b"application/json")],
+            }
+        )
+        await send(
+            {"type": "http.response.body", "body": b'{"error":{"message":"bad model"}}'}
+        )
 
     middleware = XGatewayErrorEnvelopeMiddleware(app)
     sent = []
@@ -27,7 +32,11 @@ def test_error_envelope_adds_profile_provider_to_json_errors() -> None:
     async def send(message):
         sent.append(message)
 
-    asyncio.run(middleware({"type": "http", "path": "/deepseek/v1/chat/completions"}, receive, send))
+    asyncio.run(
+        middleware(
+            {"type": "http", "path": "/deepseek/v1/chat/completions"}, receive, send
+        )
+    )
 
     body = json.loads(sent[1]["body"])
     assert body["error"]["message"] == "bad model"
@@ -37,16 +46,20 @@ def test_error_envelope_adds_profile_provider_to_json_errors() -> None:
         "provider": "deepseek",
         "warnings": [],
     }
-    assert (b"content-length", str(len(sent[1]["body"])).encode("ascii")) in sent[0]["headers"]
+    assert (b"content-length", str(len(sent[1]["body"])).encode("ascii")) in sent[0][
+        "headers"
+    ]
 
 
 def test_error_envelope_leaves_success_response_unmodified() -> None:
     async def app(scope, receive, send):
-        await send({
-            "type": "http.response.start",
-            "status": 200,
-            "headers": [(b"content-type", b"application/json")],
-        })
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [(b"content-type", b"application/json")],
+            }
+        )
         await send({"type": "http.response.body", "body": b'{"ok":true}'})
 
     middleware = XGatewayErrorEnvelopeMiddleware(app)
@@ -58,7 +71,11 @@ def test_error_envelope_leaves_success_response_unmodified() -> None:
     async def send(message):
         sent.append(message)
 
-    asyncio.run(middleware({"type": "http", "path": "/deepseek/v1/chat/completions"}, receive, send))
+    asyncio.run(
+        middleware(
+            {"type": "http", "path": "/deepseek/v1/chat/completions"}, receive, send
+        )
+    )
 
     assert sent[1]["body"] == b'{"ok":true}'
 
@@ -74,11 +91,13 @@ def test_error_envelope_post_body_receive_waits_for_client_event() -> None:
             await asyncio.wait_for(receive(), timeout=0.01)
         release.set()
         captured["second"] = await receive()
-        await send({
-            "type": "http.response.start",
-            "status": 200,
-            "headers": [(b"content-type", b"application/json")],
-        })
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [(b"content-type", b"application/json")],
+            }
+        )
         await send({"type": "http.response.body", "body": b'{"ok":true}'})
 
     middleware = XGatewayErrorEnvelopeMiddleware(app)
@@ -100,7 +119,11 @@ def test_error_envelope_post_body_receive_waits_for_client_event() -> None:
     async def send(message):
         sent.append(message)
 
-    asyncio.run(middleware({"type": "http", "path": "/deepseek/v1/chat/completions"}, receive, send))
+    asyncio.run(
+        middleware(
+            {"type": "http", "path": "/deepseek/v1/chat/completions"}, receive, send
+        )
+    )
 
     assert captured == {
         "first": {"model": "deepseek-chat"},
@@ -111,12 +134,16 @@ def test_error_envelope_post_body_receive_waits_for_client_event() -> None:
 
 def test_error_envelope_canonicalizes_claude_profile_to_anthropic() -> None:
     async def app(scope, receive, send):
-        await send({
-            "type": "http.response.start",
-            "status": 400,
-            "headers": [(b"content-type", b"application/json")],
-        })
-        await send({"type": "http.response.body", "body": b'{"error":{"message":"bad model"}}'})
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 400,
+                "headers": [(b"content-type", b"application/json")],
+            }
+        )
+        await send(
+            {"type": "http.response.body", "body": b'{"error":{"message":"bad model"}}'}
+        )
 
     middleware = XGatewayErrorEnvelopeMiddleware(app)
     sent = []
@@ -127,7 +154,9 @@ def test_error_envelope_canonicalizes_claude_profile_to_anthropic() -> None:
     async def send(message):
         sent.append(message)
 
-    asyncio.run(middleware({"type": "http", "path": "/claude/v1/messages"}, receive, send))
+    asyncio.run(
+        middleware({"type": "http", "path": "/claude/v1/messages"}, receive, send)
+    )
 
     body = json.loads(sent[1]["body"])
     assert body["x_gateway"]["provider"] == "anthropic"
@@ -136,12 +165,16 @@ def test_error_envelope_canonicalizes_claude_profile_to_anthropic() -> None:
 def test_error_envelope_infers_direct_deepseek_model_from_request_body() -> None:
     async def app(scope, receive, send):
         await receive()
-        await send({
-            "type": "http.response.start",
-            "status": 400,
-            "headers": [(b"content-type", b"application/json")],
-        })
-        await send({"type": "http.response.body", "body": b'{"error":{"message":"bad model"}}'})
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 400,
+                "headers": [(b"content-type", b"application/json")],
+            }
+        )
+        await send(
+            {"type": "http.response.body", "body": b'{"error":{"message":"bad model"}}'}
+        )
 
     middleware = XGatewayErrorEnvelopeMiddleware(app)
     sent = []
@@ -156,21 +189,29 @@ def test_error_envelope_infers_direct_deepseek_model_from_request_body() -> None
     async def send(message):
         sent.append(message)
 
-    asyncio.run(middleware({"type": "http", "path": "/v1/chat/completions"}, receive, send))
+    asyncio.run(
+        middleware({"type": "http", "path": "/v1/chat/completions"}, receive, send)
+    )
 
     body = json.loads(sent[1]["body"])
     assert body["x_gateway"]["provider"] == "deepseek"
 
 
-def test_error_envelope_no_longer_infers_direct_minimax_model_from_request_body() -> None:
+def test_error_envelope_no_longer_infers_direct_minimax_model_from_request_body() -> (
+    None
+):
     async def app(scope, receive, send):
         await receive()
-        await send({
-            "type": "http.response.start",
-            "status": 400,
-            "headers": [(b"content-type", b"application/json")],
-        })
-        await send({"type": "http.response.body", "body": b'{"error":{"message":"bad model"}}'})
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 400,
+                "headers": [(b"content-type", b"application/json")],
+            }
+        )
+        await send(
+            {"type": "http.response.body", "body": b'{"error":{"message":"bad model"}}'}
+        )
 
     middleware = XGatewayErrorEnvelopeMiddleware(app)
     sent = []
@@ -185,7 +226,9 @@ def test_error_envelope_no_longer_infers_direct_minimax_model_from_request_body(
     async def send(message):
         sent.append(message)
 
-    asyncio.run(middleware({"type": "http", "path": "/v1/chat/completions"}, receive, send))
+    asyncio.run(
+        middleware({"type": "http", "path": "/v1/chat/completions"}, receive, send)
+    )
 
     body = json.loads(sent[1]["body"])
     assert body["x_gateway"]["provider"] == "unknown"

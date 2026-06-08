@@ -1,4 +1,5 @@
 """Tests for daemon NDJSON turn streaming."""
+
 from __future__ import annotations
 
 import json
@@ -31,7 +32,9 @@ class _Proc:
 
 
 @pytest.mark.asyncio
-async def test_stream_claude_turn_emits_incremental_deltas(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_stream_claude_turn_emits_incremental_deltas(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     async def fake_create_subprocess_exec(*args, **kwargs):
         return _Proc()
 
@@ -39,9 +42,15 @@ async def test_stream_claude_turn_emits_incremental_deltas(monkeypatch: pytest.M
     monkeypatch.setattr(session_daemon, "_aiter_lines", lambda stream: _lines())
 
     now = datetime.now(timezone.utc)
-    session = Session(key=("local", "/tmp", "anthropic"), process=_Proc(), spawned_at=now, last_request_at=now)
+    session = Session(
+        key=("local", "/tmp", "anthropic"),
+        process=_Proc(),
+        spawned_at=now,
+        last_request_at=now,
+    )
     events = [
-        event async for event in session_daemon._stream_claude_turn(
+        event
+        async for event in session_daemon._stream_claude_turn(
             session=session,
             user_message="hello",
             model="claude-sonnet-4-6",
@@ -53,25 +62,59 @@ async def test_stream_claude_turn_emits_incremental_deltas(monkeypatch: pytest.M
     assert events == [
         {"type": "delta", "delta": "Hello"},
         {"type": "delta", "delta": " there"},
-        {"type": "completed", "assistant_text": "Hello there", "observations": [], "session_id": "sid"},
+        {
+            "type": "completed",
+            "assistant_text": "Hello there",
+            "observations": [],
+            "session_id": "sid",
+        },
     ]
 
 
 async def _tool_lines() -> AsyncIterator[str]:
-    yield json.dumps({
-        "type": "assistant",
-        "session_id": "sid",
-        "message": {"content": [{"type": "tool_use", "id": "tool_1", "name": "Read", "input": {"file_path": "x"}}]},
-    }) + "\n"
-    yield json.dumps({
-        "type": "user",
-        "message": {"content": [{"type": "tool_result", "tool_use_id": "tool_1", "content": "ok"}]},
-    }) + "\n"
+    yield (
+        json.dumps(
+            {
+                "type": "assistant",
+                "session_id": "sid",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "tool_1",
+                            "name": "Read",
+                            "input": {"file_path": "x"},
+                        }
+                    ]
+                },
+            }
+        )
+        + "\n"
+    )
+    yield (
+        json.dumps(
+            {
+                "type": "user",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "tool_1",
+                            "content": "ok",
+                        }
+                    ]
+                },
+            }
+        )
+        + "\n"
+    )
     yield json.dumps({"type": "result", "session_id": "sid", "result": "done"}) + "\n"
 
 
 @pytest.mark.asyncio
-async def test_stream_claude_turn_preserves_specific_observation_types(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_stream_claude_turn_preserves_specific_observation_types(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     async def fake_create_subprocess_exec(*args, **kwargs):
         return _Proc()
 
@@ -79,9 +122,15 @@ async def test_stream_claude_turn_preserves_specific_observation_types(monkeypat
     monkeypatch.setattr(session_daemon, "_aiter_lines", lambda stream: _tool_lines())
 
     now = datetime.now(timezone.utc)
-    session = Session(key=("local", "/tmp", "anthropic"), process=_Proc(), spawned_at=now, last_request_at=now)
+    session = Session(
+        key=("local", "/tmp", "anthropic"),
+        process=_Proc(),
+        spawned_at=now,
+        last_request_at=now,
+    )
     events = [
-        event async for event in session_daemon._stream_claude_turn(
+        event
+        async for event in session_daemon._stream_claude_turn(
             session=session,
             user_message="hello",
             model="claude-sonnet-4-6",
@@ -101,11 +150,13 @@ async def test_session_turn_stream_rejects_invalid_provider_before_streaming() -
     from fastapi import HTTPException
 
     with pytest.raises(HTTPException) as exc_info:
-        await session_daemon.session_turn_stream(session_daemon.TurnRequest(
-            workspace="/tmp",
-            provider="bad-provider",
-            user_message="hello",
-            model="model",
-        ))
+        await session_daemon.session_turn_stream(
+            session_daemon.TurnRequest(
+                workspace="/tmp",
+                provider="bad-provider",
+                user_message="hello",
+                model="model",
+            )
+        )
 
     assert exc_info.value.status_code == 400

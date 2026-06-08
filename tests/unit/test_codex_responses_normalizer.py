@@ -1,4 +1,5 @@
 """Tests for Codex Responses payload normalization."""
+
 from __future__ import annotations
 
 import asyncio
@@ -37,7 +38,9 @@ def test_normalize_keeps_function_tools_and_drops_custom_tools() -> None:
 
     normalized = normalize_codex_responses_payload(payload)
 
-    assert normalized["tools"] == [{"type": "function", "name": "lookup", "parameters": {}}]
+    assert normalized["tools"] == [
+        {"type": "function", "name": "lookup", "parameters": {}}
+    ]
 
 
 def test_normalize_drops_tool_choice_for_removed_custom_tool() -> None:
@@ -70,7 +73,10 @@ def test_normalize_keeps_tool_choice_for_retained_function_tool() -> None:
 
     normalized = normalize_codex_responses_payload(payload)
 
-    assert normalized["tool_choice"] == {"type": "function", "function": {"name": "lookup"}}
+    assert normalized["tool_choice"] == {
+        "type": "function",
+        "function": {"name": "lookup"},
+    }
 
 
 def test_normalizer_middleware_applies_before_profile_routing() -> None:
@@ -93,6 +99,15 @@ def test_normalizer_middleware_applies_before_profile_routing() -> None:
     async def send(message):
         return None
 
-    asyncio.run(middleware({"type": "http", "method": "POST", "path": "/deepseek/v1/responses"}, receive, send))
+    asyncio.run(
+        middleware(
+            {"type": "http", "method": "POST", "path": "/deepseek/v1/responses"},
+            receive,
+            send,
+        )
+    )
 
-    assert captured == {"path": "/deepseek/v1/responses", "body": {"model": "gpt-5.5", "input": "hello"}}
+    assert captured == {
+        "path": "/deepseek/v1/responses",
+        "body": {"model": "gpt-5.5", "input": "hello"},
+    }

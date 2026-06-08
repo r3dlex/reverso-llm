@@ -9,6 +9,7 @@ Run manually:
 Gateway must be listening on http://127.0.0.1:64946 and the session daemon
 must have its UDS at ~/Library/Application Support/reverso/daemon.sock.
 """
+
 from __future__ import annotations
 
 import os
@@ -26,12 +27,15 @@ pytestmark = [
 
 GATEWAY_URL = os.environ.get("REVERSO_GATEWAY_URL", "http://127.0.0.1:64946")
 # A workspace directory that exists on the developer machine.
-TEST_WORKSPACE = os.environ.get("REVERSO_TEST_WORKSPACE", os.path.expanduser("~/tmp/reverso-test"))
+TEST_WORKSPACE = os.environ.get(
+    "REVERSO_TEST_WORKSPACE", os.path.expanduser("~/tmp/reverso-test")
+)
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _chat(model: str, message: str, workspace: str) -> dict:
     """Send one chat completion request and return the parsed JSON response."""
@@ -54,6 +58,7 @@ def _chat(model: str, message: str, workspace: str) -> dict:
 # ---------------------------------------------------------------------------
 # Test plan: multi-turn session continuity
 # ---------------------------------------------------------------------------
+
 
 class TestMultiTurnSessionContinuity:
     """Send three sequential prompts and verify session_id is stable.
@@ -133,6 +138,7 @@ class TestMultiTurnSessionContinuity:
 # Test plan: idle timeout / session recycling
 # ---------------------------------------------------------------------------
 
+
 class TestIdleSessionRecycling:
     """Verify that idle sessions are recycled after the timeout elapses.
 
@@ -149,7 +155,9 @@ class TestIdleSessionRecycling:
     by commenting out the skip decorator and waiting.
     """
 
-    @pytest.mark.skip(reason="idle timeout test requires 35+ minute wait - run manually")
+    @pytest.mark.skip(
+        reason="idle timeout test requires 35+ minute wait - run manually"
+    )
     def test_idle_session_recycled(self) -> None:
         """Session created, left idle 35 min, then a new turn creates a new session."""
         import time
@@ -180,6 +188,7 @@ class TestIdleSessionRecycling:
 # ---------------------------------------------------------------------------
 # Test plan: daemon fallback when daemon is unavailable
 # ---------------------------------------------------------------------------
+
 
 class TestDaemonFallback:
     """Verify that providers fall back to stateless mode when daemon is down.

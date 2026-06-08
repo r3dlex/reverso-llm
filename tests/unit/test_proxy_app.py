@@ -1,4 +1,5 @@
 """Unit tests for the Reverso proxy ASGI wrapper."""
+
 from __future__ import annotations
 
 import importlib
@@ -26,10 +27,12 @@ def test_proxy_app_imports_with_config_file_path() -> None:
 async def test_proxy_app_lifespan_starts_with_config_file_path() -> None:
     os.environ["CONFIG_FILE_PATH"] = "config/litellm_config.yaml"
     module = importlib.import_module("reverso.proxy.app")
-    events = iter([
-        {"type": "lifespan.startup"},
-        {"type": "lifespan.shutdown"},
-    ])
+    events = iter(
+        [
+            {"type": "lifespan.startup"},
+            {"type": "lifespan.shutdown"},
+        ]
+    )
     sent: list[dict] = []
 
     async def receive() -> dict:
