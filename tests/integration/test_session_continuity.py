@@ -209,6 +209,6 @@ class TestDaemonFallback:
         text = r["choices"][0]["message"]["content"]
         assert text.strip(), "Empty response during fallback"
         warnings = r.get("x_gateway", {}).get("warnings", [])
-        assert any("daemon_unavailable" in w for w in warnings), (
-            f"Expected daemon_unavailable warning, got: {warnings!r}"
-        )
+        assert any(
+            "daemon_unavailable" in w for w in warnings
+        ), f"Expected daemon_unavailable warning, got: {warnings!r}"
