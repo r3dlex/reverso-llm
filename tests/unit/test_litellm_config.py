@@ -1,4 +1,5 @@
 """Unit tests for LiteLLM proxy config."""
+
 from pathlib import Path
 
 import yaml

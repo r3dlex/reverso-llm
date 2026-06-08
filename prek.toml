@@ -1,0 +1,31 @@
+# prek.toml — pre-commit hook configuration for reverso
+# See https://prek.j178.dev/ for documentation.
+#
+# mypy was previously wired in here but is not part of the v3 scaffold
+# contract and would need the project's full runtime dependencies
+# (httpx, litellm, fastapi, pydantic, uvicorn, psutil, ...) installed
+# as additional_dependencies for it to import-resolve. The repo's
+# pyproject.toml already pins the dev group, and a dedicated mypy run
+# should be added to .github/workflows/ci.yml when type checking is
+# wanted in CI. For now, pre-commit only enforces the basic file
+# hygiene and ruff checks.
+
+[[repos]]
+repo = "https://github.com/pre-commit/pre-commit-hooks"
+rev = "v4.6.0"
+hooks = [
+  { id = "check-yaml", pass_filenames = false },
+  { id = "check-json", pass_filenames = false },
+  { id = "check-toml", pass_filenames = false },
+  { id = "check-merge-conflict", pass_filenames = false },
+  { id = "end-of-file-fixer", pass_filenames = false },
+  { id = "trailing-whitespace", pass_filenames = false },
+]
+
+[[repos]]
+repo = "https://github.com/astral-sh/ruff-pre-commit"
+rev = "v0.6.0"
+hooks = [
+  { id = "ruff", args = ["--fix"], pass_filenames = false },
+  { id = "ruff-format", pass_filenames = false },
+]

@@ -1,4 +1,5 @@
 """Unit tests for the Reverso proxy entrypoint."""
+
 from __future__ import annotations
 
 import pytest

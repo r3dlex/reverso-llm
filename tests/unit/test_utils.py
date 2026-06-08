@@ -1,6 +1,10 @@
 """Unit tests for reverso.proxy.utils."""
-import pytest
-from reverso.proxy.utils import strip_think_blocks, last_user_message, StreamingThinkStripper
+
+from reverso.proxy.utils import (
+    strip_think_blocks,
+    last_user_message,
+    StreamingThinkStripper,
+)
 
 
 def test_strip_think_blocks_no_blocks():
@@ -41,7 +45,15 @@ def test_last_user_message_last_wins():
 
 
 def test_last_user_message_content_parts():
-    messages = [{"role": "user", "content": [{"type": "text", "text": "hello"}, {"type": "text", "text": "world"}]}]
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "hello"},
+                {"type": "text", "text": "world"},
+            ],
+        }
+    ]
     assert last_user_message(messages) == "hello\nworld"
 
 

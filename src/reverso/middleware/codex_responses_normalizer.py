@@ -1,4 +1,5 @@
 """Normalize Codex Responses requests for provider profile compatibility."""
+
 from __future__ import annotations
 
 import json
@@ -34,13 +35,19 @@ async def _read_body(receive: Receive) -> tuple[bytes | None, bool]:
             return b"".join(chunks), False
 
 
-def _headers_with_content_length(headers: list[tuple[bytes, bytes]], length: int) -> list[tuple[bytes, bytes]]:
-    filtered = [(key, value) for key, value in headers if key.lower() != b"content-length"]
+def _headers_with_content_length(
+    headers: list[tuple[bytes, bytes]], length: int
+) -> list[tuple[bytes, bytes]]:
+    filtered = [
+        (key, value) for key, value in headers if key.lower() != b"content-length"
+    ]
     filtered.append((b"content-length", str(length).encode("ascii")))
     return filtered
 
 
-def _receive_replay(body: bytes | None, disconnected: bool, source_receive: Receive) -> Receive:
+def _receive_replay(
+    body: bytes | None, disconnected: bool, source_receive: Receive
+) -> Receive:
     sent = False
 
     async def receive() -> dict[str, Any]:
@@ -68,7 +75,11 @@ def _content_to_text(content: Any) -> str:
 
 
 def _is_assistant_message_item(item: Any) -> bool:
-    return isinstance(item, dict) and item.get("type") == "message" and item.get("role") == "assistant"
+    return (
+        isinstance(item, dict)
+        and item.get("type") == "message"
+        and item.get("role") == "assistant"
+    )
 
 
 def _sanitize_input_tool_sequence(items: list[Any]) -> list[Any]:
@@ -120,20 +131,39 @@ def normalize_codex_responses_payload(payload: dict[str, Any]) -> dict[str, Any]
                 continue
             rewritten_input.append(item)
         if developer_chunks:
-            prefix = data.get("instructions") if isinstance(data.get("instructions"), str) else ""
+            prefix = (
+                data.get("instructions")
+                if isinstance(data.get("instructions"), str)
+                else ""
+            )
             merged = "\n\n".join(
-                part for part in [prefix, "Developer instructions:\n" + "\n\n".join(developer_chunks)] if part
+                part
+                for part in [
+                    prefix,
+                    "Developer instructions:\n" + "\n\n".join(developer_chunks),
+                ]
+                if part
             )
             data["instructions"] = merged
         data["input"] = _sanitize_input_tool_sequence(rewritten_input)
 
     tools = data.get("tools")
     if isinstance(tools, list):
-        function_tools = [tool for tool in tools if isinstance(tool, dict) and tool.get("type") == "function"]
+        function_tools = [
+            tool
+            for tool in tools
+            if isinstance(tool, dict) and tool.get("type") == "function"
+        ]
         if function_tools:
             data["tools"] = function_tools
-            function_tool_names = {tool["name"] for tool in function_tools if isinstance(tool.get("name"), str)}
-            if "tool_choice" in data and not _is_valid_tool_choice(data["tool_choice"], function_tool_names):
+            function_tool_names = {
+                tool["name"]
+                for tool in function_tools
+                if isinstance(tool.get("name"), str)
+            }
+            if "tool_choice" in data and not _is_valid_tool_choice(
+                data["tool_choice"], function_tool_names
+            ):
                 data.pop("tool_choice", None)
         else:
             data.pop("tools", None)
@@ -182,5 +212,7 @@ class CodexResponsesNormalizerMiddleware:
         if body is not None:
             body = _normalize_body(body)
             scope = dict(scope)
-            scope["headers"] = _headers_with_content_length(list(scope.get("headers", [])), len(body))
+            scope["headers"] = _headers_with_content_length(
+                list(scope.get("headers", [])), len(body)
+            )
         await self.app(scope, _receive_replay(body, disconnected, receive), send)

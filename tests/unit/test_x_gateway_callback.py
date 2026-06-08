@@ -1,4 +1,5 @@
 """Unit tests for x_gateway response envelope callback."""
+
 from __future__ import annotations
 
 from types import SimpleNamespace

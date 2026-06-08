@@ -3,6 +3,7 @@
 Each session is keyed by (machine_id, workspace_abs_path, provider_name) and
 holds a reference to the long-lived CLI subprocess along with lifecycle metadata.
 """
+
 from __future__ import annotations
 
 import asyncio

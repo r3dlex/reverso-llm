@@ -198,3 +198,8 @@ Start the proxy in the foreground for debugging:
 ## License
 
 Personal use. Public repository so others can adapt it for their own subscriptions. Not for commercial use.
+
+<!-- v3-ai-sdlc-init:start -->
+## AI SDLC v3
+This repo follows the v3 AI-SDLC layout. See `.ai/matrix.json`, `.memory/human-override/`, and `docs/architecture/adr/`. Modules at `r3dlex/skills/ai-sdlc-init/modules/`.
+<!-- v3-ai-sdlc-init:end -->

@@ -4,6 +4,7 @@ Starts the LiteLLM proxy server with the reverso litellm_config.yaml.
 Reads Keychain secrets at startup and injects them into the environment
 before handing off to LiteLLM.
 """
+
 from __future__ import annotations
 
 import os
@@ -17,7 +18,11 @@ def _resolve_config_path() -> Path:
     if override:
         return Path(override).expanduser()
     # src/reverso/proxy/main.py -> ../../../ = reverso/
-    return Path(__file__).resolve().parent.parent.parent.parent / "config" / "litellm_config.yaml"
+    return (
+        Path(__file__).resolve().parent.parent.parent.parent
+        / "config"
+        / "litellm_config.yaml"
+    )
 
 
 _CONFIG_PATH = _resolve_config_path()
@@ -60,7 +65,9 @@ def _resolve_host() -> str:
     """Return the only supported bind host for Reverso."""
     host = os.environ.get("REVERSO_HOST", "127.0.0.1")
     if host != "127.0.0.1":
-        raise ValueError("REVERSO_HOST must be 127.0.0.1; non-loopback binds are forbidden")
+        raise ValueError(
+            "REVERSO_HOST must be 127.0.0.1; non-loopback binds are forbidden"
+        )
     return host
 
 
@@ -84,7 +91,10 @@ def main() -> None:
 
         host = _resolve_host()
         port = int(os.environ.get("REVERSO_PORT", "64946"))
-        print(f"Starting reverso proxy on {host}:{port} (config: {config_path})", flush=True)
+        print(
+            f"Starting reverso proxy on {host}:{port} (config: {config_path})",
+            flush=True,
+        )
         uvicorn.run(
             "reverso.proxy.app:app",
             host=host,

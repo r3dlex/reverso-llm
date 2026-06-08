@@ -1,4 +1,5 @@
 """Documentation regression tests for Reverso installation guidance."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -27,7 +28,9 @@ def test_readme_documents_reverso_profiles_and_direct_minimax() -> None:
         assert needle in text
 
 
-def test_readme_reverso_profile_examples_do_not_use_provider_model_ids_as_codex_models() -> None:
+def test_readme_reverso_profile_examples_do_not_use_provider_model_ids_as_codex_models() -> (
+    None
+):
     text = Path("README.md").read_text()
 
     forbidden_reverso_examples = [

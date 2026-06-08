@@ -1,4 +1,5 @@
 """Tests for custom CLI provider streaming contracts."""
+
 from __future__ import annotations
 
 import pytest
@@ -7,7 +8,9 @@ from reverso.proxy import anthropic_cli_provider, openai_cli_provider
 
 
 @pytest.mark.asyncio
-async def test_anthropic_astreaming_is_async_iterator(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_anthropic_astreaming_is_async_iterator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(
         anthropic_cli_provider,
         "_run_turn_stream",
@@ -25,7 +28,9 @@ async def test_anthropic_astreaming_is_async_iterator(monkeypatch: pytest.Monkey
 
 
 @pytest.mark.asyncio
-async def test_openai_astreaming_is_async_iterator(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_openai_astreaming_is_async_iterator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(
         openai_cli_provider,
         "_run_turn_stream",
@@ -42,23 +47,34 @@ async def test_openai_astreaming_is_async_iterator(monkeypatch: pytest.MonkeyPat
     assert chunks[-1]["is_finished"] is True
 
 
-def test_anthropic_streaming_uses_daemon_deltas_and_strips_think(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_anthropic_streaming_uses_daemon_deltas_and_strips_think(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(anthropic_cli_provider, "daemon_available", lambda sock: True)
     monkeypatch.setattr(
         anthropic_cli_provider,
         "stream_daemon",
-        lambda *args, **kwargs: iter([
-            {"type": "delta", "delta": "<think>hidden"},
-            {"type": "delta", "delta": "</think>Hello"},
-            {"type": "delta", "delta": " there"},
-            {"type": "completed", "assistant_text": "Hello there", "session_id": "sid", "observations": []},
-        ]),
+        lambda *args, **kwargs: iter(
+            [
+                {"type": "delta", "delta": "<think>hidden"},
+                {"type": "delta", "delta": "</think>Hello"},
+                {"type": "delta", "delta": " there"},
+                {
+                    "type": "completed",
+                    "assistant_text": "Hello there",
+                    "session_id": "sid",
+                    "observations": [],
+                },
+            ]
+        ),
     )
 
-    chunks = list(anthropic_cli_provider.anthropic_cli.streaming(
-        model="custom/claude-sonnet-4-6",
-        messages=[{"role": "user", "content": "hello"}],
-    ))
+    chunks = list(
+        anthropic_cli_provider.anthropic_cli.streaming(
+            model="custom/claude-sonnet-4-6",
+            messages=[{"role": "user", "content": "hello"}],
+        )
+    )
 
     assert [chunk["text"] for chunk in chunks[:-1]] == ["Hello", " there"]
     assert chunks[-1]["is_finished"] is True
@@ -69,23 +85,34 @@ def test_openai_streaming_uses_daemon_deltas(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(
         openai_cli_provider,
         "stream_daemon",
-        lambda *args, **kwargs: iter([
-            {"type": "delta", "delta": "one"},
-            {"type": "delta", "delta": " two"},
-            {"type": "completed", "assistant_text": "one two", "session_id": "sid", "observations": []},
-        ]),
+        lambda *args, **kwargs: iter(
+            [
+                {"type": "delta", "delta": "one"},
+                {"type": "delta", "delta": " two"},
+                {
+                    "type": "completed",
+                    "assistant_text": "one two",
+                    "session_id": "sid",
+                    "observations": [],
+                },
+            ]
+        ),
     )
 
-    chunks = list(openai_cli_provider.openai_cli.streaming(
-        model="custom/gpt-5.5",
-        messages=[{"role": "user", "content": "hello"}],
-    ))
+    chunks = list(
+        openai_cli_provider.openai_cli.streaming(
+            model="custom/gpt-5.5",
+            messages=[{"role": "user", "content": "hello"}],
+        )
+    )
 
     assert [chunk["text"] for chunk in chunks[:-1]] == ["one", " two"]
     assert chunks[-1]["is_finished"] is True
 
 
-def test_anthropic_daemon_http_status_error_does_not_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_anthropic_daemon_http_status_error_does_not_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import httpx
 
     request = httpx.Request("POST", "http://daemon/session/turn")
@@ -95,29 +122,37 @@ def test_anthropic_daemon_http_status_error_does_not_fallback(monkeypatch: pytes
     monkeypatch.setattr(
         anthropic_cli_provider,
         "call_daemon",
-        lambda *args, **kwargs: (_ for _ in ()).throw(httpx.HTTPStatusError("boom", request=request, response=response)),
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            httpx.HTTPStatusError("boom", request=request, response=response)
+        ),
     )
     monkeypatch.setattr(
         anthropic_cli_provider,
         "_invoke_claude",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should not fallback")),
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("should not fallback")
+        ),
     )
 
     with pytest.raises(httpx.HTTPStatusError):
         anthropic_cli_provider._run_turn("hello", "claude-sonnet-4-6", None, 5)
 
 
-def test_anthropic_daemon_turn_uses_request_workspace(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_anthropic_daemon_turn_uses_request_workspace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     captured = {}
 
     def fake_call_daemon(sock, workspace, provider, user_message, model, timeout):
-        captured.update({
-            "workspace": workspace,
-            "provider": provider,
-            "user_message": user_message,
-            "model": model,
-            "timeout": timeout,
-        })
+        captured.update(
+            {
+                "workspace": workspace,
+                "provider": provider,
+                "user_message": user_message,
+                "model": model,
+                "timeout": timeout,
+            }
+        )
         return {"assistant_text": "OK", "session_id": "sid", "observations": []}
 
     monkeypatch.setattr(anthropic_cli_provider, "daemon_available", lambda sock: True)
@@ -143,18 +178,22 @@ def test_anthropic_daemon_turn_uses_request_workspace(monkeypatch: pytest.Monkey
     }
 
 
-def test_anthropic_completion_reads_profile_workspace_context(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_anthropic_completion_reads_profile_workspace_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from reverso.proxy.profile_routing import CURRENT_PROFILE_WORKSPACE
 
     captured = {}
 
     def fake_run_turn(prompt, model_flag, workspace, timeout):
-        captured.update({
-            "prompt": prompt,
-            "model_flag": model_flag,
-            "workspace": workspace,
-            "timeout": timeout,
-        })
+        captured.update(
+            {
+                "prompt": prompt,
+                "model_flag": model_flag,
+                "workspace": workspace,
+                "timeout": timeout,
+            }
+        )
         return "OK", "sid", [], []
 
     monkeypatch.setattr(anthropic_cli_provider, "_run_turn", fake_run_turn)
@@ -177,18 +216,22 @@ def test_anthropic_completion_reads_profile_workspace_context(monkeypatch: pytes
     }
 
 
-def test_anthropic_stateless_fallback_uses_request_workspace(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_anthropic_stateless_fallback_uses_request_workspace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import httpx
 
     captured = {}
 
     def fake_invoke(prompt, model_flag, workspace=None, timeout=300):
-        captured.update({
-            "prompt": prompt,
-            "model_flag": model_flag,
-            "workspace": workspace,
-            "timeout": timeout,
-        })
+        captured.update(
+            {
+                "prompt": prompt,
+                "model_flag": model_flag,
+                "workspace": workspace,
+                "timeout": timeout,
+            }
+        )
         return {"result": "OK", "session_id": "fallback-sid"}
 
     monkeypatch.setattr(anthropic_cli_provider, "daemon_available", lambda sock: True)
@@ -218,8 +261,9 @@ def test_anthropic_stateless_fallback_uses_request_workspace(monkeypatch: pytest
     }
 
 
-
-def test_openai_daemon_http_status_error_does_not_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_openai_daemon_http_status_error_does_not_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import httpx
 
     request = httpx.Request("POST", "http://daemon/session/turn")
@@ -229,12 +273,16 @@ def test_openai_daemon_http_status_error_does_not_fallback(monkeypatch: pytest.M
     monkeypatch.setattr(
         openai_cli_provider,
         "call_daemon",
-        lambda *args, **kwargs: (_ for _ in ()).throw(httpx.HTTPStatusError("boom", request=request, response=response)),
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            httpx.HTTPStatusError("boom", request=request, response=response)
+        ),
     )
     monkeypatch.setattr(
         openai_cli_provider,
         "_invoke_codex",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("should not fallback")),
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("should not fallback")
+        ),
     )
 
     with pytest.raises(httpx.HTTPStatusError):

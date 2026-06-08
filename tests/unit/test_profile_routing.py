@@ -1,4 +1,5 @@
 """Unit tests for Codex profile-path model routing."""
+
 from __future__ import annotations
 
 import asyncio
@@ -24,7 +25,9 @@ def test_resolve_deepseek_profile_models_by_tier() -> None:
     assert resolve_profile_model("deepseek", "gpt-5.5") == "deepseek-v4-pro"
     assert resolve_profile_model("deepseek", "gpt-5.4") == "deepseek-v4-pro"
     assert resolve_profile_model("deepseek", "gpt-5.4-mini") == "deepseek-v4-flash"
-    assert resolve_profile_model("deepseek", "gpt-5.3-codex-spark") == "deepseek-v4-flash"
+    assert (
+        resolve_profile_model("deepseek", "gpt-5.3-codex-spark") == "deepseek-v4-flash"
+    )
 
 
 def test_resolve_claude_profile_models_by_tier() -> None:
@@ -52,7 +55,9 @@ def test_resolve_claude_profile_models_by_tier() -> None:
         ("claude", "gpt-5.3-codex-spark", "claude-sonnet-4-6"),
     ],
 )
-def test_requested_provider_profile_mapping_matrix(profile: str, model: str, expected: str) -> None:
+def test_requested_provider_profile_mapping_matrix(
+    profile: str, model: str, expected: str
+) -> None:
     assert resolve_profile_model(profile, model) == expected
 
 
@@ -84,7 +89,13 @@ def test_profile_middleware_rewrites_path_and_model() -> None:
     async def send(_message):
         return None
 
-    asyncio.run(middleware({"type": "http", "method": "POST", "path": "/deepseek/v1/responses"}, receive, send))
+    asyncio.run(
+        middleware(
+            {"type": "http", "method": "POST", "path": "/deepseek/v1/responses"},
+            receive,
+            send,
+        )
+    )
 
     assert captured == {
         "path": "/v1/responses",
@@ -92,8 +103,12 @@ def test_profile_middleware_rewrites_path_and_model() -> None:
     }
 
 
-@pytest.mark.parametrize("model", ["gpt-5.5", "gpt-5.4", "custom/gpt-5.5", "custom/gpt-5.4"])
-def test_claude_profile_middleware_rewrites_frontier_models_to_opus_4_8(model: str) -> None:
+@pytest.mark.parametrize(
+    "model", ["gpt-5.5", "gpt-5.4", "custom/gpt-5.5", "custom/gpt-5.4"]
+)
+def test_claude_profile_middleware_rewrites_frontier_models_to_opus_4_8(
+    model: str,
+) -> None:
     captured = {}
 
     async def app(scope, receive, send):
@@ -113,7 +128,13 @@ def test_claude_profile_middleware_rewrites_frontier_models_to_opus_4_8(model: s
     async def send(_message):
         return None
 
-    asyncio.run(middleware({"type": "http", "method": "POST", "path": "/claude/v1/responses"}, receive, send))
+    asyncio.run(
+        middleware(
+            {"type": "http", "method": "POST", "path": "/claude/v1/responses"},
+            receive,
+            send,
+        )
+    )
 
     assert captured == {
         "path": "/v1/responses",
@@ -148,16 +169,20 @@ def test_claude_profile_injects_single_codex_workspace_metadata() -> None:
     async def send(_message):
         return None
 
-    asyncio.run(middleware(
-        {
-            "type": "http",
-            "method": "POST",
-            "path": "/claude/v1/responses",
-            "headers": [(b"x-codex-turn-metadata", json.dumps(metadata).encode("utf-8"))],
-        },
-        receive,
-        send,
-    ))
+    asyncio.run(
+        middleware(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/claude/v1/responses",
+                "headers": [
+                    (b"x-codex-turn-metadata", json.dumps(metadata).encode("utf-8"))
+                ],
+            },
+            receive,
+            send,
+        )
+    )
 
     assert captured["body"] == {
         "model": "claude-opus-4-8",
@@ -188,20 +213,22 @@ def test_profile_routing_preserves_explicit_x_gateway_workspace() -> None:
     async def send(_message):
         return None
 
-    asyncio.run(middleware(
-        {
-            "type": "http",
-            "method": "POST",
-            "path": "/claude/v1/responses",
-            "headers": [(b"x-codex-turn-metadata", json.dumps(metadata).encode("utf-8"))],
-        },
-        receive,
-        send,
-    ))
+    asyncio.run(
+        middleware(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/claude/v1/responses",
+                "headers": [
+                    (b"x-codex-turn-metadata", json.dumps(metadata).encode("utf-8"))
+                ],
+            },
+            receive,
+            send,
+        )
+    )
 
     assert captured["body"]["x_gateway"]["workspace"] == "/tmp/explicit"
-
-
 
 
 def test_non_claude_profiles_do_not_forward_x_gateway_to_custom_openai() -> None:
@@ -225,16 +252,20 @@ def test_non_claude_profiles_do_not_forward_x_gateway_to_custom_openai() -> None
     async def send(_message):
         return None
 
-    asyncio.run(middleware(
-        {
-            "type": "http",
-            "method": "POST",
-            "path": "/deepseek/v1/responses",
-            "headers": [(b"x-codex-turn-metadata", json.dumps(metadata).encode("utf-8"))],
-        },
-        receive,
-        send,
-    ))
+    asyncio.run(
+        middleware(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/deepseek/v1/responses",
+                "headers": [
+                    (b"x-codex-turn-metadata", json.dumps(metadata).encode("utf-8"))
+                ],
+            },
+            receive,
+            send,
+        )
+    )
 
     assert captured["body"] == {"model": "deepseek-v4-pro", "input": "hello"}
     assert captured["context_workspace"] == "/tmp/explicit"
@@ -260,16 +291,18 @@ def test_profile_routing_ignores_malformed_codex_workspace_metadata() -> None:
     async def send(_message):
         return None
 
-    asyncio.run(middleware(
-        {
-            "type": "http",
-            "method": "POST",
-            "path": "/claude/v1/responses",
-            "headers": [(b"x-codex-turn-metadata", b"{not-json")],
-        },
-        receive,
-        send,
-    ))
+    asyncio.run(
+        middleware(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/claude/v1/responses",
+                "headers": [(b"x-codex-turn-metadata", b"{not-json")],
+            },
+            receive,
+            send,
+        )
+    )
 
     assert captured["body"] == {"model": "claude-opus-4-8", "input": "hello"}
 
@@ -304,7 +337,13 @@ def test_profile_middleware_post_body_receive_waits_for_client_event() -> None:
     async def send(_message):
         return None
 
-    asyncio.run(middleware({"type": "http", "method": "POST", "path": "/deepseek/v1/responses"}, receive, send))
+    asyncio.run(
+        middleware(
+            {"type": "http", "method": "POST", "path": "/deepseek/v1/responses"},
+            receive,
+            send,
+        )
+    )
 
     assert captured == {
         "first": {"model": "deepseek-v4-pro", "input": "hello"},
@@ -319,7 +358,9 @@ def test_profile_middleware_post_body_receive_waits_for_client_event() -> None:
         ("/claude/v1/chat/completions", "claude-opus-4-8"),
     ],
 )
-def test_profile_and_error_middlewares_keep_stream_open_until_completion(path: str, expected_model: str) -> None:
+def test_profile_and_error_middlewares_keep_stream_open_until_completion(
+    path: str, expected_model: str
+) -> None:
     release = asyncio.Event()
     captured = {}
     sent = []
@@ -330,13 +371,27 @@ def test_profile_and_error_middlewares_keep_stream_open_until_completion(path: s
         disconnect_task = asyncio.create_task(receive())
         await asyncio.sleep(0.01)
         captured["disconnect_before_stream_done"] = disconnect_task.done()
-        await send({
-            "type": "http.response.start",
-            "status": 200,
-            "headers": [(b"content-type", b"text/event-stream")],
-        })
-        await send({"type": "http.response.body", "body": b"data: one\\n\\n", "more_body": True})
-        await send({"type": "http.response.body", "body": b"data: [DONE]\\n\\n", "more_body": False})
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [(b"content-type", b"text/event-stream")],
+            }
+        )
+        await send(
+            {
+                "type": "http.response.body",
+                "body": b"data: one\\n\\n",
+                "more_body": True,
+            }
+        )
+        await send(
+            {
+                "type": "http.response.body",
+                "body": b"data: [DONE]\\n\\n",
+                "more_body": False,
+            }
+        )
         release.set()
         captured["disconnect_after_stream_done"] = await disconnect_task
 
@@ -390,7 +445,13 @@ def test_profile_middleware_replays_disconnect_without_looping() -> None:
     async def send(_message):
         return None
 
-    asyncio.run(middleware({"type": "http", "method": "POST", "path": "/deepseek/v1/responses"}, receive, send))
+    asyncio.run(
+        middleware(
+            {"type": "http", "method": "POST", "path": "/deepseek/v1/responses"},
+            receive,
+            send,
+        )
+    )
 
     assert calls == 1
     assert captured == {
@@ -412,7 +473,13 @@ def test_profile_routing_targets_exist_in_configs() -> None:
     routed_models = {
         resolve_profile_model(profile, model)
         for profile in ("deepseek", "claude")
-        for model in ("gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex-spark", "gpt-4.1")
+        for model in (
+            "gpt-5.5",
+            "gpt-5.4",
+            "gpt-5.4-mini",
+            "gpt-5.3-codex-spark",
+            "gpt-4.1",
+        )
     }
 
     assert routed_models <= runtime_names
@@ -427,10 +494,12 @@ def test_claude_profile_active_configs_do_not_expose_opus_4_7() -> None:
     with open("config/models.yaml") as f:
         registry_config = yaml.safe_load(f)
 
-    active_model_values = json.dumps({
-        "runtime": runtime_config["model_list"],
-        "registry": registry_config["model_list"],
-    })
+    active_model_values = json.dumps(
+        {
+            "runtime": runtime_config["model_list"],
+            "registry": registry_config["model_list"],
+        }
+    )
 
     assert "claude-opus-4-8" in active_model_values
     assert "claude-opus-4-7" not in active_model_values
@@ -456,7 +525,11 @@ def test_direct_codex_route_keeps_gpt_model_names() -> None:
     async def send(_message):
         return None
 
-    asyncio.run(middleware({"type": "http", "method": "POST", "path": "/v1/responses"}, receive, send))
+    asyncio.run(
+        middleware(
+            {"type": "http", "method": "POST", "path": "/v1/responses"}, receive, send
+        )
+    )
 
     assert captured == {
         "path": "/v1/responses",

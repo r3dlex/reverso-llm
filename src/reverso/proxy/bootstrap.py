@@ -1,4 +1,5 @@
 """LiteLLM extension bootstrap for Reverso."""
+
 from __future__ import annotations
 
 import litellm

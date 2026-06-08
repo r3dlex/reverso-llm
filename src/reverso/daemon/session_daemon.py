@@ -10,12 +10,12 @@ Endpoints:
 The daemon is started by reverso.daemon.main and listens on the UDS path
 configured in config.yaml (daemon_socket).
 """
+
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
-import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, AsyncIterator
@@ -41,6 +41,7 @@ _session_table: SessionTable = SessionTable()
 # Request / response models
 # ---------------------------------------------------------------------------
 
+
 class TurnRequest(BaseModel):
     workspace: str
     provider: str  # "anthropic" or "openai"
@@ -57,6 +58,7 @@ class TurnResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # Subprocess spawn helpers
 # ---------------------------------------------------------------------------
+
 
 def _resolve_workspace(workspace: str) -> str:
     """Expand ~ and resolve to an absolute path string."""
@@ -83,7 +85,8 @@ async def _spawn_claude(workspace: str, model: str) -> asyncio.subprocess.Proces
     # Spawn a minimal placeholder process (sleep) as the session sentinel.
     # Real turn execution spawns per-turn subprocesses with --resume.
     proc = await asyncio.create_subprocess_exec(
-        "sleep", "infinity",
+        "sleep",
+        "infinity",
         cwd=resolved,
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.DEVNULL,
@@ -96,7 +99,8 @@ async def _spawn_codex(workspace: str, model: str) -> asyncio.subprocess.Process
     """Spawn a codex sentinel process for session tracking."""
     resolved = _resolve_workspace(workspace)
     proc = await asyncio.create_subprocess_exec(
-        "sleep", "infinity",
+        "sleep",
+        "infinity",
         cwd=resolved,
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.DEVNULL,
@@ -108,6 +112,7 @@ async def _spawn_codex(workspace: str, model: str) -> asyncio.subprocess.Process
 # ---------------------------------------------------------------------------
 # Per-turn CLI invocation helpers
 # ---------------------------------------------------------------------------
+
 
 async def _aiter_lines(stream: asyncio.StreamReader) -> AsyncIterator[str]:
     """Async-iterate over lines from an asyncio StreamReader."""
@@ -132,10 +137,13 @@ async def _run_claude_turn(
     resolved = _resolve_workspace(workspace)
     cmd = [
         resolve_cli_command("claude", "REVERSO_CLAUDE_BIN"),
-        "-p", user_message,
-        "--output-format", "stream-json",
+        "-p",
+        user_message,
+        "--output-format",
+        "stream-json",
         "--verbose",
-        "--model", model,
+        "--model",
+        model,
         "--dangerously-skip-permissions",
     ]
     if session.cli_session_id:
@@ -154,9 +162,7 @@ async def _run_claude_turn(
 
     try:
         parser = ClaudeCodeParser()
-        parse_task = asyncio.create_task(
-            parser.parse_stream(_aiter_lines(proc.stdout))
-        )
+        parse_task = asyncio.create_task(parser.parse_stream(_aiter_lines(proc.stdout)))
         try:
             assistant_text, observations = await asyncio.wait_for(
                 parse_task, timeout=timeout
@@ -201,20 +207,30 @@ async def _run_codex_turn(
         # Resume an existing thread.
         cmd = [
             resolve_cli_command("codex", "REVERSO_CODEX_BIN"),
-            "exec", "resume", session.cli_session_id, user_message,
+            "exec",
+            "resume",
+            session.cli_session_id,
+            user_message,
             "--json",
-            "-s", "workspace-write",
-            "--model", model,
-            "-c", "skip_git_repo_check=true",
+            "-s",
+            "workspace-write",
+            "--model",
+            model,
+            "-c",
+            "skip_git_repo_check=true",
         ]
     else:
         cmd = [
             resolve_cli_command("codex", "REVERSO_CODEX_BIN"),
-            "exec", user_message,
+            "exec",
+            user_message,
             "--json",
-            "-s", "workspace-write",
-            "--model", model,
-            "-c", "skip_git_repo_check=true",
+            "-s",
+            "workspace-write",
+            "--model",
+            model,
+            "-c",
+            "skip_git_repo_check=true",
         ]
 
     logger.debug("Codex turn cmd: %s cwd=%s", cmd, resolved)
@@ -230,9 +246,7 @@ async def _run_codex_turn(
 
     try:
         parser = CodexCLIParser()
-        parse_task = asyncio.create_task(
-            parser.parse_stream(_aiter_lines(proc.stdout))
-        )
+        parse_task = asyncio.create_task(parser.parse_stream(_aiter_lines(proc.stdout)))
         try:
             assistant_text, observations = await asyncio.wait_for(
                 parse_task, timeout=timeout
@@ -246,9 +260,7 @@ async def _run_codex_turn(
         if proc.returncode != 0:
             stderr_bytes = await proc.stderr.read() if proc.stderr else b""
             stderr_text = stderr_bytes.decode("utf-8", errors="replace")[:500]
-            raise RuntimeError(
-                f"codex exited {proc.returncode}; stderr: {stderr_text}"
-            )
+            raise RuntimeError(f"codex exited {proc.returncode}; stderr: {stderr_text}")
 
         thread_id = getattr(parser, "thread_id", None)
 
@@ -263,7 +275,6 @@ async def _run_codex_turn(
     return assistant_text, observations, thread_id
 
 
-
 async def _stream_claude_turn(
     session: Session,
     user_message: str,
@@ -275,10 +286,13 @@ async def _stream_claude_turn(
     resolved = _resolve_workspace(workspace)
     cmd = [
         resolve_cli_command("claude", "REVERSO_CLAUDE_BIN"),
-        "-p", user_message,
-        "--output-format", "stream-json",
+        "-p",
+        user_message,
+        "--output-format",
+        "stream-json",
         "--verbose",
-        "--model", model,
+        "--model",
+        model,
         "--dangerously-skip-permissions",
     ]
     if session.cli_session_id:
@@ -330,7 +344,7 @@ async def _stream_claude_turn(
                             text = str(content_item.get("text", ""))
                             previous = seen_text_by_index.get(index, "")
                             if text.startswith(previous):
-                                delta = text[len(previous):]
+                                delta = text[len(previous) :]
                             elif text != previous:
                                 delta = text
                             else:
@@ -351,27 +365,41 @@ async def _stream_claude_turn(
                     if not isinstance(content_list, list):
                         continue
                     for content_item in content_list:
-                        if not isinstance(content_item, dict) or content_item.get("type") != "tool_result":
+                        if (
+                            not isinstance(content_item, dict)
+                            or content_item.get("type") != "tool_result"
+                        ):
                             continue
                         tool_use_id = content_item.get("tool_use_id", "")
                         raw_content = content_item.get("content", "")
                         if isinstance(raw_content, list):
                             result_text = "".join(
-                                block.get("text", "") if isinstance(block, dict) else str(block)
+                                block.get("text", "")
+                                if isinstance(block, dict)
+                                else str(block)
                                 for block in raw_content
                             )
                         else:
                             result_text = str(raw_content) if raw_content else ""
-                        pending_item = pending.pop(tool_use_id, {"tool_name": "", "args": {}, "timestamp": datetime.now(timezone.utc).isoformat()})
+                        pending_item = pending.pop(
+                            tool_use_id,
+                            {
+                                "tool_name": "",
+                                "args": {},
+                                "timestamp": datetime.now(timezone.utc).isoformat(),
+                            },
+                        )
                         tool_name = str(pending_item["tool_name"])
-                        observations.append({
-                            "type": _obs_type_for_tool(tool_name),
-                            "tool_name": tool_name,
-                            "args": pending_item["args"],
-                            "is_error": bool(content_item.get("is_error", False)),
-                            "result_summary": result_text[:200],
-                            "timestamp": pending_item["timestamp"],
-                        })
+                        observations.append(
+                            {
+                                "type": _obs_type_for_tool(tool_name),
+                                "tool_name": tool_name,
+                                "args": pending_item["args"],
+                                "is_error": bool(content_item.get("is_error", False)),
+                                "result_summary": result_text[:200],
+                                "timestamp": pending_item["timestamp"],
+                            }
+                        )
                 elif event_type == "result":
                     if not session_id:
                         session_id = event.get("session_id")
@@ -380,15 +408,19 @@ async def _stream_claude_turn(
                     if final_text and not current_text:
                         async for item in emit_text(final_text):
                             yield item
-                    elif final_text.startswith(current_text) and len(final_text) > len(current_text):
-                        async for item in emit_text(final_text[len(current_text):]):
+                    elif final_text.startswith(current_text) and len(final_text) > len(
+                        current_text
+                    ):
+                        async for item in emit_text(final_text[len(current_text) :]):
                             yield item
 
         await proc.wait()
         if proc.returncode != 0:
             stderr_bytes = await proc.stderr.read() if proc.stderr else b""
             stderr_text = stderr_bytes.decode("utf-8", errors="replace")[:500]
-            raise RuntimeError(f"claude exited {proc.returncode}; stderr: {stderr_text}")
+            raise RuntimeError(
+                f"claude exited {proc.returncode}; stderr: {stderr_text}"
+            )
     except TimeoutError as exc:
         proc.kill()
         await proc.wait()
@@ -419,9 +451,11 @@ async def _stream_turn_events(req: TurnRequest) -> AsyncIterator[str]:
         raise HTTPException(status_code=400, detail=f"Unknown provider: {provider!r}")
 
     if provider == "anthropic":
+
         async def spawn_fn(ws: str, prov: str) -> asyncio.subprocess.Process:
             return await _spawn_claude(ws, model)
     else:
+
         async def spawn_fn(ws: str, prov: str) -> asyncio.subprocess.Process:
             return await _spawn_codex(ws, model)
 
@@ -431,7 +465,9 @@ async def _stream_turn_events(req: TurnRequest) -> AsyncIterator[str]:
         session.last_request_at = datetime.now(timezone.utc)
         try:
             if provider == "anthropic":
-                async for event in _stream_claude_turn(session, req.user_message, model, workspace):
+                async for event in _stream_claude_turn(
+                    session, req.user_message, model, workspace
+                ):
                     if event.get("type") == "completed":
                         session.turn_count += 1
                         if event.get("session_id"):
@@ -441,27 +477,46 @@ async def _stream_turn_events(req: TurnRequest) -> AsyncIterator[str]:
                             event["session_id"] = f"{prov}:{machine}:{ws}"
                     yield json.dumps(event, separators=(",", ":")) + "\n"
             else:
-                assistant_text, observations, cli_id = await _run_codex_turn(session, req.user_message, model, workspace)
+                assistant_text, observations, cli_id = await _run_codex_turn(
+                    session, req.user_message, model, workspace
+                )
                 if assistant_text:
-                    yield json.dumps({"type": "delta", "delta": assistant_text}, separators=(",", ":")) + "\n"
+                    yield (
+                        json.dumps(
+                            {"type": "delta", "delta": assistant_text},
+                            separators=(",", ":"),
+                        )
+                        + "\n"
+                    )
                 session.turn_count += 1
                 if cli_id:
                     session.cli_session_id = cli_id
                 machine, ws, prov = session.key
-                yield json.dumps({
-                    "type": "completed",
-                    "assistant_text": assistant_text,
-                    "observations": observations,
-                    "session_id": cli_id or f"{prov}:{machine}:{ws}",
-                }, separators=(",", ":")) + "\n"
+                yield (
+                    json.dumps(
+                        {
+                            "type": "completed",
+                            "assistant_text": assistant_text,
+                            "observations": observations,
+                            "session_id": cli_id or f"{prov}:{machine}:{ws}",
+                        },
+                        separators=(",", ":"),
+                    )
+                    + "\n"
+                )
         except RuntimeError as exc:
             await _session_table.remove(session.key)
             logger.error("Streaming turn failed for session %s: %s", session.key, exc)
-            yield json.dumps({"type": "error", "error": str(exc)}, separators=(",", ":")) + "\n"
+            yield (
+                json.dumps({"type": "error", "error": str(exc)}, separators=(",", ":"))
+                + "\n"
+            )
+
 
 # ---------------------------------------------------------------------------
 # FastAPI endpoints
 # ---------------------------------------------------------------------------
+
 
 @app.get("/health")
 async def health() -> dict[str, str]:
@@ -473,8 +528,12 @@ async def health() -> dict[str, str]:
 async def session_turn_stream(req: TurnRequest) -> StreamingResponse:
     """Execute one turn and stream newline-delimited JSON events."""
     if req.provider.lower() not in ("anthropic", "openai"):
-        raise HTTPException(status_code=400, detail=f"Unknown provider: {req.provider!r}")
-    return StreamingResponse(_stream_turn_events(req), media_type="application/x-ndjson")
+        raise HTTPException(
+            status_code=400, detail=f"Unknown provider: {req.provider!r}"
+        )
+    return StreamingResponse(
+        _stream_turn_events(req), media_type="application/x-ndjson"
+    )
 
 
 @app.post("/session/turn", response_model=TurnResponse)
@@ -492,9 +551,11 @@ async def session_turn(req: TurnRequest) -> TurnResponse:
         raise HTTPException(status_code=400, detail=f"Unknown provider: {provider!r}")
 
     if provider == "anthropic":
+
         async def spawn_fn(ws: str, prov: str) -> asyncio.subprocess.Process:
             return await _spawn_claude(ws, model)
     else:
+
         async def spawn_fn(ws: str, prov: str) -> asyncio.subprocess.Process:
             return await _spawn_codex(ws, model)
 

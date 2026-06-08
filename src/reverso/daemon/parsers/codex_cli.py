@@ -5,6 +5,7 @@ Parses the newline-delimited JSON stream produced by:
 
 See docs/spike-notes.md for the confirmed event format.
 """
+
 from __future__ import annotations
 
 import json
@@ -70,7 +71,9 @@ class CodexCLIParser:
                     aggregated_output = item.get("aggregated_output", "")
                     exit_code = item.get("exit_code")
                     is_error = exit_code not in (0, None)
-                    result_summary = aggregated_output[:200] if aggregated_output else ""
+                    result_summary = (
+                        aggregated_output[:200] if aggregated_output else ""
+                    )
                     obs = {
                         "type": "shell_cmd",
                         "tool_name": "shell",

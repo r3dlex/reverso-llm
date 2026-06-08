@@ -6,6 +6,7 @@ and launches the RecycleSweeper background task.
 The UDS path is read from config.yaml (daemon_socket key).  It defaults to
 ~/Library/Application Support/reverso/daemon.sock.
 """
+
 from __future__ import annotations
 
 import asyncio

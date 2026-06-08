@@ -172,3 +172,8 @@ The existing LaunchAgents (`com.andres.codex-litellm-minimax.plist`, `com.andres
 <!-- MANUAL: Add manually curated notes below this line. They are preserved on regeneration. -->
 
 - Reverso Codex profile files should use GPT model names. Provider slugs are resolved by `/deepseek/v1` and `/claude/v1` profile routing so Codex keeps its own model metadata. MiniMax is direct Codex-only and should use `model = "MiniMax-M3"` with `model_provider = "minimax"`.
+
+<!-- v3-ai-sdlc-init:start -->
+## AI SDLC v3
+This repo follows the v3 AI-SDLC layout. See `.ai/matrix.json`, `.memory/human-override/`, and `docs/architecture/adr/`. Modules at `r3dlex/skills/ai-sdlc-init/modules/`.
+<!-- v3-ai-sdlc-init:end -->
