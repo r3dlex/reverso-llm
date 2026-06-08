@@ -10,8 +10,10 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
+  _test-self-hosted:
+    name: "test (self-hosted)"
+    runs-on: [self-hosted, ubuntu-latest]
+    timeout-minutes: 30
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -36,4 +38,55 @@ jobs:
           echo "All files compile OK"
 
       - name: Run tests
+        run: uv run pytest tests/ -v --ignore=tests/integration --tb=short
+
+  _test-gate:
+    name: "test (gate)"
+    needs: _test-self-hosted
+    if: always()
+    runs-on: ubuntu-latest
+    outputs:
+      passed: ${{ steps.mark.outputs.passed }}
+    steps:
+      - id: mark
+        if: needs._test-self-hosted.result == 'success'
+        run: echo "passed=true" >> "$GITHUB_OUTPUT"
+
+  test:
+    needs: _test-gate
+    if: always()
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+
+    steps:
+      - name: Route
+        run: echo "self-hosted passed=${{ needs._test-gate.outputs.passed }}"
+
+      - uses: actions/checkout@v4
+        if: needs._test-gate.outputs.passed != 'true'
+
+      - name: Install uv
+        if: needs._test-gate.outputs.passed != 'true'
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Set up Python ${{ matrix.python-version }}
+        if: needs._test-gate.outputs.passed != 'true'
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        if: needs._test-gate.outputs.passed != 'true'
+        run: uv sync --extra dev
+
+      - name: Lint (py_compile)
+        if: needs._test-gate.outputs.passed != 'true'
+        run: |
+          find src -name "*.py" | xargs uv run python -m py_compile
+          echo "All files compile OK"
+
+      - name: Run tests
+        if: needs._test-gate.outputs.passed != 'true'
         run: uv run pytest tests/ -v --ignore=tests/integration --tb=short
