@@ -20,12 +20,12 @@ redact_mapping. No repository secret is read or stored.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
 import subprocess
 import time
-import uuid
 from pathlib import Path
 from typing import Any, AsyncIterator
 
@@ -40,6 +40,15 @@ from reverso.protocols.auth import (
     AuthResolution,
     redact_mapping,
     redact_secret,
+)
+from reverso.protocols.replay import (
+    build_prompt,
+    estimate_usage,
+    message_item,
+    new_message_id,
+    new_response_id,
+    record_input_items,
+    replay_turn,
 )
 from reverso.protocols.store import ResponseStore
 
@@ -222,54 +231,6 @@ def _is_expired(expires_at: Any) -> bool:
     return expiry_ms <= time.time() * 1000.0
 
 
-def _input_to_text(value: Any) -> str:
-    """Flatten a Responses ``input`` (string or item list) into a prompt string."""
-    if value is None:
-        return ""
-    if isinstance(value, str):
-        return value
-    parts: list[str] = []
-    if isinstance(value, list):
-        for item in value:
-            parts.append(_input_item_to_text(item))
-    else:
-        parts.append(str(value))
-    return "\n".join(part for part in parts if part)
-
-
-def _input_item_to_text(item: Any) -> str:
-    if isinstance(item, str):
-        return item
-    if not isinstance(item, dict):
-        return str(item)
-    content = item.get("content")
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        texts: list[str] = []
-        for part in content:
-            if isinstance(part, dict):
-                text = part.get("text")
-                if isinstance(text, str):
-                    texts.append(text)
-            elif isinstance(part, str):
-                texts.append(part)
-        return "\n".join(texts)
-    text = item.get("text")
-    return text if isinstance(text, str) else ""
-
-
-def _message_item(item_id: str, text: str) -> dict[str, Any]:
-    """Build a completed Responses assistant message output item."""
-    return {
-        "id": item_id,
-        "type": "message",
-        "role": "assistant",
-        "status": "completed",
-        "content": [{"type": "output_text", "text": text, "annotations": []}],
-    }
-
-
 class ClaudeAdapter:
     """ProviderAdapter for Claude served over the local subscription OAuth login.
 
@@ -342,19 +303,20 @@ class ClaudeAdapter:
     async def create_response(self, request: ResponsesRequest) -> ResponseEnvelope:
         """Return a non-streaming Responses object for ``request``."""
         self._ensure_authenticated()
-        prompt = _build_prompt(request)
-        text = self._cli_runner(prompt, request.model)
-        response_id = _new_response_id()
-        message = _message_item(_new_message_id(), text)
+        prompt = build_prompt(request)
+        # The CLI runner is a blocking subprocess; offload it so a single Claude
+        # call cannot stall the gateway's shared event loop for its full run.
+        text = await asyncio.to_thread(self._cli_runner, prompt, request.model)
+        message = message_item(new_message_id(), text)
         envelope = ResponseEnvelope(
-            id=response_id,
+            id=new_response_id(),
             model=request.model,
             output=[message],
             status="completed",
-            usage=_estimate_usage(prompt, text),
+            usage=estimate_usage(prompt, text),
             previous_response_id=request.previous_response_id,
         )
-        self._store.put_response(envelope, _record_input_items(request))
+        self._store.put_response(envelope, record_input_items(request))
         return envelope
 
     def stream_response(self, request: ResponsesRequest) -> AsyncIterator[SSEEvent]:
@@ -365,92 +327,22 @@ class ClaudeAdapter:
         self, request: ResponsesRequest
     ) -> AsyncIterator[SSEEvent]:
         self._ensure_authenticated()
-        prompt = _build_prompt(request)
-        text = self._cli_runner(prompt, request.model)
-        response_id = _new_response_id()
-        message_id = _new_message_id()
-
-        base_response = {
-            "id": response_id,
-            "object": "response",
-            "status": "in_progress",
-            "model": request.model,
-        }
-        yield _event("response.created", {"response": dict(base_response)})
-        yield _event("response.in_progress", {"response": dict(base_response)})
-        yield _event(
-            "response.output_item.added",
-            {
-                "output_index": 0,
-                "item": {
-                    "id": message_id,
-                    "type": "message",
-                    "role": "assistant",
-                    "status": "in_progress",
-                    "content": [],
-                },
-            },
-        )
-        yield _event(
-            "response.content_part.added",
-            {
-                "item_id": message_id,
-                "output_index": 0,
-                "content_index": 0,
-                "part": {"type": "output_text", "text": "", "annotations": []},
-            },
-        )
-        yield _event(
-            "response.output_text.delta",
-            {
-                "item_id": message_id,
-                "output_index": 0,
-                "content_index": 0,
-                "delta": text,
-            },
-        )
-        yield _event(
-            "response.output_text.done",
-            {
-                "item_id": message_id,
-                "output_index": 0,
-                "content_index": 0,
-                "text": text,
-            },
-        )
-        yield _event(
-            "response.content_part.done",
-            {
-                "item_id": message_id,
-                "output_index": 0,
-                "content_index": 0,
-                "part": {"type": "output_text", "text": text, "annotations": []},
-            },
-        )
-        completed_item = _message_item(message_id, text)
-        yield _event(
-            "response.output_item.done",
-            {"output_index": 0, "item": completed_item},
-        )
-        completed_response = {
-            "id": response_id,
-            "object": "response",
-            "status": "completed",
-            "model": request.model,
-            "output": [completed_item],
-            "usage": _estimate_usage(prompt, text),
-        }
-        yield _event("response.completed", {"response": completed_response})
-
+        prompt = build_prompt(request)
+        # Offload the blocking CLI subprocess (see create_response) before any
+        # event is emitted, so the shared event loop stays responsive.
+        text = await asyncio.to_thread(self._cli_runner, prompt, request.model)
         envelope = ResponseEnvelope(
-            id=response_id,
+            id=new_response_id(),
             model=request.model,
-            output=[completed_item],
+            output=[message_item(new_message_id(), text)],
             status="completed",
-            usage=completed_response["usage"],
+            usage=estimate_usage(prompt, text),
             previous_response_id=request.previous_response_id,
         )
-        self._store.put_response(envelope, _record_input_items(request))
+        async for event in replay_turn(
+            envelope, store=self._store, input_items=record_input_items(request)
+        ):
+            yield event
 
     async def list_models(self) -> ModelList:
         """Return the Claude model listing for ``/v1/models``."""
@@ -487,53 +379,3 @@ def _resolve_token_sync(auth: ClaudeOAuthAuth) -> str:
     if not artifact or not artifact.get("accessToken"):
         raise ClaudeAuthError("no claude oauth access token available")
     return str(artifact["accessToken"])
-
-
-def _build_prompt(request: ResponsesRequest) -> str:
-    """Combine instructions and input into a single prompt string."""
-    text = _input_to_text(request.input)
-    if request.instructions:
-        return f"{request.instructions}\n\n{text}" if text else request.instructions
-    return text
-
-
-def _record_input_items(request: ResponsesRequest) -> list[dict[str, Any]]:
-    """Build the stored input-item record for previous_response_id chaining."""
-    value = request.input
-    if isinstance(value, list):
-        return [item for item in value if isinstance(item, dict)]
-    if value is None:
-        return []
-    return [
-        {
-            "type": "message",
-            "role": "user",
-            "content": [{"type": "input_text", "text": _input_to_text(value)}],
-        }
-    ]
-
-
-def _estimate_usage(prompt: str, output: str) -> dict[str, int]:
-    """Approximate token usage from word counts (no upstream usage available)."""
-    input_tokens = len(prompt.split())
-    output_tokens = len(output.split())
-    return {
-        "input_tokens": input_tokens,
-        "output_tokens": output_tokens,
-        "total_tokens": input_tokens + output_tokens,
-    }
-
-
-def _event(event_type: str, body: dict[str, Any]) -> SSEEvent:
-    """Build an SSEEvent whose data carries its own ``type`` (OpenAI shape)."""
-    data = {"type": event_type}
-    data.update(body)
-    return SSEEvent(event=event_type, data=data)
-
-
-def _new_response_id() -> str:
-    return f"resp_{uuid.uuid4().hex}"
-
-
-def _new_message_id() -> str:
-    return f"msg_{uuid.uuid4().hex}"
