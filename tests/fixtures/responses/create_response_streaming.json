@@ -1,0 +1,163 @@
+{
+  "fixture": "create_response_streaming",
+  "title": "Streaming create_response SSE event sequence",
+  "openai_shape": "POST /v1/responses with stream=true; ordered Responses streaming events ending with response.completed and [DONE]",
+  "method": "POST",
+  "path": "/v1/responses",
+  "request": {
+    "headers": {
+      "content-type": "application/json",
+      "accept": "text/event-stream"
+    },
+    "body": {
+      "model": "gpt-5.5",
+      "input": "Say hi.",
+      "stream": true
+    }
+  },
+  "expected": {
+    "status": 200,
+    "content_type": "text/event-stream",
+    "events": [
+      {
+        "type": "response.created",
+        "response": {
+          "id": "resp_fixture_0002",
+          "object": "response",
+          "status": "in_progress",
+          "model": "gpt-5.5"
+        }
+      },
+      {
+        "type": "response.in_progress",
+        "response": {
+          "id": "resp_fixture_0002",
+          "object": "response",
+          "status": "in_progress"
+        }
+      },
+      {
+        "type": "response.output_item.added",
+        "output_index": 0,
+        "item": {
+          "id": "msg_fixture_0002",
+          "type": "message",
+          "role": "assistant",
+          "status": "in_progress",
+          "content": []
+        }
+      },
+      {
+        "type": "response.content_part.added",
+        "item_id": "msg_fixture_0002",
+        "output_index": 0,
+        "content_index": 0,
+        "part": {
+          "type": "output_text",
+          "text": "",
+          "annotations": []
+        }
+      },
+      {
+        "type": "response.output_text.delta",
+        "item_id": "msg_fixture_0002",
+        "output_index": 0,
+        "content_index": 0,
+        "delta": "Hi"
+      },
+      {
+        "type": "response.output_text.delta",
+        "item_id": "msg_fixture_0002",
+        "output_index": 0,
+        "content_index": 0,
+        "delta": " there."
+      },
+      {
+        "type": "response.output_text.done",
+        "item_id": "msg_fixture_0002",
+        "output_index": 0,
+        "content_index": 0,
+        "text": "Hi there."
+      },
+      {
+        "type": "response.content_part.done",
+        "item_id": "msg_fixture_0002",
+        "output_index": 0,
+        "content_index": 0,
+        "part": {
+          "type": "output_text",
+          "text": "Hi there.",
+          "annotations": []
+        }
+      },
+      {
+        "type": "response.output_item.done",
+        "output_index": 0,
+        "item": {
+          "id": "msg_fixture_0002",
+          "type": "message",
+          "role": "assistant",
+          "status": "completed",
+          "content": [
+            {
+              "type": "output_text",
+              "text": "Hi there.",
+              "annotations": []
+            }
+          ]
+        }
+      },
+      {
+        "type": "response.completed",
+        "response": {
+          "id": "resp_fixture_0002",
+          "object": "response",
+          "status": "completed",
+          "model": "gpt-5.5",
+          "output": [
+            {
+              "id": "msg_fixture_0002",
+              "type": "message",
+              "role": "assistant",
+              "status": "completed",
+              "content": [
+                {
+                  "type": "output_text",
+                  "text": "Hi there.",
+                  "annotations": []
+                }
+              ]
+            }
+          ],
+          "usage": {
+            "input_tokens": 3,
+            "output_tokens": 3,
+            "total_tokens": 6
+          }
+        }
+      }
+    ],
+    "terminal_done": "[DONE]"
+  },
+  "assertions": {
+    "status": 200,
+    "content_type": "text/event-stream",
+    "first_event_type": "response.created",
+    "has_text_delta": true,
+    "concatenated_deltas": "Hi there.",
+    "terminal_completed_event": "response.completed",
+    "terminal_done_marker": "[DONE]",
+    "event_order": [
+      "response.created",
+      "response.in_progress",
+      "response.output_item.added",
+      "response.content_part.added",
+      "response.output_text.delta",
+      "response.output_text.delta",
+      "response.output_text.done",
+      "response.content_part.done",
+      "response.output_item.done",
+      "response.completed"
+    ]
+  }
+}

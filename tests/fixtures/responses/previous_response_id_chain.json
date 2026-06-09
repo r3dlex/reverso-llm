@@ -1,0 +1,95 @@
+{
+  "fixture": "previous_response_id_chain",
+  "title": "Conversation continuity via previous_response_id",
+  "openai_shape": "Two POST /v1/responses calls; the second sets previous_response_id to chain on the first; the reply echoes previous_response_id",
+  "turns": [
+    {
+      "label": "first_turn",
+      "method": "POST",
+      "path": "/v1/responses",
+      "request": {
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "model": "gpt-5.5",
+          "input": "My name is Ada.",
+          "stream": false
+        }
+      },
+      "expected": {
+        "status": 200,
+        "content_type": "application/json",
+        "body": {
+          "id": "resp_fixture_0005",
+          "object": "response",
+          "status": "completed",
+          "model": "gpt-5.5",
+          "output": [
+            {
+              "id": "msg_fixture_0004",
+              "type": "message",
+              "role": "assistant",
+              "status": "completed",
+              "content": [
+                {
+                  "type": "output_text",
+                  "text": "Nice to meet you, Ada.",
+                  "annotations": []
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "label": "second_turn",
+      "method": "POST",
+      "path": "/v1/responses",
+      "request": {
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "model": "gpt-5.5",
+          "previous_response_id": "resp_fixture_0005",
+          "input": "What is my name?",
+          "stream": false
+        }
+      },
+      "expected": {
+        "status": 200,
+        "content_type": "application/json",
+        "body": {
+          "id": "resp_fixture_0006",
+          "object": "response",
+          "status": "completed",
+          "model": "gpt-5.5",
+          "previous_response_id": "resp_fixture_0005",
+          "output": [
+            {
+              "id": "msg_fixture_0005",
+              "type": "message",
+              "role": "assistant",
+              "status": "completed",
+              "content": [
+                {
+                  "type": "output_text",
+                  "text": "Your name is Ada.",
+                  "annotations": []
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "assertions": {
+    "first_turn_id": "resp_fixture_0005",
+    "second_turn_previous_response_id": "resp_fixture_0005",
+    "second_turn_status": 200,
+    "second_turn_output_text": "Your name is Ada."
+  }
+}

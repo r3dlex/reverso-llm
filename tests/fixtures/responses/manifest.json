@@ -1,0 +1,50 @@
+{
+  "manifest": "responses_parity_fixtures",
+  "description": "Provider-agnostic Codex-observed OpenAI Responses parity fixtures. The same matrix runs against the claude and copilot adapters through reverso.protocols.responses_app.build_app.",
+  "providers": ["claude", "copilot"],
+  "prefix_template": "/{provider}/v1",
+  "fixtures": [
+    {
+      "name": "create_response_nonstreaming",
+      "file": "create_response_nonstreaming.json",
+      "kind": "single",
+      "covers": "non-streaming create_response"
+    },
+    {
+      "name": "create_response_streaming",
+      "file": "create_response_streaming.json",
+      "kind": "streaming",
+      "covers": "streaming SSE event sequence"
+    },
+    {
+      "name": "list_models",
+      "file": "list_models.json",
+      "kind": "single",
+      "covers": "model refresh / list_models"
+    },
+    {
+      "name": "get_response",
+      "file": "get_response.json",
+      "kind": "single",
+      "covers": "get_response retrieval"
+    },
+    {
+      "name": "list_input_items",
+      "file": "list_input_items.json",
+      "kind": "single",
+      "covers": "list_input_items"
+    },
+    {
+      "name": "tools_function_call",
+      "file": "tools_function_call.json",
+      "kind": "single_with_followup",
+      "covers": "function tools and tool output"
+    },
+    {
+      "name": "previous_response_id_chain",
+      "file": "previous_response_id_chain.json",
+      "kind": "multi_turn",
+      "covers": "previous_response_id chaining"
+    }
+  ]
+}

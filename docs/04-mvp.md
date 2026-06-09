@@ -223,3 +223,53 @@ v1 ships when all of the following are true:
 - The developer has used the gateway in real work for at least two consecutive weeks without rolling back to direct CLI/API use.
 - At least one cross-vendor workflow (Codex CLI → Claude, or Claude Code → GPT) is in habitual use.
 - The repository is public and the README accurately describes what someone forking it would get.
+
+---
+
+## Responses Providers Milestone (ADR 0002)
+
+This section augments, and does not replace, the phased plan above. It defines a separate
+first-milestone increment that moves the Claude and Copilot provider paths to a
+Reverso-owned OpenAI Responses gateway. The authoritative decision record is
+`docs/architecture/adr/0002-responses-native-provider-gateway.md`; the working plan, PRD, and
+test spec are under `.omc/plans/`.
+
+### Milestone goal
+
+Codex targets Claude Code and GitHub Copilot through Reverso using a first-party Responses
+API contract, served from one loopback port (`127.0.0.1:64946`) as path-prefixed endpoints
+(`/claude/v1`, `/copilot/v1`), with subscription OAuth (Claude) and local logged-in-user
+credentials (Copilot) as first-class, tested auth paths. Both providers pass the same
+Codex-observed parity suite.
+
+### First deliverable (current increment): docs first
+
+The only in-scope deliverable for the current increment is documentation: ADR 0002 plus
+these companion doc sections. No source implementation, adapters, or tests are written until
+the docs and ADR are reviewed and define the boundary.
+
+### Milestone boundary (in scope)
+
+- Update canonical docs before code (done by this increment).
+- A first-party ASGI app at `src/reverso/protocols/responses_app.py` owning the Claude and
+  Copilot `/v1/responses` paths, with a stable provider-adapter boundary.
+- LiteLLM quarantined for those paths, with a runtime guard proving it is not the core.
+- A Claude adapter with a falsifiable subscription-OAuth gate.
+- A Copilot adapter via the ported direct-forward spine (the SDK was evaluated and fails
+  Responses parity; see ADR 0002 D4).
+- A shared Codex-observed parity fixture suite run against both providers.
+
+### Milestone non-goals
+
+- No Codex CLI provider reimplementation.
+- No DeepSeek migration (full LiteLLM retirement is a later milestone, criteria in ADR 0002).
+- No launchd productionization or LaunchAgent decommissioning.
+- No repository-stored secrets.
+- No blind vendoring of the `claude-code-openai-wrapper` or `copilot-openai-api` repos.
+
+### Relationship to Phases 0-4 above
+
+This milestone is orthogonal to the session-daemon and tool-interception phases above. It
+does not change the locked Q1-Q18 decisions or the existing chat-completions and
+`x_gateway` design; it adds a Responses-native path for two providers under the same loopback
+port.
