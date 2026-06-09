@@ -13,7 +13,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
+from enum import Enum
+from typing import Callable
 
 import psutil
 
@@ -29,6 +31,35 @@ _IDLE_THRESHOLD_MINUTES = 30
 
 # Grace period between SIGTERM and SIGKILL (seconds).
 _SIGTERM_GRACE_SECONDS = 5
+
+
+class RecycleDecision(Enum):
+    """Outcome of the recycle policy for one session in one sweep pass."""
+
+    RECYCLE = "recycle"
+    KEEP_ACTIVE = "keep_active"
+    KEEP_BUSY_DESCENDANTS = "keep_busy_descendants"
+
+
+def decide_recycle(
+    *,
+    idle_minutes: float,
+    idle_threshold_minutes: float,
+    probe_descendants: Callable[[], bool],
+) -> RecycleDecision:
+    """Pure recycle policy: recycle iff idle past threshold AND no descendants.
+
+    The descendant probe is invoked only after the idle threshold is crossed,
+    so the cheap idle comparison gates the (psutil) process-tree walk. A
+    session exactly at the threshold is a recycle candidate. The probe itself
+    decides how to treat unobservable processes (see _has_live_descendants:
+    AccessDenied is conservatively treated as live).
+    """
+    if idle_minutes < idle_threshold_minutes:
+        return RecycleDecision.KEEP_ACTIVE
+    if probe_descendants():
+        return RecycleDecision.KEEP_BUSY_DESCENDANTS
+    return RecycleDecision.RECYCLE
 
 
 def _has_live_descendants(pid: int) -> bool:
@@ -119,10 +150,13 @@ class RecycleSweeper:
         table: SessionTable,
         sweep_interval: float = _SWEEP_INTERVAL_SECONDS,
         idle_threshold_minutes: float = _IDLE_THRESHOLD_MINUTES,
+        descendant_probe: Callable[[int], bool] = _has_live_descendants,
     ) -> None:
         self._table = table
         self._sweep_interval = sweep_interval
         self._idle_threshold = idle_threshold_minutes
+        # Injectable for tests; defaults to the real psutil process-tree walk.
+        self._descendant_probe = descendant_probe
 
     async def run(self) -> None:
         """Main loop - runs until cancelled."""
@@ -142,18 +176,21 @@ class RecycleSweeper:
                 logger.exception("RecycleSweeper sweep failed: %s", exc)
 
     async def _sweep(self) -> None:
-        """One sweep pass over all current sessions."""
+        """One sweep pass: observe each session, ask the policy, then act."""
         sessions = self._table.all_sessions()
         logger.debug("RecycleSweeper sweeping %d session(s)", len(sessions))
-        timedelta(minutes=self._idle_threshold)
 
         for session in sessions:
             idle_minutes = _minutes_since(session.last_request_at)
-            if idle_minutes < self._idle_threshold:
-                continue
-
             pid = session.process.pid
-            if _has_live_descendants(pid):
+            decision = decide_recycle(
+                idle_minutes=idle_minutes,
+                idle_threshold_minutes=self._idle_threshold,
+                probe_descendants=lambda pid=pid: self._descendant_probe(pid),
+            )
+            if decision is RecycleDecision.KEEP_ACTIVE:
+                continue
+            if decision is RecycleDecision.KEEP_BUSY_DESCENDANTS:
                 logger.debug(
                     "Session %s is idle (%.1f min) but has live descendants - keeping",
                     session.key,
@@ -161,7 +198,6 @@ class RecycleSweeper:
                 )
                 continue
 
-            # Session is idle and has no live descendants - recycle it.
             await _terminate_session(session)
             await self._table.remove(session.key)
             logger.info("Session %s removed from table after recycling", session.key)
