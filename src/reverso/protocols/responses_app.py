@@ -97,7 +97,9 @@ async def _send_json(send: Send, status: int, payload: dict[str, Any]) -> None:
 
 
 async def _send_error(send: Send, status: int, message: str) -> None:
-    await _send_json(send, status, {"error": {"message": message, "type": "invalid_request_error"}})
+    await _send_json(
+        send, status, {"error": {"message": message, "type": "invalid_request_error"}}
+    )
 
 
 def _envelope_to_payload(envelope: ResponseEnvelope) -> dict[str, Any]:
@@ -176,7 +178,9 @@ async def _stream(
             saw_done = True
         await send({"type": "http.response.body", "body": chunk, "more_body": True})
     if not saw_done:
-        await send({"type": "http.response.body", "body": _DONE_EVENT, "more_body": True})
+        await send(
+            {"type": "http.response.body", "body": _DONE_EVENT, "more_body": True}
+        )
     await send({"type": "http.response.body", "body": b"", "more_body": False})
 
 

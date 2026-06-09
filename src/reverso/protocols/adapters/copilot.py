@@ -135,9 +135,7 @@ class CopilotAuth:
             "Editor-Plugin-Version": "copilot.lua",
         }
         async with httpx.AsyncClient() as client:
-            response = await client.get(
-                GITHUB_TOKEN_URL, headers=headers, timeout=30.0
-            )
+            response = await client.get(GITHUB_TOKEN_URL, headers=headers, timeout=30.0)
         if response.status_code != 200:
             raise RuntimeError(
                 f"Copilot token refresh failed with status {response.status_code}"

@@ -20,7 +20,6 @@ from reverso.middleware.responses_sse_completion import (
     _append_completion_before_done,
     _completion_event,
     _DONE_EVENT,
-    _DONE_LINE,
     _has_completed_marker,
     _has_done_marker,
 )

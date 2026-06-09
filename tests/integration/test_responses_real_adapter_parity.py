@@ -141,8 +141,7 @@ class _FakeCopilotClient:
         input_value = payload.get("input")
         if payload.get("previous_response_id") is not None:
             if isinstance(input_value, list) and any(
-                isinstance(item, dict)
-                and item.get("type") == "function_call_output"
+                isinstance(item, dict) and item.get("type") == "function_call_output"
                 for item in input_value
             ):
                 return self._tools["followup"]["expected"]["body"]
@@ -398,9 +397,7 @@ async def test_real_previous_response_id_chain(provider: str) -> None:
 
         second_body = dict(turns[1]["request"]["body"])
         second_body["previous_response_id"] = first_id
-        second = await client.post(
-            f"{_prefix(provider)}/responses", json=second_body
-        )
+        second = await client.post(f"{_prefix(provider)}/responses", json=second_body)
     assert second.status_code == asserts["second_turn_status"]
     body = second.json()
     assert body["previous_response_id"] == first_id

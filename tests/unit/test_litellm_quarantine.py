@@ -39,7 +39,9 @@ class _StubAdapter:
                     "type": "message",
                     "role": "assistant",
                     "status": "completed",
-                    "content": [{"type": "output_text", "text": "ok", "annotations": []}],
+                    "content": [
+                        {"type": "output_text", "text": "ok", "annotations": []}
+                    ],
                 }
             ],
         )
@@ -147,9 +149,9 @@ def test_responses_app_import_graph_excludes_legacy_proxy_app() -> None:
         capture_output=True,
         text=True,
     )
-    assert result.returncode == 0, (
-        f"subprocess import failed: rc={result.returncode}\n{result.stderr}"
-    )
+    assert (
+        result.returncode == 0
+    ), f"subprocess import failed: rc={result.returncode}\n{result.stderr}"
     out = result.stdout.strip()
     assert "proxy_app=CLEAN" in out, (
         "reverso.protocols.responses_app must NOT import reverso.proxy.app "

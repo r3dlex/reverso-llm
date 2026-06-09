@@ -78,13 +78,9 @@ class FixtureAdapter:
             return self._tools["expected"]["body"]
         if request.previous_response_id is not None:
             input_items = request.input
-            is_tool_output = (
-                isinstance(input_items, list)
-                and any(
-                    isinstance(item, dict)
-                    and item.get("type") == "function_call_output"
-                    for item in input_items
-                )
+            is_tool_output = isinstance(input_items, list) and any(
+                isinstance(item, dict) and item.get("type") == "function_call_output"
+                for item in input_items
             )
             if is_tool_output:
                 return self._tools["followup"]["expected"]["body"]

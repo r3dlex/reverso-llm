@@ -150,7 +150,9 @@ def test_expired_auth_is_observable(tmp_path) -> None:
 
 def test_artifact_without_access_token_is_unauthenticated(tmp_path) -> None:
     cred_file = tmp_path / ".credentials.json"
-    cred_file.write_text(_artifact(expires_at=_future_ms(), access_token=""), encoding="utf-8")
+    cred_file.write_text(
+        _artifact(expires_at=_future_ms(), access_token=""), encoding="utf-8"
+    )
 
     auth = ClaudeOAuthAuth(credentials_path=cred_file, keychain_reader=lambda: None)
     resolution = auth.resolve()

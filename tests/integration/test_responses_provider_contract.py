@@ -24,13 +24,9 @@ PROVIDERS = ["claude", "copilot"]
 
 
 def _build_client() -> httpx.AsyncClient:
-    app = build_app(
-        {provider: FixtureAdapter(provider) for provider in PROVIDERS}
-    )
+    app = build_app({provider: FixtureAdapter(provider) for provider in PROVIDERS})
     transport = httpx.ASGITransport(app=app)
-    return httpx.AsyncClient(
-        transport=transport, base_url="http://127.0.0.1:64946"
-    )
+    return httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:64946")
 
 
 def _prefix(provider: str) -> str:
@@ -210,9 +206,7 @@ async def test_tools_function_call(provider: str) -> None:
         )
         assert resp.status_code == asserts["status"]
         body = resp.json()
-        call = next(
-            item for item in body["output"] if item["type"] == "function_call"
-        )
+        call = next(item for item in body["output"] if item["type"] == "function_call")
         assert call["name"] == asserts["function_call_name"]
         assert isinstance(call["call_id"], str) and call["call_id"]
         json.loads(call["arguments"])

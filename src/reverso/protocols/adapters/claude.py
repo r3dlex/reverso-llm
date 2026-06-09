@@ -136,7 +136,9 @@ class ClaudeOAuthAuth:
             try:
                 parsed = json.loads(raw)
             except json.JSONDecodeError:
-                logger.warning("claude oauth artifact from %s was not valid JSON", source)
+                logger.warning(
+                    "claude oauth artifact from %s was not valid JSON", source
+                )
                 continue
             artifact = parsed.get(_OAUTH_ARTIFACT_KEY)
             if isinstance(artifact, dict):
