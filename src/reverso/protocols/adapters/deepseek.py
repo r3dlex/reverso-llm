@@ -14,8 +14,8 @@ and maps the chat response back into Responses ``ResponseEnvelope`` (unary) and
 Responses SSE events (stream).
 
 The API key is read from ``DEEPSEEK_API_KEY`` at call time and sent as a bearer
-token; it is NEVER logged. All diagnostics route through redact_secret /
-redact_mapping. No repository secret is read or stored.
+token; it is NEVER logged. Upstream-error diagnostics log only the status code
+(never the response headers or body). No repository secret is read or stored.
 """
 
 from __future__ import annotations
@@ -36,7 +36,6 @@ from reverso.protocols.adapter import (
     ResponsesRequest,
     SSEEvent,
 )
-from reverso.protocols.auth import redact_mapping
 from reverso.protocols.store import ResponseStore
 from reverso.proxy.profile_routing import resolve_profile_model
 
@@ -194,7 +193,9 @@ class DeepSeekAdapter:
             messages.append({"role": "user", "content": user_text})
         return messages
 
-    def _prior_turn(self, previous_response_id: str | None) -> list[dict[str, Any]] | None:
+    def _prior_turn(
+        self, previous_response_id: str | None
+    ) -> list[dict[str, Any]] | None:
         """Return prior assistant messages (with reasoning_content) to carry forward."""
         if not previous_response_id:
             return None
@@ -237,7 +238,17 @@ class DeepSeekAdapter:
     def _map_completion(
         self, request: ResponsesRequest, raw: dict[str, Any]
     ) -> ResponseEnvelope:
-        """Map a DeepSeek chat-completion body into a Responses ResponseEnvelope."""
+        """Map a DeepSeek chat-completion body into a Responses ResponseEnvelope.
+
+        DeepSeek is NOT Responses-native, so ``envelope.raw`` is built as a
+        Responses object (``object == "response"`` with an ``output`` array), not
+        the upstream chat-completions body. Serving the chat body verbatim would
+        break the Responses contract (no ``object``/``output``). ``reasoning_content``
+        is carried on the Responses body so thinking mode survives both to the
+        client and for previous_response_id chaining. The requested model id is
+        echoed back (matching the Auggie adapter) so a caller that sent a GPT-level
+        profile name does not see the resolved DeepSeek id leak back.
+        """
         message = _first_message(raw)
         text = message.get("content") or ""
         response_id = _new_response_id()
@@ -248,17 +259,29 @@ class DeepSeekAdapter:
             for call in tool_calls:
                 output.append(_tool_call_item(call))
 
-        envelope_raw: dict[str, Any] = dict(raw)
+        model = request.model or str(raw.get("model", ""))
+        usage = raw.get("usage")
+        envelope_raw: dict[str, Any] = {
+            "id": response_id,
+            "object": "response",
+            "status": "completed",
+            "model": model,
+            "output": output,
+        }
+        if usage is not None:
+            envelope_raw["usage"] = usage
+        if request.previous_response_id is not None:
+            envelope_raw["previous_response_id"] = request.previous_response_id
         reasoning = message.get("reasoning_content")
         if reasoning is not None:
             envelope_raw["reasoning_content"] = reasoning
 
         return ResponseEnvelope(
             id=response_id,
-            model=raw.get("model", request.model),
+            model=model,
             output=output,
             status="completed",
-            usage=raw.get("usage"),
+            usage=usage,
             previous_response_id=request.previous_response_id,
             raw=envelope_raw,
         )
@@ -277,11 +300,10 @@ class DeepSeekAdapter:
             logger.warning("deepseek upstream transport error: %s", type(exc).__name__)
             raise DeepSeekError("deepseek upstream request failed") from exc
         if response.status_code < 200 or response.status_code >= 300:
-            logger.warning(
-                "deepseek upstream returned %s: %s",
-                response.status_code,
-                redact_mapping(dict(response.headers)),
-            )
+            # Log only the status code: upstream response headers can carry
+            # Set-Cookie / proprietary auth-echo values that redact_mapping does
+            # not recognize, so the whole header map is never logged.
+            logger.warning("deepseek upstream returned %s", response.status_code)
             raise DeepSeekError(
                 f"deepseek upstream returned status {response.status_code}"
             )

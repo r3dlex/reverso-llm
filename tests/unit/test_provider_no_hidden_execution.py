@@ -126,9 +126,7 @@ async def test_auggie_tool_style_payload_does_not_auto_execute(
     tool_payload = json.dumps(
         {
             "response": "I would call read_file.",
-            "tool_calls": [
-                {"name": "read_file", "arguments": {"path": "/etc/passwd"}}
-            ],
+            "tool_calls": [{"name": "read_file", "arguments": {"path": "/etc/passwd"}}],
         }
     )
 
@@ -196,9 +194,7 @@ async def test_deepseek_turn_makes_exactly_one_upstream_post(
         return httpx.Response(200, json=_deepseek_chat_body(text="single answer"))
 
     adapter = DeepSeekAdapter(client_factory=_mock_client_factory(handler))
-    request = ResponsesRequest.from_payload(
-        {"model": "deepseek-chat", "input": "hi"}
-    )
+    request = ResponsesRequest.from_payload({"model": "deepseek-chat", "input": "hi"})
 
     await adapter.create_response(request)
 

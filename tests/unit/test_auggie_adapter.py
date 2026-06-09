@@ -68,9 +68,7 @@ async def test_create_response_maps_and_stores() -> None:
 
 async def test_stream_response_event_order() -> None:
     adapter = AuggieAdapter(cli_runner=lambda prompt, model: "Hi there.")
-    request = ResponsesRequest(
-        model="auggie-default", input="Say hi.", stream=True
-    )
+    request = ResponsesRequest(model="auggie-default", input="Say hi.", stream=True)
 
     events = [event.event async for event in adapter.stream_response(request)]
 
@@ -119,9 +117,7 @@ async def test_stream_stores_response_before_full_drain() -> None:
 async def test_list_models_embeds_indexing_caveat_literal() -> None:
     adapter = AuggieAdapter(
         cli_runner=lambda prompt, model: "ok",
-        models_runner=_models_runner(
-            [{"id": "auggie-default"}, {"id": "auggie-pro"}]
-        ),
+        models_runner=_models_runner([{"id": "auggie-default"}, {"id": "auggie-pro"}]),
     )
 
     models = await adapter.list_models()
@@ -169,9 +165,7 @@ def test_real_runner_defaults_workspace_to_temp_sandbox(monkeypatch) -> None:
         captured["argv"] = argv
         return _Completed()
 
-    monkeypatch.setattr(
-        "reverso.protocols.adapters.auggie.subprocess.run", _fake_run
-    )
+    monkeypatch.setattr("reverso.protocols.adapters.auggie.subprocess.run", _fake_run)
 
     adapter = AuggieAdapter()
     text = adapter._run_auggie_cli("prompt", "auggie-default")
@@ -207,9 +201,7 @@ def test_missing_cli_raises_bounded_error(monkeypatch) -> None:
     def _fake_run(argv, **kwargs):
         raise FileNotFoundError("auggie")
 
-    monkeypatch.setattr(
-        "reverso.protocols.adapters.auggie.subprocess.run", _fake_run
-    )
+    monkeypatch.setattr("reverso.protocols.adapters.auggie.subprocess.run", _fake_run)
     adapter = AuggieAdapter()
 
     with pytest.raises(AuggieError) as excinfo:
@@ -227,9 +219,7 @@ def test_nonzero_exit_raises_bounded_error_without_secret(monkeypatch) -> None:
             returncode=2, cmd=argv, stderr=secret_stderr
         )
 
-    monkeypatch.setattr(
-        "reverso.protocols.adapters.auggie.subprocess.run", _fake_run
-    )
+    monkeypatch.setattr("reverso.protocols.adapters.auggie.subprocess.run", _fake_run)
     adapter = AuggieAdapter()
 
     with pytest.raises(AuggieError) as excinfo:
@@ -245,9 +235,7 @@ def test_timeout_raises_bounded_error(monkeypatch) -> None:
     def _fake_run(argv, **kwargs):
         raise _subprocess.TimeoutExpired(cmd=argv, timeout=1.0)
 
-    monkeypatch.setattr(
-        "reverso.protocols.adapters.auggie.subprocess.run", _fake_run
-    )
+    monkeypatch.setattr("reverso.protocols.adapters.auggie.subprocess.run", _fake_run)
     adapter = AuggieAdapter()
 
     with pytest.raises(AuggieError) as excinfo:

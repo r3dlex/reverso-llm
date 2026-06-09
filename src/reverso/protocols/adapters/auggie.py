@@ -21,6 +21,7 @@ redact_secret / redact_mapping so no token material is ever logged.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -262,7 +263,9 @@ class AuggieAdapter:
                 exc.returncode,
                 redact_secret(exc.stderr or None),
             )
-            raise AuggieError("auggie CLI invocation failed") from exc
+            # Suppress the cause: CalledProcessError carries raw stderr/argv that
+            # could include token material and must not ride along in a traceback.
+            raise AuggieError("auggie CLI invocation failed") from None
         finally:
             shutil.rmtree(workspace_root, ignore_errors=True)
         return _parse_completion_output(result.stdout)
@@ -287,7 +290,8 @@ class AuggieAdapter:
                 exc.returncode,
                 redact_secret(exc.stderr or None),
             )
-            raise AuggieError("auggie model list failed") from exc
+            # Suppress the cause (raw stderr/argv) from any downstream traceback.
+            raise AuggieError("auggie model list failed") from None
         try:
             return json.loads(result.stdout or "[]")
         except json.JSONDecodeError as exc:
@@ -297,7 +301,9 @@ class AuggieAdapter:
         """Return a non-streaming Responses object for ``request``."""
         self._ensure_authenticated()
         prompt = _build_prompt(request)
-        text = self._cli_runner(prompt, request.model)
+        # The CLI runner is a blocking subprocess; offload it so a single Auggie
+        # call cannot stall the gateway's shared event loop for its full timeout.
+        text = await asyncio.to_thread(self._cli_runner, prompt, request.model)
         response_id = _new_response_id()
         message = _message_item(_new_message_id(), text)
         envelope = ResponseEnvelope(
@@ -320,7 +326,9 @@ class AuggieAdapter:
     ) -> AsyncIterator[SSEEvent]:
         self._ensure_authenticated()
         prompt = _build_prompt(request)
-        text = self._cli_runner(prompt, request.model)
+        # Offload the blocking CLI subprocess (see create_response) before any
+        # event is emitted, so the shared event loop stays responsive.
+        text = await asyncio.to_thread(self._cli_runner, prompt, request.model)
         response_id = _new_response_id()
         message_id = _new_message_id()
         completed_item = _message_item(message_id, text)

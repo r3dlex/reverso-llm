@@ -125,9 +125,7 @@ def test_auggie_default_workspace_root_is_ephemeral_sandbox(
         captured["argv"] = argv
         return _Completed()
 
-    monkeypatch.setattr(
-        "reverso.protocols.adapters.auggie.subprocess.run", _fake_run
-    )
+    monkeypatch.setattr("reverso.protocols.adapters.auggie.subprocess.run", _fake_run)
 
     adapter = AuggieAdapter()
     text = adapter._run_auggie_cli("prompt", "auggie-default")
@@ -165,9 +163,7 @@ def test_auggie_pure_argv_builder_keeps_caller_workspace_out() -> None:
 
 async def _run_auggie_turn(caplog: pytest.LogCaptureFixture) -> tuple[str, object]:
     """Drive one benign Auggie turn; return (injected sentinel, envelope)."""
-    adapter = AuggieAdapter(
-        cli_runner=lambda prompt, model: "benign assistant reply"
-    )
+    adapter = AuggieAdapter(cli_runner=lambda prompt, model: "benign assistant reply")
     request = ResponsesRequest(model="auggie-default", input="hi")
     with caplog.at_level(logging.DEBUG):
         envelope = await adapter.create_response(request)

@@ -106,7 +106,9 @@ async def test_stream_response_yields_completed_sequence(monkeypatch):
     assert events
     assert events[0].event == "response.created"
     assert events[-1].event == "response.completed"
-    deltas = [e.data["delta"] for e in events if e.event == "response.output_text.delta"]
+    deltas = [
+        e.data["delta"] for e in events if e.event == "response.output_text.delta"
+    ]
     assert "streamed" in deltas
     completed = events[-1].data["response"]
     assert completed["status"] == "completed"
@@ -236,13 +238,45 @@ async def test_gpt_profile_models_resolve_to_deepseek_ids(
         return httpx.Response(200, json=_chat_response())
 
     adapter = _adapter(handler)
-    request = ResponsesRequest.from_payload(
-        {"model": profile_model, "input": "hi"}
-    )
+    request = ResponsesRequest.from_payload({"model": profile_model, "input": "hi"})
 
     await adapter.create_response(request)
 
     assert captured["body"]["model"] == expected_upstream
+
+
+async def test_non_streaming_payload_is_responses_shaped_not_chat(monkeypatch):
+    # DeepSeek is not Responses-native, so the client-facing body must be a
+    # Responses object (object == "response" with an output array), never the
+    # upstream chat-completions shape. Falsifiable: serving envelope.raw as the
+    # chat body would surface choices/no-output here and fail.
+    from reverso.protocols.responses_app import _envelope_to_payload
+
+    monkeypatch.setenv("DEEPSEEK_API_KEY", API_KEY_SENTINEL)
+    adapter = _adapter(lambda r: httpx.Response(200, json=_chat_response(text="hi")))
+    request = ResponsesRequest.from_payload({"model": "deepseek-chat", "input": "hi"})
+
+    envelope = await adapter.create_response(request)
+    payload = _envelope_to_payload(envelope)
+
+    assert payload["object"] == "response"
+    assert "choices" not in payload
+    assert isinstance(payload["output"], list) and payload["output"]
+    assert payload["output"][0]["content"][0]["text"] == "hi"
+
+
+async def test_envelope_echoes_requested_model_alias(monkeypatch):
+    # A caller that sends a GPT-level profile alias must see that alias echoed
+    # back, not the resolved DeepSeek id or the upstream-reported model. Matches
+    # the Auggie adapter and avoids leaking the resolution into profile chaining.
+    monkeypatch.setenv("DEEPSEEK_API_KEY", API_KEY_SENTINEL)
+    adapter = _adapter(lambda r: httpx.Response(200, json=_chat_response()))
+    request = ResponsesRequest.from_payload({"model": "gpt-5.5", "input": "hi"})
+
+    envelope = await adapter.create_response(request)
+
+    assert envelope.model == "gpt-5.5"
+    assert envelope.raw["model"] == "gpt-5.5"
 
 
 async def test_reasoning_content_carries_across_two_turns(monkeypatch):
