@@ -1,0 +1,47 @@
+{
+  "fixture": "list_input_items",
+  "title": "List the input items of a stored response",
+  "openai_shape": "GET /v1/responses/{response_id}/input_items returning object=list with the request input items",
+  "method": "GET",
+  "path": "/v1/responses/resp_fixture_0001/input_items",
+  "depends_on": "create_response_nonstreaming",
+  "request": {
+    "path_params": {
+      "response_id": "resp_fixture_0001"
+    },
+    "headers": {
+      "accept": "application/json"
+    }
+  },
+  "expected": {
+    "status": 200,
+    "content_type": "application/json",
+    "body": {
+      "object": "list",
+      "data": [
+        {
+          "id": "item_fixture_0001",
+          "type": "message",
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "What is the capital of France?"
+            }
+          ]
+        }
+      ],
+      "first_id": "item_fixture_0001",
+      "last_id": "item_fixture_0001",
+      "has_more": false
+    }
+  },
+  "assertions": {
+    "status": 200,
+    "object": "list",
+    "data_is_list": true,
+    "first_item_role": "user",
+    "first_item_text": "What is the capital of France?",
+    "has_more": false
+  }
+}

@@ -1,0 +1,54 @@
+{
+  "fixture": "get_response",
+  "title": "Retrieve a previously created response",
+  "openai_shape": "GET /v1/responses/{response_id} returning the stored Response object",
+  "method": "GET",
+  "path": "/v1/responses/resp_fixture_0001",
+  "depends_on": "create_response_nonstreaming",
+  "request": {
+    "path_params": {
+      "response_id": "resp_fixture_0001"
+    },
+    "headers": {
+      "accept": "application/json"
+    }
+  },
+  "expected": {
+    "status": 200,
+    "content_type": "application/json",
+    "body": {
+      "id": "resp_fixture_0001",
+      "object": "response",
+      "created_at": 1700000000,
+      "status": "completed",
+      "model": "gpt-5.5",
+      "output": [
+        {
+          "id": "msg_fixture_0001",
+          "type": "message",
+          "role": "assistant",
+          "status": "completed",
+          "content": [
+            {
+              "type": "output_text",
+              "text": "The capital of France is Paris.",
+              "annotations": []
+            }
+          ]
+        }
+      ],
+      "usage": {
+        "input_tokens": 8,
+        "output_tokens": 7,
+        "total_tokens": 15
+      }
+    }
+  },
+  "assertions": {
+    "status": 200,
+    "object": "response",
+    "id_matches_request": "resp_fixture_0001",
+    "status_field": "completed",
+    "output_text": "The capital of France is Paris."
+  }
+}

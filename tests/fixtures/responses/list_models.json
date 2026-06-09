@@ -1,0 +1,37 @@
+{
+  "fixture": "list_models",
+  "title": "Model refresh with Codex-style query metadata",
+  "openai_shape": "GET /v1/models list response (object=list, data[].object=model) plus the Codex-refresh top-level models field added by CodexModelsCompatMiddleware",
+  "method": "GET",
+  "path": "/v1/models",
+  "request": {
+    "query": "client_version=0.0.0-fixture",
+    "headers": {
+      "accept": "application/json"
+    }
+  },
+  "expected": {
+    "status": 200,
+    "content_type": "application/json",
+    "body": {
+      "object": "list",
+      "data": [
+        {
+          "id": "gpt-5.5",
+          "object": "model",
+          "created": 1700000000,
+          "owned_by": "reverso"
+        }
+      ],
+      "models": []
+    }
+  },
+  "assertions": {
+    "status": 200,
+    "object": "list",
+    "data_is_list": true,
+    "data_item_object": "model",
+    "data_item_id_present": true,
+    "codex_models_field_present": true
+  }
+}

@@ -282,3 +282,59 @@ These are explicitly deferred but worth noting so v1 design choices accommodate 
 - **Token usage accounting.** Either via wrapped CLI cooperation or via tiktoken-based estimation.
 - **Authentication for tunnel access.** A v2 concern paired with multi-machine; not relevant for v1.
 - **An Elixir/Phoenix rewrite if maintenance burden grows.** The architecture maps cleanly. Daemon to GenServer-per-session under Supervisor. UDS to Phoenix endpoint on a different port. The model registry, configuration, operational scripts, and overall design transfer intact.
+
+## 11. Responses-Native Provider Gateway (ADR 0002)
+
+This section augments, and does not replace, Sections 1-10. It records the first-milestone
+shift toward a Reverso-owned OpenAI Responses gateway for the Claude and Copilot provider
+paths. The authoritative decision record is `docs/architecture/adr/0002-responses-native-provider-gateway.md`.
+
+### 11.1 What changes
+
+Today `src/reverso/proxy/app.py` wraps `litellm.proxy.proxy_server.app`. The new milestone
+introduces a first-party ASGI app at `src/reverso/protocols/responses_app.py` that owns the
+Claude and Copilot `/v1/responses` paths. LiteLLM is quarantined (not the core router) for
+those paths and is retired fully in a later milestone (criteria in ADR 0002 D2). DeepSeek and
+other non-goal providers are untouched in this milestone.
+
+### 11.2 Single-port, path-prefixed endpoint model
+
+All providers are served from the one loopback port `127.0.0.1:64946`. Each provider is a
+path-prefixed Responses endpoint under that single port, so one Codex profile maps to one
+provider:
+
+- Claude: `http://127.0.0.1:64946/claude/v1`
+- Copilot: `http://127.0.0.1:64946/copilot/v1`
+
+A Codex profile sets `base_url` to a provider prefix and reaches `/v1/responses`,
+`/v1/models`, and related routes under that prefix. There is no per-provider port. This
+reuses the existing `/<profile>/v1/...` to `/v1/...` rewrite in
+`src/reverso/proxy/profile_routing.py`. The `copilot` prefix is net-new and is added in the
+first-party app, not by mutating the legacy `PROVIDER_PREFIXES`.
+
+### 11.3 Provider boundary
+
+The app separates protocol normalization, provider routing, provider adapters, a response
+or session store (in-memory for the first milestone), and compatibility middleware. The
+provider adapter interface is stable so the Claude and Copilot internals can evolve
+independently:
+
+- `create_response(request) -> ResponseEnvelope`
+- `stream_response(request) -> AsyncIterator[SSEEvent]`
+- `list_models() -> ModelList`
+- `get_response(response_id)` and `list_input_items(response_id)` where Codex-observed
+  fixtures require them.
+
+### 11.4 Authentication
+
+- Claude: subscription OAuth via the `claudeAiOauth` artifact (macOS Keychain service
+  `Claude Code-credentials`, or `~/.claude/.credentials.json` headless), asserted explicitly
+  by the adapter, not inferred by absence of an API key. See ADR 0002 D3.
+- Copilot: local logged-in-user credentials via the ported direct-forward adapter, no
+  repository secret. See ADR 0002 D4.
+
+### 11.5 LiteLLM quarantine guard
+
+A runtime guard test traces `litellm.proxy.proxy_server.app` for zero invocations during
+Claude and Copilot handling, and asserts the new app's import graph excludes
+`reverso.proxy.app`. This proves LiteLLM is not the hidden core for the new paths.

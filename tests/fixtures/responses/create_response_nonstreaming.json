@@ -1,0 +1,56 @@
+{
+  "fixture": "create_response_nonstreaming",
+  "title": "Non-streaming create_response with assistant output text",
+  "openai_shape": "POST /v1/responses request and the Response object reply",
+  "method": "POST",
+  "path": "/v1/responses",
+  "request": {
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "model": "gpt-5.5",
+      "input": "What is the capital of France?",
+      "stream": false
+    }
+  },
+  "expected": {
+    "status": 200,
+    "content_type": "application/json",
+    "body": {
+      "id": "resp_fixture_0001",
+      "object": "response",
+      "created_at": 1700000000,
+      "status": "completed",
+      "model": "gpt-5.5",
+      "output": [
+        {
+          "id": "msg_fixture_0001",
+          "type": "message",
+          "role": "assistant",
+          "status": "completed",
+          "content": [
+            {
+              "type": "output_text",
+              "text": "The capital of France is Paris.",
+              "annotations": []
+            }
+          ]
+        }
+      ],
+      "usage": {
+        "input_tokens": 8,
+        "output_tokens": 7,
+        "total_tokens": 15
+      }
+    }
+  },
+  "assertions": {
+    "status": 200,
+    "object": "response",
+    "status_field": "completed",
+    "output_text": "The capital of France is Paris.",
+    "output_role": "assistant",
+    "id_present": true
+  }
+}
