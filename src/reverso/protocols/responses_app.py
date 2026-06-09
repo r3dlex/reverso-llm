@@ -102,6 +102,39 @@ async def _send_error(send: Send, status: int, message: str) -> None:
     )
 
 
+async def _send_server_error(send: Send, message: str) -> None:
+    await _send_json(send, 502, {"error": {"message": message, "type": "server_error"}})
+
+
+def _safe_error_message(exc: Exception) -> str:
+    """A secret-free, detail-free error string.
+
+    Only the exception class name is surfaced; the exception payload may carry
+    upstream URLs or other internal detail and must not reach the client.
+    """
+    return f"upstream provider error ({type(exc).__name__})"
+
+
+class _SendTracker:
+    """Wraps an ASGI send to record whether a response has started.
+
+    Lets the app fall back to a structured error only while the response line
+    is still uncommitted; once headers are sent (e.g. mid-stream), the streaming
+    path owns its own terminal failure event instead.
+    """
+
+    __slots__ = ("_send", "started")
+
+    def __init__(self, send: Send) -> None:
+        self._send = send
+        self.started = False
+
+    async def __call__(self, message: dict[str, Any]) -> None:
+        if message.get("type") == "http.response.start":
+            self.started = True
+        await self._send(message)
+
+
 def _envelope_to_payload(envelope: ResponseEnvelope) -> dict[str, Any]:
     if envelope.raw:
         return strip_think_json(envelope.raw)
@@ -156,11 +189,7 @@ async def _handle_create_response(
     await _send_json(send, 200, _envelope_to_payload(envelope))
 
 
-async def _stream(
-    adapter: ProviderAdapter,
-    request: ResponsesRequest,
-    send: Send,
-) -> None:
+async def _start_stream(send: Send) -> None:
     await send(
         {
             "type": "http.response.start",
@@ -171,12 +200,55 @@ async def _stream(
             ],
         }
     )
+
+
+async def _stream(
+    adapter: ProviderAdapter,
+    request: ResponsesRequest,
+    send: Send,
+) -> None:
+    # The 200 header is held until the first event so a failure that happens
+    # before any output (auth, connect, upstream non-2xx) can still return a
+    # structured error instead of a truncated 200 stream.
+    started = False
     saw_done = False
-    async for event in adapter.stream_response(request):
-        chunk = _sse_event_bytes(event)
-        if _DONE_EVENT.strip() in chunk:
-            saw_done = True
-        await send({"type": "http.response.body", "body": chunk, "more_body": True})
+    try:
+        async for event in adapter.stream_response(request):
+            if not started:
+                await _start_stream(send)
+                started = True
+            chunk = _sse_event_bytes(event)
+            if _DONE_EVENT.strip() in chunk:
+                saw_done = True
+            await send({"type": "http.response.body", "body": chunk, "more_body": True})
+    except Exception as exc:  # noqa: BLE001 - a provider failure must not crash the app
+        if not started:
+            await _send_server_error(send, _safe_error_message(exc))
+            return
+        # Headers are already committed at 200; terminate the stream with an
+        # explicit failure event plus [DONE] so the client never sees a silent
+        # truncation.
+        failure = encode_sse_event(
+            "response.failed",
+            {
+                "type": "response.failed",
+                "response": {
+                    "status": "failed",
+                    "error": {
+                        "message": _safe_error_message(exc),
+                        "type": "server_error",
+                    },
+                },
+            },
+        )
+        await send({"type": "http.response.body", "body": failure, "more_body": True})
+        await send(
+            {"type": "http.response.body", "body": _DONE_EVENT, "more_body": True}
+        )
+        await send({"type": "http.response.body", "body": b"", "more_body": False})
+        return
+    if not started:
+        await _start_stream(send)
     if not saw_done:
         await send(
             {"type": "http.response.body", "body": _DONE_EVENT, "more_body": True}
@@ -223,6 +295,24 @@ class ResponsesGatewayApp:
             await _send_error(send, 503, f"no adapter for provider {routed.provider!r}")
             return
 
+        tracked = _SendTracker(send)
+        try:
+            await self._dispatch(adapter, scope, receive, tracked, routed)
+        except Exception as exc:  # noqa: BLE001 - provider failures become a 502
+            # A streamed response that already committed its 200 owns its own
+            # terminal failure event; only synthesize an error response while
+            # the status line is still uncommitted.
+            if not tracked.started:
+                await _send_server_error(tracked, _safe_error_message(exc))
+
+    async def _dispatch(
+        self,
+        adapter: ProviderAdapter,
+        scope: Scope,
+        receive: Receive,
+        send: Send,
+        routed: RoutedPath,
+    ) -> None:
         method = str(scope.get("method", "GET")).upper()
         local = routed.path
         local_no_slash = local.rstrip("/")

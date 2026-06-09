@@ -322,7 +322,7 @@ class ClaudeAdapter:
         child_env["CLAUDE_CODE_OAUTH_TOKEN"] = token
         try:
             result = subprocess.run(
-                ["claude", "--print", "--model", model, prompt],
+                ["claude", "--print", "--model", model, "--", prompt],
                 capture_output=True,
                 text=True,
                 check=True,
