@@ -1,12 +1,14 @@
 """Provider-agnostic Codex Responses parity harness (ADR 0002, test-spec).
 
 The SAME Codex-observed fixture matrix (tests/fixtures/responses) runs against
-BOTH the claude and copilot provider paths through the first-party app
-(reverso.protocols.responses_app.build_app). Every provider is backed by the
-deterministic FixtureAdapter (conftest), which authenticates through the
-fake-auth seam and replays fixture bodies/events; no real Claude or Copilot
-endpoint or credential is touched. Identical assertions apply per provider, so a
-failure isolates which provider broke contract parity.
+ALL FOUR provider paths (claude, copilot, auggie, deepseek) through the
+first-party app (reverso.protocols.responses_app.build_app). Every provider is
+backed by the deterministic FixtureAdapter (conftest), which authenticates
+through the fake-auth seam and replays fixture bodies/events; no real Claude,
+Copilot, Auggie, or DeepSeek endpoint, process, or credential is touched. The
+four providers share a single loopback port via path-prefix routing, so no new
+listener or process is spawned per provider. Identical assertions apply per
+provider, so a failure isolates which provider broke contract parity.
 """
 
 from __future__ import annotations
@@ -20,7 +22,7 @@ import pytest
 from conftest import FixtureAdapter, load_fixture
 from reverso.protocols.responses_app import build_app
 
-PROVIDERS = ["claude", "copilot"]
+PROVIDERS = ["claude", "copilot", "auggie", "deepseek"]
 
 
 def _build_client() -> httpx.AsyncClient:

@@ -95,8 +95,12 @@ def main() -> None:
             f"Starting reverso proxy on {host}:{port} (config: {config_path})",
             flush=True,
         )
+        # Boot the composition root (ADR 0003): first-party provider prefixes
+        # are served by the first-party gateway, everything else falls through
+        # to the legacy LiteLLM app. Rollback is repointing this to
+        # "reverso.proxy.app:app".
         uvicorn.run(
-            "reverso.proxy.app:app",
+            "reverso.proxy.compose:app",
             host=host,
             port=port,
         )

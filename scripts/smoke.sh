@@ -39,12 +39,12 @@ echo "==> Smoke: /v1/models"
 R=$(curl -sf "${BASE}/v1/models" 2>&1 || echo "CONNECTION_ERROR")
 check "models endpoint" "${R}" "data"
 
-echo "==> Smoke: deepseek profile GPT-level alias"
-PAYLOAD='{"model":"gpt-5.5","messages":[{"role":"user","content":"Reply with exactly: SMOKE_OK"}]}'
-R=$(curl -sf -X POST "${BASE}/deepseek/v1/chat/completions" \
+echo "==> Smoke: deepseek first-party Responses GPT-level alias"
+PAYLOAD='{"model":"gpt-5.5","input":"Reply with exactly: SMOKE_OK"}'
+R=$(curl -sf -X POST "${BASE}/deepseek/v1/responses" \
     -H "Content-Type: application/json" \
     -d "${PAYLOAD}" 2>&1 || echo "CONNECTION_ERROR")
-check "deepseek profile response" "${R}" "choices"
+check "deepseek profile response" "${R}" "output"
 
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"

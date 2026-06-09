@@ -1,0 +1,6 @@
+{
+  "goal": {
+    "objective": "Write the Phase 0 ADR under docs/architecture/adr/ declaring the Responses-native gateway, the single-port path-prefixed endpoint model (/claude/v1, /copilot/v1 on one loopback port), LiteLLM quarantine plus full-retirement criteria, the named Claude subscription-OAuth credential artifact with cited billing evidence (or a documented limitation if no observable signal distinguishes it from ANTHROPIC_API_KEY), and the Copilot SDK evaluation matrix with cited PASS/FAIL/UNKNOWN across the seven amendment-2 criteria plus the operational fallback trigger. Update docs/03-architecture.md and docs/04-mvp.md for the first-milestone boundary and non-goals. ASCII-only (no em/en dashes), markdown frontmatter required. This docs+ADR story is the ONLY in-scope deliverable for the current increment; stop after it is review-ready.",
+    "status": "completed"
+  }
+}

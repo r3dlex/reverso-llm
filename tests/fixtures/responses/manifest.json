@@ -1,7 +1,7 @@
 {
   "manifest": "responses_parity_fixtures",
-  "description": "Provider-agnostic Codex-observed OpenAI Responses parity fixtures. The same matrix runs against the claude and copilot adapters through reverso.protocols.responses_app.build_app.",
-  "providers": ["claude", "copilot"],
+  "description": "Provider-agnostic Codex-observed OpenAI Responses parity fixtures. The same matrix runs against the claude, copilot, auggie, and deepseek adapters through reverso.protocols.responses_app.build_app.",
+  "providers": ["claude", "copilot", "auggie", "deepseek"],
   "prefix_template": "/{provider}/v1",
   "fixtures": [
     {

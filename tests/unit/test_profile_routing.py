@@ -10,10 +10,35 @@ import pytest
 from reverso.middleware.x_gateway_error_envelope import XGatewayErrorEnvelopeMiddleware
 from reverso.proxy.profile_routing import (
     CURRENT_PROFILE_WORKSPACE,
+    PROVIDER_PREFIXES,
     ProfileRoutingMiddleware,
     resolve_profile_model,
     split_profile_path,
 )
+
+
+def test_legacy_profile_routing_unchanged_by_first_party_migration() -> None:
+    """REGRESSION: registering first-party prefixes must not mutate legacy routing.
+
+    ADR 0003 routes claude/copilot/auggie/deepseek to the first-party gateway via
+    the composition root, but the legacy ProfileRoutingMiddleware must keep its
+    own PROVIDER_PREFIXES and resolve_profile_model behavior intact so the
+    one-line rollback (boot reverso.proxy.app:app) still serves claude/deepseek.
+    The net-new first-party prefixes (auggie, copilot) must NOT leak into legacy
+    profile routing.
+    """
+    assert PROVIDER_PREFIXES == frozenset({"deepseek", "claude"})
+    assert "auggie" not in PROVIDER_PREFIXES
+    assert "copilot" not in PROVIDER_PREFIXES
+
+    # resolve_profile_model must still produce the documented tier mappings.
+    assert resolve_profile_model("deepseek", "gpt-5.5") == "deepseek-v4-pro"
+    assert resolve_profile_model("deepseek", "gpt-5.4-mini") == "deepseek-v4-flash"
+    assert resolve_profile_model("claude", "gpt-5.5") == "claude-opus-4-8"
+    assert resolve_profile_model("claude", "gpt-5.4-mini") == "claude-sonnet-4-6"
+    # Unknown profiles (incl. the net-new first-party prefixes) pass through.
+    assert resolve_profile_model("auggie", "gpt-5.5") == "gpt-5.5"
+    assert resolve_profile_model("copilot", "gpt-5.5") == "gpt-5.5"
 
 
 def test_minimax_is_not_a_reverso_profile() -> None:
