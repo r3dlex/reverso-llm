@@ -25,6 +25,7 @@ from reverso.protocols.adapter import (
     SSEEvent,
 )
 from reverso.protocols.responses_app import build_app
+from reverso.proxy.compose import CompositionRoot
 
 
 class _StubAdapter:
@@ -101,9 +102,16 @@ async def test_litellm_proxy_app_not_invoked_during_provider_handling(
 
     monkeypatch.setattr(proxy_server, "app", _tripwire, raising=False)
 
-    app = build_app({"claude": _StubAdapter(), "copilot": _StubAdapter()})
+    app = build_app(
+        {
+            "claude": _StubAdapter(),
+            "copilot": _StubAdapter(),
+            "auggie": _StubAdapter(),
+            "deepseek": _StubAdapter(),
+        }
+    )
 
-    for provider in ("claude", "copilot"):
+    for provider in ("claude", "copilot", "auggie", "deepseek"):
         status = await _drive(
             app,
             "POST",
@@ -160,4 +168,60 @@ def test_responses_app_import_graph_excludes_legacy_proxy_app() -> None:
     assert "litellm_proxy_server=CLEAN" in out, (
         "reverso.protocols.responses_app must NOT statically import "
         f"litellm.proxy.proxy_server; subprocess reported: {out!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_composition_root_bypasses_legacy_for_first_party_prefixes() -> None:
+    """WRAPPER BYPASS: first-party prefixes never reach the legacy LiteLLM app.
+
+    The composition root (reverso.proxy.compose) owns port 64946 and must route
+    /claude, /copilot, /auggie and /deepseek to the first-party gateway without
+    delegating to the legacy reverso.proxy.app wrapper. A control path that is
+    NOT a first-party prefix must still reach the legacy app, proving the
+    dispatcher delegates fallthrough rather than swallowing everything.
+    """
+    legacy_calls: list[str] = []
+
+    async def _legacy_tripwire(scope: Any, receive: Any, send: Any) -> None:
+        legacy_calls.append(str(scope.get("path", "")))
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [(b"content-type", b"application/json")],
+            }
+        )
+        await send({"type": "http.response.body", "body": b"{}", "more_body": False})
+
+    gateway = build_app(
+        {
+            "claude": _StubAdapter(),
+            "copilot": _StubAdapter(),
+            "auggie": _StubAdapter(),
+            "deepseek": _StubAdapter(),
+        }
+    )
+    root = CompositionRoot(gateway=gateway, legacy_app=_legacy_tripwire)
+
+    for provider in ("claude", "copilot", "auggie", "deepseek"):
+        status = await _drive(
+            root,
+            "POST",
+            f"/{provider}/v1/responses",
+            body=b'{"model":"gpt-5.5","input":"hi"}',
+        )
+        assert status == 200, f"{provider} should be served by the first-party gateway"
+
+    assert legacy_calls == [], (
+        "the legacy LiteLLM app must NOT be invoked for first-party prefixes; "
+        f"observed delegation for paths {legacy_calls!r}"
+    )
+
+    # Control: a non-first-party path must still fall through to the legacy app.
+    control_status = await _drive(root, "GET", "/v1/models")
+    assert control_status == 200
+    assert legacy_calls == ["/v1/models"], (
+        "non-first-party paths must be delegated to the legacy app; "
+        f"observed {legacy_calls!r}"
     )

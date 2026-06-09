@@ -87,6 +87,14 @@ model_list:
       custom_llm_provider: openai_cli
 
   # DeepSeek (http-forwarded)
+  # DEPRECATED (ADR 0003): these LiteLLM DeepSeek entries are superseded by the
+  # first-party DeepSeekAdapter (src/reverso/protocols/adapters/deepseek.py),
+  # which serves /deepseek through the composition root and does NOT inherit
+  # _codex_drop_params, so response_format (JSON mode) and reasoning_content
+  # (thinking mode) survive. They are retained ONLY as the rollback path: if
+  # reverso/proxy/main.py is repointed back to reverso.proxy.app:app, profile
+  # routing falls back onto these LiteLLM entries with no data migration. Do not
+  # remove them while the rollback path is supported.
   - model_name: deepseek-v4-pro
     litellm_params:
       model: custom_openai/deepseek-v4-pro

@@ -27,10 +27,10 @@ Per `r3dlex/skills/ai-sdlc-init/modules/language-packs.md`, this repo uses the
 
 ## Intentionally skipped
 
-- `dotnet ef migrations script` — not applicable (Python repo)
-- `cargo test` / `cargo clippy` — not applicable (Python repo)
-- `dotnet format --verify-no-changes` — not applicable
-- New dependencies — not added; pack reuses existing `pytest` already configured
+- `dotnet ef migrations script`: not applicable (Python repo)
+- `cargo test` / `cargo clippy`: not applicable (Python repo)
+- `dotnet format --verify-no-changes`: not applicable
+- New dependencies: not added; pack reuses existing `pytest` already configured
   in `pyproject.toml`. `ruff` / `mypy` are gated behind `prek` and not run
   unless the user opts in locally.
 

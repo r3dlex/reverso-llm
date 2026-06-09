@@ -288,6 +288,10 @@ These are explicitly deferred but worth noting so v1 design choices accommodate 
 This section augments, and does not replace, Sections 1-10. It records the first-milestone
 shift toward a Reverso-owned OpenAI Responses gateway for the Claude and Copilot provider
 paths. The authoritative decision record is `docs/architecture/adr/0002-responses-native-provider-gateway.md`.
+A follow-on increment registers Auggie and DeepSeek on the same gateway and resolves how the
+gateway owns the loopback port; its authoritative record is
+`docs/architecture/adr/0003-single-port-composition-auggie-deepseek.md`. Subsections 11.6 and
+11.7 below summarize that follow-on; ADR 0003 governs.
 
 ### 11.1 What changes
 
@@ -338,3 +342,53 @@ independently:
 A runtime guard test traces `litellm.proxy.proxy_server.app` for zero invocations during
 Claude and Copilot handling, and asserts the new app's import graph excludes
 `reverso.proxy.app`. This proves LiteLLM is not the hidden core for the new paths.
+
+## 12. Auggie and DeepSeek on the same gateway (ADR 0003)
+
+This section augments Section 11 and records the follow-on increment that registers two more
+providers and resolves the single-port composition gap. The authoritative decision record is
+`docs/architecture/adr/0003-single-port-composition-auggie-deepseek.md`.
+
+### 12.1 Four providers, one port, path-prefixed
+
+All providers are served from the one loopback port `127.0.0.1:64946` as path-prefixed
+Responses endpoints. The follow-on increment adds the Auggie and DeepSeek prefixes:
+
+- Claude: `http://127.0.0.1:64946/claude/v1`
+- Copilot: `http://127.0.0.1:64946/copilot/v1`
+- Auggie: `http://127.0.0.1:64946/auggie/v1`
+- DeepSeek: `http://127.0.0.1:64946/deepseek/v1`
+
+Registration extends the gateway allow-list
+`APP_PROVIDER_PREFIXES` (`src/reverso/protocols/responses_app.py:42`) to include `auggie` and
+`deepseek`, and passes their adapters into `build_app(adapters)`
+(`src/reverso/protocols/responses_app.py:352`). No new router type is created; the merged
+`ResponsesGatewayApp` owns dispatch, and the constructor allow-list guard
+(`responses_app.py:277-283`) still rejects any unknown prefix.
+
+### 12.2 Composition root resolves how the gateway owns the port
+
+Today `src/reverso/proxy/main.py:99` boots `reverso.proxy.app:app` (the legacy LiteLLM
+middleware stack), so `ResponsesGatewayApp` is never reached at runtime. The increment
+introduces a thin composition-root ASGI module (for example `src/reverso/proxy/compose.py`)
+that owns the port and dispatches by leading path segment: first-party provider prefixes go
+to `ResponsesGatewayApp`, and every other path is delegated to the legacy
+`reverso.proxy.app:app` as the named legacy-fallthrough surface. `main.py:99` changes its
+uvicorn target to the composition root; host and port handling (`main.py:92-93`) are
+unchanged, so there is no new port, listener, or process. Rollback is a one-line revert of the
+boot target.
+
+The composition root is the only module that imports both the gateway and the legacy app, so
+`responses_app.py` keeps its no-import-of-`reverso.proxy.app` property. The LiteLLM quarantine
+guard gains a second assertion: the `reverso.proxy.app` wrapper is bypassed for first-party
+prefixes, not only that the inner `litellm.proxy.proxy_server.app` symbol is uninvoked.
+
+### 12.3 DeepSeek is first-party, not LiteLLM fallthrough
+
+`/deepseek/v1/responses` is served by a first-party DeepSeek adapter that calls the DeepSeek
+API directly (mirroring the subprocess precedent at
+`src/reverso/protocols/adapters/claude.py:26`), not by LiteLLM. The legacy DeepSeek config is
+deprecated in place, not deleted. The first-party adapter must not inherit the legacy
+`drop_params` behavior at `config/litellm_config.yaml:23,90-116`: it must not strip
+`response_format` (gates JSON mode) or `reasoning_content` (gates thinking mode). Those two
+modes stay `unverified` until their survival tests pass.

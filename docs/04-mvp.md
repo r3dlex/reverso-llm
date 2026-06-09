@@ -273,3 +273,62 @@ This milestone is orthogonal to the session-daemon and tool-interception phases 
 does not change the locked Q1-Q18 decisions or the existing chat-completions and
 `x_gateway` design; it adds a Responses-native path for two providers under the same loopback
 port.
+
+## Auggie and DeepSeek Increment (ADR 0003)
+
+This section augments, and does not replace, the Responses Providers Milestone above. It
+defines a follow-on increment that registers two more providers on the same first-party
+gateway and resolves how the gateway owns the loopback port. The authoritative decision record
+is `docs/architecture/adr/0003-single-port-composition-auggie-deepseek.md`; the working plan,
+PRD, and test spec are `.omc/plans/ralplan-auggie-deepseek-responses.md`,
+`.omc/plans/prd-auggie-deepseek-responses.md`, and
+`.omc/plans/test-spec-auggie-deepseek-responses.md`.
+
+### Increment goal
+
+Codex targets Auggie (via `auggie-sdk`) and DeepSeek through Reverso as same-port,
+path-prefixed Responses endpoints (`/auggie/v1`, `/deepseek/v1`) on the one loopback port
+`127.0.0.1:64946`, alongside the existing `/claude/v1` and `/copilot/v1`. DeepSeek targets its
+full documented Responses modes; Auggie surfaces provider-native behavior with indexing
+disabled by default.
+
+### First deliverable (current increment): docs first
+
+The only in-scope deliverable for the current increment is documentation: ADR 0003 plus these
+companion doc sections (this section and `docs/03-architecture.md` Section 12). No source
+implementation, adapters, or tests are written until the docs and ADR are reviewed.
+
+### Increment boundary (in scope)
+
+- Update canonical docs before code (done by this increment).
+- Register `auggie` and `deepseek` by extending `APP_PROVIDER_PREFIXES`
+  (`src/reverso/protocols/responses_app.py:42`) and passing their adapters into
+  `build_app(adapters)`. No new router type; the merged `ResponsesGatewayApp` owns dispatch.
+- Resolve the single-port composition gap with a composition-root front dispatcher booted by
+  `src/reverso/proxy/main.py` in place of `reverso.proxy.app:app`, dispatching first-party
+  prefixes to the gateway and delegating all other paths to the legacy stack. No new port,
+  listener, or process.
+- A first-party DeepSeek adapter that calls the DeepSeek API directly (not LiteLLM
+  fallthrough) and does not inherit the legacy `drop_params` stripping of `response_format`
+  or `reasoning_content`.
+- An Auggie adapter (SDK, with a bounded subprocess fallback if the Phase 1 spike requires
+  it) with indexing disabled by default and a falsifiable `hard-disable unproven` caveat when
+  a hard-disable control cannot be proven.
+- The shared Codex-observed parity suite run against both new providers, plus the runtime
+  LiteLLM quarantine guard extended to assert the legacy wrapper is bypassed for first-party
+  prefixes.
+
+### Increment non-goals
+
+- No new port, listener, process, or provider sidecar.
+- No edits to `../oh-my-auggie/`.
+- No Claude or Copilot replan beyond topology wording.
+- No full LiteLLM retirement (criteria remain in ADR 0002 D2).
+- No repository-stored secrets.
+
+### DeepSeek mode promotion gates
+
+DeepSeek JSON output and thinking mode start `unverified` and promote to `pass` only when
+their survival tests are green: `response_format` survives end-to-end to the DeepSeek call
+(JSON), and a two-turn fixture carries turn-1 `reasoning_content` into the turn-2 request or
+rejects clearly (thinking).

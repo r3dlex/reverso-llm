@@ -1,14 +1,17 @@
-"""First-party Responses ASGI app for the Claude and Copilot provider paths.
+"""First-party Responses ASGI app for the first-party provider paths.
 
-Serves both providers from one loopback port (127.0.0.1:64946) via path
-prefixes /claude and /copilot (ADR 0002 D1/D2). Adapters implementing the
-frozen ProviderAdapter Protocol are injected by prefix through build_app, so
-Lanes B and C plug in without touching this module. This app MUST NOT import
-reverso.proxy.app; LiteLLM is quarantined for these paths and a runtime guard
-test asserts the legacy app never handles a /claude or /copilot request.
+Serves every first-party provider from one loopback port (127.0.0.1:64946) via
+path prefixes /claude, /copilot, /auggie and /deepseek (ADR 0002 D1/D2, extended
+by ADR 0003). Adapters implementing the frozen ProviderAdapter Protocol are
+injected by prefix through build_app, so each provider lane plugs in without
+touching this module. This app MUST NOT import reverso.proxy.app; LiteLLM is
+quarantined for these paths and a runtime guard test asserts the legacy app
+never handles a first-party request.
 
-The copilot prefix is net-new and owned here; the legacy
-reverso.proxy.profile_routing.PROVIDER_PREFIXES is intentionally not mutated.
+The auggie/copilot/deepseek prefixes are owned here; the legacy
+reverso.proxy.profile_routing.PROVIDER_PREFIXES is intentionally not mutated, so
+the composition root (reverso.proxy.compose) can route first-party traffic here
+while still delegating everything else to the legacy LiteLLM app.
 """
 
 from __future__ import annotations
@@ -38,8 +41,9 @@ Send = Callable[[dict[str, Any]], Awaitable[None]]
 BIND_HOST = "127.0.0.1"
 BIND_PORT = 64946
 
-# Net-new in the first-party app. NOT the legacy PROVIDER_PREFIXES.
-APP_PROVIDER_PREFIXES = frozenset({"claude", "copilot"})
+# First-party prefixes served here. NOT the legacy PROVIDER_PREFIXES; the
+# composition root routes these to this app and delegates the rest to legacy.
+APP_PROVIDER_PREFIXES = frozenset({"claude", "copilot", "auggie", "deepseek"})
 
 _DONE_EVENT = b"data: [DONE]\n\n"
 
@@ -272,7 +276,7 @@ def _response_id_from_path(local_path: str) -> tuple[str | None, bool]:
 
 
 class ResponsesGatewayApp:
-    """ASGI app routing /claude and /copilot Responses traffic to adapters."""
+    """ASGI app routing first-party Responses traffic to per-prefix adapters."""
 
     def __init__(self, adapters: dict[str, ProviderAdapter]) -> None:
         unknown = set(adapters) - APP_PROVIDER_PREFIXES
@@ -352,8 +356,9 @@ class ResponsesGatewayApp:
 def build_app(adapters: dict[str, ProviderAdapter]) -> ResponsesGatewayApp:
     """Build the first-party Responses app from a {prefix: adapter} registry.
 
-    ``adapters`` maps provider prefixes ("claude", "copilot") to objects
-    satisfying the ProviderAdapter Protocol. Lanes B and C inject their adapters
-    here; the app holds no provider internals.
+    ``adapters`` maps provider prefixes ("claude", "copilot", "auggie",
+    "deepseek") to objects satisfying the ProviderAdapter Protocol. The
+    composition root injects the adapters here; the app holds no provider
+    internals.
     """
     return ResponsesGatewayApp(adapters)

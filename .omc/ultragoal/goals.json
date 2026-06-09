@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "createdAt": "2026-06-08T22:57:20.247Z",
+  "updatedAt": "2026-06-09T05:50:30.105Z",
+  "briefPath": ".omc/ultragoal/brief.md",
+  "goalsPath": ".omc/ultragoal/goals.json",
+  "ledgerPath": ".omc/ultragoal/ledger.jsonl",
+  "claudeGoalMode": "per_story",
+  "goals": [
+    {
+      "id": "G001-docs-and-adr-phase-0",
+      "title": "Docs and ADR (Phase 0)",
+      "objective": "Write the Phase 0 ADR under docs/architecture/adr/ declaring the Responses-native gateway, the single-port path-prefixed endpoint model (/claude/v1, /copilot/v1 on one loopback port), LiteLLM quarantine plus full-retirement criteria, the named Claude subscription-OAuth credential artifact with cited billing evidence (or a documented limitation if no observable signal distinguishes it from ANTHROPIC_API_KEY), and the Copilot SDK evaluation matrix with cited PASS/FAIL/UNKNOWN across the seven amendment-2 criteria plus the operational fallback trigger. Update docs/03-architecture.md and docs/04-mvp.md for the first-milestone boundary and non-goals. ASCII-only (no em/en dashes), markdown frontmatter required. This docs+ADR story is the ONLY in-scope deliverable for the current increment; stop after it is review-ready.",
+      "status": "complete",
+      "attempt": 1,
+      "createdAt": "2026-06-08T22:57:20.247Z",
+      "updatedAt": "2026-06-08T23:05:48.866Z",
+      "startedAt": "2026-06-08T22:57:24.263Z",
+      "completedAt": "2026-06-08T23:05:48.866Z",
+      "evidence": "Docs-first increment complete and review-ready. Created docs/architecture/adr/0002-responses-native-provider-gateway.md (ADR with single-port endpoint model, runtime-scoped LiteLLM quarantine + retirement criteria, named Claude claudeAiOauth credential artifact + observable-signal + auth.py limitation, 7-criterion Copilot SDK eval matrix concluding ported direct-forward adapter via fallback trigger, M2 must-fix token-log+CORS, non-goals). Augmented docs/03-architecture.md (section 11) and docs/04-mvp.md (Responses Providers Milestone) with additions only. Independent verifier pass: REVIEW READY (6/6 faithfulness + 3/3 hard-constraint checks PASS; dash scan clean; git diff 106 insertions 0 deletions). Evidence agents verified Claude OAuth artifact (claude_agent_sdk session_resume.py:48,330-335,383-385) and Copilot SDK github-copilot-sdk v1.0.0 JSON-RPC-over-CLI fails Responses parity."
+    },
+    {
+      "id": "G002-provider-neutral-responses-core-phas",
+      "title": "Provider-neutral Responses core (Phase 1)",
+      "objective": "First-party ASGI app at src/reverso/protocols/responses_app.py that does NOT import reverso.proxy.app; provider adapter interfaces, response/session store, and auth interfaces. Only after docs+ADR are approved.",
+      "status": "complete",
+      "attempt": 1,
+      "createdAt": "2026-06-08T22:57:20.247Z",
+      "updatedAt": "2026-06-09T05:46:26.078Z",
+      "startedAt": "2026-06-09T05:45:54.859Z",
+      "completedAt": "2026-06-09T05:46:26.078Z",
+      "evidence": "Lane A: first-party ASGI app src/reverso/protocols/responses_app.py (does NOT import reverso.proxy.app; binds 127.0.0.1:64946; build_app(adapters) factory). Frozen contract adapter.py (ProviderAdapter Protocol + ResponsesRequest/ResponseEnvelope/SSEEvent/ModelList/InputItemList), in-memory ResponseStore (store.py), auth interface + redaction + fake_auth (auth.py). Protocol transforms extracted to middleware.py without importing legacy proxy. Quarantine verified: zero litellm/proxy.app in sys.modules."
+    },
+    {
+      "id": "G003-shared-parity-suite-phase-2",
+      "title": "Shared parity suite (Phase 2)",
+      "objective": "Codex-observed parity fixtures under tests/fixtures/responses and a provider-agnostic harness running the same matrix for claude and copilot.",
+      "status": "complete",
+      "attempt": 1,
+      "createdAt": "2026-06-08T22:57:20.247Z",
+      "updatedAt": "2026-06-09T05:46:59.406Z",
+      "startedAt": "2026-06-09T05:46:59.286Z",
+      "completedAt": "2026-06-09T05:46:59.406Z",
+      "evidence": "Lane D: tests/fixtures/responses/ (7 synthetic provider-agnostic fixtures + manifest.json + README). Provider-agnostic harness tests/integration/test_responses_provider_contract.py runs the SAME matrix for claude and copilot via build_app over httpx ASGITransport + fake-auth. 7 checks x 2 providers = 14 PASS."
+    },
+    {
+      "id": "G004-claude-adapter-phase-3",
+      "title": "Claude adapter (Phase 3)",
+      "objective": "Claude adapter behind the provider interface with the falsifiable subscription-OAuth gate test (no ANTHROPIC_API_KEY + OAuth credential -> OAuth path resolved, fails if it falls through to API-key).",
+      "status": "complete",
+      "attempt": 1,
+      "createdAt": "2026-06-08T22:57:20.247Z",
+      "updatedAt": "2026-06-09T05:46:59.640Z",
+      "startedAt": "2026-06-09T05:46:59.522Z",
+      "completedAt": "2026-06-09T05:46:59.640Z",
+      "evidence": "Lane B: src/reverso/protocols/adapters/claude.py implements ProviderAdapter. Falsifiable OAuth gate (tests/unit/test_claude_oauth_gate.py, 11 tests): reads claudeAiOauth directly (Keychain 'Claude Code-credentials' or ~/.claude/.credentials.json); AuthResolution.method=='claude_oauth' always; no api-key path; ANTHROPIC_API_KEY/CLAUDE_CODE_OAUTH_TOKEN never consumed. Falsifiability proven by injecting auth-by-elimination anti-pattern (test failed) then restoring."
+    },
+    {
+      "id": "G005-copilot-adapter-phase-4",
+      "title": "Copilot adapter (Phase 4)",
+      "objective": "Copilot adapter using the SDK only if the Phase 0 matrix passes, else the ported direct-forward fallback; drop the ported token log and wildcard CORS.",
+      "status": "complete",
+      "attempt": 1,
+      "createdAt": "2026-06-08T22:57:20.247Z",
+      "updatedAt": "2026-06-09T05:46:59.868Z",
+      "startedAt": "2026-06-09T05:46:59.752Z",
+      "completedAt": "2026-06-09T05:46:59.868Z",
+      "evidence": "Lane C: src/reverso/protocols/adapters/copilot.py ported direct-forward spine from copilot-openai-api/main.py (CopilotAuth :39-261, forward :295-374). SDK rejected per ADR 0002 D4 matrix. Must-fixes honored: dropped raw-token log (was main.py:276), did NOT carry wildcard CORS (was main.py:284-292). Local logged-in-user creds only. 11 unit tests pass."
+    },
+    {
+      "id": "G006-cutover-phase-5",
+      "title": "Cutover (Phase 5)",
+      "objective": "Wire /claude/v1/responses and /copilot/v1/responses on one loopback port with path prefixes; runtime-scoped LiteLLM guard; rollback path.",
+      "status": "complete",
+      "attempt": 1,
+      "createdAt": "2026-06-08T22:57:20.247Z",
+      "updatedAt": "2026-06-09T05:47:00.097Z",
+      "startedAt": "2026-06-09T05:46:59.980Z",
+      "completedAt": "2026-06-09T05:47:00.097Z",
+      "evidence": "/claude/v1 and /copilot/v1 served on one loopback port 127.0.0.1:64946 via path prefixes (APP_PROVIDER_PREFIXES in responses_app.py); copilot prefix added in the new app, NOT legacy profile_routing.PROVIDER_PREFIXES (still {deepseek,claude}). Runtime-scoped LiteLLM guard tests/unit/test_litellm_quarantine.py: tripwire asserts 0 calls to litellm.proxy.proxy_server.app + fresh-subprocess import-graph excludes reverso.proxy.app."
+    },
+    {
+      "id": "G007-verification-phase-6",
+      "title": "Verification (Phase 6)",
+      "objective": "Run unit/integration/e2e parity, smoke after startup exists, dash scan, and cleanup evidence.",
+      "status": "complete",
+      "attempt": 1,
+      "createdAt": "2026-06-08T22:57:20.247Z",
+      "updatedAt": "2026-06-09T05:50:30.105Z",
+      "startedAt": "2026-06-09T05:47:00.212Z",
+      "evidence": "Verification phase complete. uv run pytest tests -q -> 158 passed, 4 skipped, 1 warning (clean-state, bytecode purged). Dash scan clean on deliverable surface. ai-slop-cleaner no-op CLEAR. Independent code-review (worker-e, opus) VERDICT PASS, no CRITICAL/MAJOR/MINOR findings. Runtime LiteLLM quarantine + falsifiable OAuth gate + real-adapter parity all verified.",
+      "completedAt": "2026-06-09T05:50:30.105Z"
+    }
+  ]
+}

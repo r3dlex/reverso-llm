@@ -1,11 +1,12 @@
 """Shared loaders and a fixture-driven fake adapter for the parity harness.
 
 The parity suite runs the SAME Codex-observed fixtures (tests/fixtures/responses)
-against BOTH the claude and copilot provider paths through the first-party app
-(reverso.protocols.responses_app.build_app). To stay provider-agnostic and never
-touch real endpoints or credentials, each provider is backed by a FixtureAdapter
-that replays the fixture's expected bodies/events and authenticates through the
-deterministic fake-auth seam (reverso.protocols.auth.fake_auth).
+against ALL FOUR provider paths (claude, copilot, auggie, deepseek) through the
+first-party app (reverso.protocols.responses_app.build_app). To stay
+provider-agnostic and never touch real endpoints, processes, or credentials,
+each provider is backed by a FixtureAdapter that replays the fixture's expected
+bodies/events and authenticates through the deterministic fake-auth seam
+(reverso.protocols.auth.fake_auth).
 """
 
 from __future__ import annotations
@@ -40,8 +41,8 @@ class FixtureAdapter:
     It satisfies the frozen ProviderAdapter Protocol and resolves a deterministic
     fake OAuth credential (no Keychain, no filesystem, no network). It does not
     speak to any real provider; it returns exactly what the active fixture says
-    the provider-agnostic contract requires, so claude and copilot are exercised
-    identically.
+    the provider-agnostic contract requires, so claude, copilot, auggie, and
+    deepseek are exercised identically.
     """
 
     def __init__(self, provider: str) -> None:
