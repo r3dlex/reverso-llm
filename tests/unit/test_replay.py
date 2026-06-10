@@ -9,8 +9,14 @@ the seam fixed (Claude previously stored only after response.completed).
 
 from __future__ import annotations
 
+import pytest
+
 from reverso.protocols.adapter import ResponseEnvelope, ResponsesRequest
-from reverso.protocols.adapters.claude import ClaudeAdapter, OAUTH_METHOD
+from reverso.protocols.adapters.claude import (
+    ClaudeAdapter,
+    ClaudeAuthError,
+    OAUTH_METHOD,
+)
 from reverso.protocols.auth import AuthResolution
 from reverso.protocols.replay import (
     CANONICAL_EVENT_SEQUENCE,
@@ -213,3 +219,34 @@ async def test_claude_stream_stores_response_before_full_drain() -> None:
 
     stored = await adapter.get_response(response_id)
     assert stored.id == response_id
+
+
+class _UnauthenticatedClaudeAuth:
+    """Auth that never resolves; no real credential is touched."""
+
+    def resolve(self) -> AuthResolution:
+        return AuthResolution(
+            authenticated=False,
+            method="none",
+            details={"reason": "no_credential"},
+        )
+
+
+async def test_claude_stream_auth_error_surfaces_on_first_drain() -> None:
+    # stream_response returns an async generator without executing any body
+    # code, so a missing credential must NOT raise at call time; the
+    # ClaudeAuthError surfaces when the app drains the first event.
+    runs: list[str] = []
+
+    def cli_runner(prompt: str, model: str) -> str:
+        runs.append(prompt)
+        return "never reached"
+
+    adapter = ClaudeAdapter(auth=_UnauthenticatedClaudeAuth(), cli_runner=cli_runner)
+    request = ResponsesRequest(model="claude-test", input="hi", stream=True)
+
+    gen = adapter.stream_response(request)
+
+    with pytest.raises(ClaudeAuthError):
+        await gen.__anext__()
+    assert runs == []
