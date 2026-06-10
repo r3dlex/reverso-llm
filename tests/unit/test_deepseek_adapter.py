@@ -125,8 +125,16 @@ async def test_list_models_returns_live_upstream_listing(monkeypatch):
             json={
                 "object": "list",
                 "data": [
-                    {"id": "deepseek-v4-flash", "object": "model", "owned_by": "deepseek"},
-                    {"id": "deepseek-v4-pro", "object": "model", "owned_by": "deepseek"},
+                    {
+                        "id": "deepseek-v4-flash",
+                        "object": "model",
+                        "owned_by": "deepseek",
+                    },
+                    {
+                        "id": "deepseek-v4-pro",
+                        "object": "model",
+                        "owned_by": "deepseek",
+                    },
                 ],
             },
         )
