@@ -135,6 +135,23 @@ async def test_list_models_embeds_indexing_caveat_literal() -> None:
     assert '"disabled"' not in serialized
 
 
+async def test_list_models_maps_live_cli_short_names() -> None:
+    """The live CLI registry keys models by ``shortName``, not ``id``."""
+    adapter = AuggieAdapter(
+        cli_runner=lambda prompt, model: "ok",
+        models_runner=_models_runner(
+            [
+                {"displayName": "Prism (Claude + Gemini)", "shortName": "prism-a"},
+                {"displayName": "Haiku 4.5", "shortName": "haiku4.5"},
+            ]
+        ),
+    )
+
+    models = await adapter.list_models()
+
+    assert [m["id"] for m in models.data] == ["prism-a", "haiku4.5"]
+
+
 def test_completion_argv_uses_sandbox_root_and_ask_posture(tmp_path) -> None:
     """The argv defaults to a sandbox workspace root and a read-only posture."""
     caller_workspace = str(tmp_path / "real-caller-workspace")

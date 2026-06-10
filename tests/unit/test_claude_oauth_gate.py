@@ -221,6 +221,69 @@ def test_adapter_maps_output_to_envelope(tmp_path) -> None:
     assert _ACCESS_TOKEN not in json.dumps(envelope.output)
 
 
+def test_list_models_uses_live_anthropic_listing_with_oauth_bearer(tmp_path) -> None:
+    """list_models fetches the live Anthropic /v1/models with the OAuth bearer."""
+    import asyncio
+
+    import httpx
+
+    from reverso.protocols.adapters.claude import ClaudeAdapter
+
+    cred_file = tmp_path / ".credentials.json"
+    cred_file.write_text(_artifact(expires_at=_future_ms()), encoding="utf-8")
+    auth = ClaudeOAuthAuth(credentials_path=cred_file, keychain_reader=lambda: None)
+
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["path"] = request.url.path
+        captured["auth"] = request.headers.get("authorization")
+        captured["beta"] = request.headers.get("anthropic-beta")
+        return httpx.Response(
+            200, json={"data": [{"id": "claude-opus-4-8", "type": "model"}]}
+        )
+
+    adapter = ClaudeAdapter(
+        auth=auth,
+        cli_runner=lambda prompt, model: "ok",
+        models_client_factory=lambda: httpx.AsyncClient(
+            transport=httpx.MockTransport(handler)
+        ),
+    )
+
+    models = asyncio.run(adapter.list_models())
+
+    assert [m["id"] for m in models.data] == ["claude-opus-4-8"]
+    assert captured["path"] == "/v1/models"
+    assert captured["auth"] == f"Bearer {_ACCESS_TOKEN}"
+    assert captured["beta"] == "oauth-2025-04-20"
+
+
+def test_list_models_falls_back_to_cli_aliases_when_unauthenticated(tmp_path) -> None:
+    """Without OAuth, list_models degrades to the always-valid CLI aliases."""
+    import asyncio
+
+    from reverso.protocols.adapters.claude import ClaudeAdapter
+
+    auth = ClaudeOAuthAuth(
+        credentials_path=tmp_path / "missing.json",
+        keychain_reader=lambda: None,
+    )
+
+    def _factory_must_not_run():  # pragma: no cover
+        raise AssertionError("models client must not be built without auth")
+
+    adapter = ClaudeAdapter(
+        auth=auth,
+        cli_runner=lambda prompt, model: "ok",
+        models_client_factory=_factory_must_not_run,
+    )
+
+    models = asyncio.run(adapter.list_models())
+
+    assert [m["id"] for m in models.data] == ["opus", "sonnet", "haiku"]
+
+
 def test_adapter_streams_fixture_event_order(tmp_path) -> None:
     """The stream emits the Codex-observed Responses event order."""
     import asyncio

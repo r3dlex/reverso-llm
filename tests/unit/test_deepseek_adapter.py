@@ -114,14 +114,53 @@ async def test_stream_response_yields_completed_sequence(monkeypatch):
     assert completed["status"] == "completed"
 
 
-async def test_list_models_returns_four_deepseek_models(monkeypatch):
+async def test_list_models_returns_live_upstream_listing(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", API_KEY_SENTINEL)
-    adapter = _adapter(lambda r: httpx.Response(200, json=_chat_response()))
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url.path.endswith("/models")
+        return httpx.Response(
+            200,
+            json={
+                "object": "list",
+                "data": [
+                    {
+                        "id": "deepseek-v4-flash",
+                        "object": "model",
+                        "owned_by": "deepseek",
+                    },
+                    {
+                        "id": "deepseek-v4-pro",
+                        "object": "model",
+                        "owned_by": "deepseek",
+                    },
+                ],
+            },
+        )
+
+    adapter = _adapter(handler)
 
     models = await adapter.list_models()
 
     assert isinstance(models, ModelList)
     assert models.object == "list"
+    ids = [m["id"] for m in models.data]
+    assert ids == ["deepseek-v4-flash", "deepseek-v4-pro"]
+    assert all(m["owned_by"] == "deepseek" for m in models.data)
+    assert all(m["object"] == "model" for m in models.data)
+
+
+async def test_list_models_falls_back_to_static_without_key(monkeypatch):
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+
+    def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover
+        raise AssertionError("upstream must not be called without a key")
+
+    adapter = _adapter(handler)
+
+    models = await adapter.list_models()
+
     ids = [m["id"] for m in models.data]
     assert ids == [
         "deepseek-v4-pro",
@@ -129,8 +168,6 @@ async def test_list_models_returns_four_deepseek_models(monkeypatch):
         "deepseek-reasoner",
         "deepseek-chat",
     ]
-    assert all(m["owned_by"] == "deepseek" for m in models.data)
-    assert all(m["object"] == "model" for m in models.data)
 
 
 async def test_response_format_survives_to_upstream_body(monkeypatch):
@@ -346,6 +383,62 @@ async def test_tool_calls_surfaced_not_executed(monkeypatch):
     assert function_calls[0]["arguments"] == '{"city":"Paris"}'
     # Exactly one upstream call: surfaced, never executed.
     assert calls["n"] == 1
+
+
+async def test_responses_format_tools_converted_to_chat_format(monkeypatch):
+    """Codex sends flat Responses tools; DeepSeek needs nested ``function``.
+
+    Without conversion DeepSeek returns 400 (missing field `function`), which
+    broke every codex -p deepseek run (codex always declares its tools).
+    """
+    monkeypatch.setenv("DEEPSEEK_API_KEY", API_KEY_SENTINEL)
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, json=_chat_response())
+
+    adapter = _adapter(handler)
+    request = ResponsesRequest.from_payload(
+        {
+            "model": "deepseek-chat",
+            "input": "hi",
+            "tools": [
+                {
+                    "type": "function",
+                    "name": "shell",
+                    "description": "run a command",
+                    "parameters": {"type": "object"},
+                    "strict": False,
+                },
+                {
+                    "type": "function",
+                    "function": {"name": "already_chat", "parameters": {}},
+                },
+                {"type": "web_search"},
+            ],
+            "tool_choice": {"type": "function", "name": "shell"},
+        }
+    )
+
+    await adapter.create_response(request)
+
+    sent_tools = bodies[0]["tools"]
+    assert sent_tools == [
+        {
+            "type": "function",
+            "function": {
+                "name": "shell",
+                "description": "run a command",
+                "parameters": {"type": "object"},
+            },
+        },
+        {"type": "function", "function": {"name": "already_chat", "parameters": {}}},
+    ]
+    assert bodies[0]["tool_choice"] == {
+        "type": "function",
+        "function": {"name": "shell"},
+    }
 
 
 async def test_secret_never_leaks_on_success(monkeypatch, caplog):

@@ -27,7 +27,9 @@ import os
 import subprocess
 import time
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Callable
+
+import httpx
 
 from reverso.protocols.adapter import (
     InputItemList,
@@ -51,6 +53,7 @@ from reverso.protocols.replay import (
     replay_turn,
 )
 from reverso.protocols.store import ResponseStore
+from reverso.proxy.profile_routing import resolve_profile_model
 
 logger = logging.getLogger(__name__)
 
@@ -67,13 +70,21 @@ _KEYCHAIN_SERVICE = "Claude Code-credentials"
 _OAUTH_ARTIFACT_KEY = "claudeAiOauth"
 _LINUX_CREDENTIALS_PATH = Path.home() / ".claude" / ".credentials.json"
 
-# Static model listing for the Claude path. Kept minimal and OpenAI-shaped; the
-# app adds the Codex-private ``models`` refresh field around this data list.
-_CLAUDE_MODELS = (
-    "claude-opus-4-20250514",
-    "claude-sonnet-4-20250514",
-    "claude-3-7-sonnet-20250219",
-    "claude-3-5-haiku-20241022",
+# Anthropic API endpoint used ONLY for the live model listing; completions
+# still go through the claude CLI subprocess. The oauth beta header lets the
+# subscription bearer authenticate the request (never ANTHROPIC_API_KEY).
+_ANTHROPIC_API_BASE = "https://api.anthropic.com"
+_ANTHROPIC_VERSION = "2023-06-01"
+_OAUTH_BETA = "oauth-2025-04-20"
+_MODELS_TIMEOUT_SECONDS = 30.0
+
+# Fallback listing when the live Anthropic listing is unreachable. These are
+# claude CLI aliases, which the CLI always accepts regardless of model churn
+# (full dated ids go stale and the CLI rejects them).
+_FALLBACK_CLAUDE_MODELS = (
+    "opus",
+    "sonnet",
+    "haiku",
 )
 
 
@@ -247,11 +258,16 @@ class ClaudeAdapter:
         auth: ClaudeOAuthAuth | None = None,
         store: ResponseStore | None = None,
         cli_runner: Any | None = None,
+        models_client_factory: Callable[[], httpx.AsyncClient] | None = None,
     ) -> None:
         self._auth = auth or ClaudeOAuthAuth()
         self._store = store or ResponseStore()
         # Injectable completion backend for tests; defaults to the claude CLI.
         self._cli_runner = cli_runner or self._run_claude_cli
+        # Injectable HTTP backend for the live model listing only.
+        self._models_client_factory = models_client_factory or (
+            lambda: httpx.AsyncClient(timeout=_MODELS_TIMEOUT_SECONDS)
+        )
 
     def _ensure_authenticated(self) -> AuthResolution:
         resolution = self._auth.resolve()
@@ -304,9 +320,13 @@ class ClaudeAdapter:
         """Return a non-streaming Responses object for ``request``."""
         self._ensure_authenticated()
         prompt = build_prompt(request)
+        # Resolve GPT-level Codex profile names (e.g. gpt-5.5) to concrete
+        # Claude model ids, matching the legacy ProfileRoutingMiddleware that
+        # the first-party /claude path bypasses (same compensation as deepseek).
+        cli_model = resolve_profile_model("claude", request.model or "")
         # The CLI runner is a blocking subprocess; offload it so a single Claude
         # call cannot stall the gateway's shared event loop for its full run.
-        text = await asyncio.to_thread(self._cli_runner, prompt, request.model)
+        text = await asyncio.to_thread(self._cli_runner, prompt, cli_model)
         message = message_item(new_message_id(), text)
         envelope = ResponseEnvelope(
             id=new_response_id(),
@@ -328,9 +348,10 @@ class ClaudeAdapter:
     ) -> AsyncIterator[SSEEvent]:
         self._ensure_authenticated()
         prompt = build_prompt(request)
+        cli_model = resolve_profile_model("claude", request.model or "")
         # Offload the blocking CLI subprocess (see create_response) before any
         # event is emitted, so the shared event loop stays responsive.
-        text = await asyncio.to_thread(self._cli_runner, prompt, request.model)
+        text = await asyncio.to_thread(self._cli_runner, prompt, cli_model)
         envelope = ResponseEnvelope(
             id=new_response_id(),
             model=request.model,
@@ -345,8 +366,49 @@ class ClaudeAdapter:
             yield event
 
     async def list_models(self) -> ModelList:
-        """Return the Claude model listing for ``/v1/models``."""
+        """Return the live Anthropic model listing for ``/v1/models``.
+
+        Fetched from the Anthropic API with the resolved subscription OAuth
+        bearer plus the oauth beta header; this adapter never consumes
+        ANTHROPIC_API_KEY. Falls back to the always-valid CLI aliases when the
+        token or upstream is unavailable, so the endpoint never 502s for a
+        listing. The token itself is never logged.
+        """
         created = int(time.time())
+        try:
+            token = await self._auth.bearer_token()
+            async with self._models_client_factory() as client:
+                response = await client.get(
+                    f"{_ANTHROPIC_API_BASE}/v1/models",
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "anthropic-version": _ANTHROPIC_VERSION,
+                        "anthropic-beta": _OAUTH_BETA,
+                    },
+                )
+            if 200 <= response.status_code < 300:
+                payload = response.json()
+                data = [
+                    {
+                        "id": model["id"],
+                        "object": "model",
+                        "created": created,
+                        "owned_by": "anthropic",
+                    }
+                    for model in payload.get("data", [])
+                    if isinstance(model, dict) and model.get("id")
+                ]
+                if data:
+                    return ModelList(data=data)
+            logger.warning(
+                "anthropic model listing returned %s; serving CLI alias fallback",
+                response.status_code,
+            )
+        except (ClaudeAuthError, httpx.HTTPError, ValueError) as exc:
+            logger.warning(
+                "anthropic model listing unavailable (%s); serving CLI alias fallback",
+                type(exc).__name__,
+            )
         data = [
             {
                 "id": model_id,
@@ -354,7 +416,7 @@ class ClaudeAdapter:
                 "created": created,
                 "owned_by": "anthropic",
             }
-            for model_id in _CLAUDE_MODELS
+            for model_id in _FALLBACK_CLAUDE_MODELS
         ]
         return ModelList(data=data)
 

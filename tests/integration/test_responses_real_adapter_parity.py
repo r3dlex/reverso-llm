@@ -72,8 +72,23 @@ def _claude_cli_runner(prompt: str, model: str) -> str:
     return "ok"
 
 
+def _claude_models_client_factory() -> httpx.AsyncClient:
+    """Fake Anthropic /v1/models backend so list_models never hits the network."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, json={"data": [{"id": "claude-opus-4-8", "type": "model"}]}
+        )
+
+    return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+
 def _build_claude_adapter() -> ClaudeAdapter:
-    return ClaudeAdapter(auth=_FakeClaudeAuth(), cli_runner=_claude_cli_runner)
+    return ClaudeAdapter(
+        auth=_FakeClaudeAuth(),
+        cli_runner=_claude_cli_runner,
+        models_client_factory=_claude_models_client_factory,
+    )
 
 
 # --- Copilot fakes --------------------------------------------------------
