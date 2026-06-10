@@ -170,9 +170,9 @@ class DeepSeekAdapter:
             "stream": stream,
         }
         if request.tools is not None:
-            body["tools"] = request.tools
+            body["tools"] = _chat_tools(request.tools)
         if request.tool_choice is not None:
-            body["tool_choice"] = request.tool_choice
+            body["tool_choice"] = _chat_tool_choice(request.tool_choice)
         for key, value in request.extra.items():
             if key in _NON_FORWARDED_EXTRA:
                 continue
@@ -204,7 +204,7 @@ class DeepSeekAdapter:
                 output.append(_tool_call_item(call))
 
         model = request.model or str(raw.get("model", ""))
-        usage = raw.get("usage")
+        usage = _responses_usage(raw.get("usage"))
         envelope_raw: dict[str, Any] = {
             "id": response_id,
             "object": "response",
@@ -279,8 +279,41 @@ class DeepSeekAdapter:
             yield event
 
     async def list_models(self) -> ModelList:
-        """Return the DeepSeek model listing for ``/v1/models``."""
+        """Return the live DeepSeek model listing for ``/v1/models``.
+
+        Fetched from the upstream ``/models`` endpoint so the list reflects what
+        the account can actually invoke. Falls back to the static
+        ``_DEEPSEEK_MODELS`` snapshot when the key is missing or upstream is
+        unreachable, so the endpoint never 502s for a listing.
+        """
         created = int(time.time())
+        try:
+            headers = self._headers()
+            async with self._client_factory() as client:
+                response = await client.get(f"{self._api_base}/models", headers=headers)
+            if 200 <= response.status_code < 300:
+                payload = response.json()
+                data = [
+                    {
+                        "id": model["id"],
+                        "object": "model",
+                        "created": created,
+                        "owned_by": model.get("owned_by", "deepseek"),
+                    }
+                    for model in payload.get("data", [])
+                    if isinstance(model, dict) and model.get("id")
+                ]
+                if data:
+                    return ModelList(data=data)
+            logger.warning(
+                "deepseek model listing returned %s; serving static fallback",
+                response.status_code,
+            )
+        except (DeepSeekError, httpx.HTTPError, ValueError) as exc:
+            logger.warning(
+                "deepseek model listing unavailable (%s); serving static fallback",
+                type(exc).__name__,
+            )
         data = [
             {
                 "id": model_id,
@@ -330,6 +363,60 @@ def _output_text(output: list[dict[str, Any]]) -> str:
                 if isinstance(text, str):
                     return text
     return ""
+
+
+def _responses_usage(usage: Any) -> dict[str, Any] | None:
+    """Translate chat-completions usage into Responses usage field names.
+
+    Codex parses the terminal response.completed event strictly and fails on
+    chat-style ``prompt_tokens``/``completion_tokens`` (missing field
+    `input_tokens`), so the chat names must not leak into the envelope.
+    """
+    if not isinstance(usage, dict):
+        return None
+    return {
+        "input_tokens": usage.get("prompt_tokens", 0),
+        "output_tokens": usage.get("completion_tokens", 0),
+        "total_tokens": usage.get("total_tokens", 0),
+    }
+
+
+def _chat_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Convert Responses-format function tools to chat-completions format.
+
+    Codex sends flat ``{"type":"function","name":...,"parameters":...}`` tool
+    declarations; DeepSeek's chat API requires the nested ``function`` object
+    and returns 400 (missing field `function`) otherwise. Tools already in
+    chat format pass through unchanged; non-function tool types are dropped
+    because DeepSeek only supports function tools.
+    """
+    converted: list[dict[str, Any]] = []
+    for tool in tools:
+        if not isinstance(tool, dict):
+            continue
+        if "function" in tool:
+            converted.append(tool)
+            continue
+        if tool.get("type") != "function":
+            continue
+        function = {
+            key: tool[key]
+            for key in ("name", "description", "parameters")
+            if tool.get(key) is not None
+        }
+        converted.append({"type": "function", "function": function})
+    return converted
+
+
+def _chat_tool_choice(tool_choice: Any) -> Any:
+    """Convert a Responses-format tool_choice to chat-completions format."""
+    if (
+        isinstance(tool_choice, dict)
+        and tool_choice.get("type") == "function"
+        and "function" not in tool_choice
+    ):
+        return {"type": "function", "function": {"name": tool_choice.get("name")}}
+    return tool_choice
 
 
 def _tool_call_item(call: dict[str, Any]) -> dict[str, Any]:

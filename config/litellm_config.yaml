@@ -132,5 +132,8 @@ general_settings:
   port: 64946
   host: "127.0.0.1"
 
-environment_variables:
-  DEEPSEEK_API_KEY: ""
+# DEEPSEEK_API_KEY is injected from macOS Keychain (reverso/DEEPSEEK_API_KEY)
+# by reverso.proxy.main at startup. Do NOT redeclare it under LiteLLM's
+# environment_variables section: LiteLLM writes those values into os.environ
+# at config load, and an empty placeholder blanks the injected key for the
+# first-party adapters that read it at call time.

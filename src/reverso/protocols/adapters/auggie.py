@@ -114,7 +114,9 @@ def _parse_completion_output(stdout: str) -> str:
         # Fall back to the raw text when the payload is not JSON.
         return text
     if isinstance(parsed, dict):
-        for key in ("response", "text", "output", "content", "message"):
+        # "result" is the key the auggie CLI actually emits
+        # ({"type":"result","result":...}); the rest are defensive fallbacks.
+        for key in ("result", "response", "text", "output", "content", "message"):
             value = parsed.get(key)
             if isinstance(value, str) and value:
                 return value
@@ -138,7 +140,9 @@ def _normalize_models(payload: Any) -> list[dict[str, Any]]:
     normalized: list[dict[str, Any]] = []
     for model in raw_models:
         if isinstance(model, dict):
-            model_id = model.get("id") or model.get("name")
+            # The live CLI registry keys models by "shortName" (the id passed
+            # to `auggie -m`); "id"/"name" are defensive for older payloads.
+            model_id = model.get("id") or model.get("shortName") or model.get("name")
         elif isinstance(model, str):
             model_id = model
         else:
