@@ -39,7 +39,9 @@ jobs:
           # self-hosted Pre-commit leg is known-broken and excluded by policy).
           status[green_ci]=fail
           reason[green_ci]="required hosted checks not all successful"
-          runs_json=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-runs" --paginate 2>/dev/null || echo '{}')
+          # --paginate emits one JSON document per page; slurp and merge them
+          # so checks landing on page 2+ are not misread as missing.
+          runs_json=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-runs" --paginate 2>/dev/null | jq -s '{check_runs: [.[].check_runs[]?]}') || runs_json='{"check_runs":[]}'
           ok=true
           for check in "Pre-commit Hooks" "test (3.12)" "test (gate)"; do
             conclusion=$(echo "$runs_json" | jq -r --arg n "$check" '[.check_runs[]? | select(.name == $n)] | sort_by(.completed_at) | last | .conclusion // "missing"')
@@ -87,16 +89,27 @@ jobs:
 
           # Guardrail 5: protected tag policy. Detect a v* tag ruleset; if the
           # admin checklist has not been applied yet, record skipped + reason.
-          rulesets=$(gh api "repos/${GITHUB_REPOSITORY}/rulesets" --jq '[.[] | select(.target == "tag")] | length' 2>/dev/null || echo 0)
-          if [ "${rulesets:-0}" -gt 0 ]; then
-            status[protected_tag_policy]=pass
-            reason[protected_tag_policy]=""
+          # Distinguish "checked, zero rulesets" from "could not query" (e.g.
+          # the token lacks administration:read) instead of conflating them.
+          if rulesets_json=$(gh api "repos/${GITHUB_REPOSITORY}/rulesets" 2>/dev/null); then
+            rulesets=$(echo "$rulesets_json" | jq '[.[] | select(.target == "tag")] | length')
+            if [ "${rulesets:-0}" -gt 0 ]; then
+              status[protected_tag_policy]=pass
+              reason[protected_tag_policy]=""
+            else
+              status[protected_tag_policy]=skipped
+              reason[protected_tag_policy]="tag-protection ruleset not yet applied; checklist in docs/agents/release-versioning-github.md"
+            fi
           else
             status[protected_tag_policy]=skipped
-            reason[protected_tag_policy]="tag-protection ruleset not yet applied; checklist in docs/agents/release-versioning-github.md"
+            reason[protected_tag_policy]="could not query rulesets API (token may lack administration:read); ruleset state unknown, checklist in docs/agents/release-versioning-github.md"
           fi
 
           base_version=$(grep -m1 '^version' pyproject.toml | sed 's/.*"\(.*\)"/\1/')
+          if ! [[ "$base_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::could not parse a SemVer base version from pyproject.toml (got: ${base_version})"
+            exit 1
+          fi
           tag="v${base_version}+$(date -u +%Y.%m.%d).trace-${GITHUB_RUN_ID}"
           blocked=false
           for key in green_ci conventional_commits secrets_permissions_preflight no_dirty_generated_state protected_tag_policy; do
@@ -143,6 +156,9 @@ jobs:
           fi
 
       - name: Upload release manifest artifact
+        # always(): the manifest is the audit record, so it must survive a
+        # guardrail failure (the run you most want the record from).
+        if: ${{ always() && hashFiles('release-manifest.json') != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: release-manifest

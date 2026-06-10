@@ -23,12 +23,12 @@ Per the AI SDLC release-versioning module. Strategy is **Hybrid**: a SemVer-deri
 3. If and only if every guardrail is `pass` or `skipped` with a documented reason, the workflow creates the tag through the GitHub API using the CI identity. It never pushes tags from a developer machine.
 4. Commit the emitted manifest back to the repo root as the audit record for that release.
 
-Deviation from the module default, recorded deliberately: the workflow triggers on `workflow_dispatch` and tag push only, NOT on every push to `main`. Enabling on-main release runs is an explicit decision; flip the trigger when release cadence justifies it.
+Deviation from the module default, recorded deliberately: the workflow triggers on `workflow_dispatch` only, NOT on every push to `main`. Enabling on-main release runs is an explicit decision; flip the trigger when release cadence justifies it.
 
 ## Tag guardrails (all five gate every tag)
 
 - [ ] **Green CI**: latest CI on the candidate SHA reports success (hosted legs; the self-hosted Pre-commit leg is known-broken and excluded, see `docs/agents/branch-policy-github.md`).
-- [ ] **Conventional commits**: commits in the candidate range match `feat:|fix:|docs:|test:|refactor:|chore:|ci:` grammar. With zero prior tags, the first run validates the HEAD commit only.
+- [ ] **Conventional commits**: commits in the candidate range match `feat:|fix:|docs:|test:|refactor:|perf:|build:|chore:|ci:` grammar (the same nine types the workflow regex enforces). With zero prior tags, the first run validates the HEAD commit only.
 - [ ] **Secrets/permissions preflight**: explicit `permissions:` block; preflight logs key names and presence only, never values. No registry publish is configured (private, unpublished package).
 - [ ] **No dirty generated state**: clean working tree in the release job.
 - [ ] **Protected tag policy**: apply a GitHub ruleset protecting tag pattern `v*` so only CI can create release tags. Until the ruleset is applied this guardrail is `skipped` with that reason recorded in the manifest.
