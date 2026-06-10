@@ -104,13 +104,16 @@ def test_decide_recycle_keeps_active_without_probing() -> None:
 
 
 def test_decide_recycle_threshold_boundary_is_a_candidate() -> None:
-    # Exactly at the threshold the session IS a candidate (strict < keeps).
+    # Exactly at the threshold the session IS a candidate (strict < keeps),
+    # so the descendant probe MUST run for it.
+    probed = []
     decision = decide_recycle(
         idle_minutes=30.0,
         idle_threshold_minutes=30,
-        probe_descendants=lambda: False,
+        probe_descendants=lambda: probed.append(True) or False,
     )
     assert decision is RecycleDecision.RECYCLE
+    assert probed == [True]
 
 
 def test_decide_recycle_descendants_veto() -> None:

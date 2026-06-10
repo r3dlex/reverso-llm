@@ -2,7 +2,7 @@
 
 Runs as a long-lived asyncio task inside the session daemon process.
 Every 60 minutes it walks the session table and terminates any session that:
-  1. Has had no requests for more than 30 minutes, AND
+  1. Has had no requests for at least 30 minutes, AND
   2. Has no live descendant processes (checked via psutil).
 
 The 30-minute idle threshold matches config.yaml session_idle_timeout_minutes.
