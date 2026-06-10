@@ -1,11 +1,11 @@
 ---
 type: agent-guide
 project: reverso
-stack: python-litellm-asyncio
-last_updated: 2026-05-27
+stack: python-asgi-asyncio
+last_updated: 2026-06-10
 ---
 
-<!-- Generated: 2026-05-27 | Updated: 2026-05-27 -->
+<!-- Generated: 2026-05-27 | Updated: 2026-06-10 -->
 
 # AGENTS.md - Reverso
 
@@ -13,7 +13,7 @@ Read this before touching anything in this repo.
 
 ## What this project is
 
-Reverso is a subscription-backed local LLM gateway. It runs on `127.0.0.1:64946`, wraps Claude Code CLI and Codex CLI as session-managed subprocess workers, HTTP-forwards DeepSeek, and exposes standard OpenAI and Anthropic HTTP APIs to any local tool that wants them. MiniMax is direct Codex-only and is not routed through Reverso.
+Reverso is a subscription-backed local LLM gateway. It runs on `127.0.0.1:64946` and serves the OpenAI Responses API natively through a first-party gateway app (`reverso.protocols.responses_app.ResponsesGatewayApp`) with one adapter per provider: claude (subscription OAuth via the claude CLI), copilot (direct upstream forward), auggie (auggie CLI), and deepseek (first-party HTTP). See ADR 0002 and ADR 0003 under `docs/architecture/adr/`. The legacy LiteLLM app remains composed behind the first-party app as fallthrough only for paths the gateway does not own. Wrapped CLI session management (Claude Code CLI, Codex CLI) is handled by the session daemon. MiniMax is direct Codex-only and is not routed through Reverso.
 
 **Why it exists:** The developer pays flat-rate for Claude Max and ChatGPT Pro subscriptions. Those subscriptions include CLI tools with unlimited use at the margin. Reverso lets any HTTP-speaking tool (agents, IDE plugins, scripts) consume those subscriptions instead of requiring separate metered API accounts.
 
@@ -32,15 +32,44 @@ All design decisions live in `docs/`. Read before writing code.
 
 ## Stack
 
-- **Language:** Python 3.12+, managed with `uv`
-- **HTTP server:** LiteLLM proxy (inbound, port 64946)
+- **Language:** Python 3.12+, managed with `uv` (run tests as `uv run pytest`)
+- **HTTP server:** first-party ASGI Responses gateway (`reverso.protocols.responses_app`, no web framework) composed in front of the legacy LiteLLM app (fallthrough only), port 64946
 - **Async:** asyncio throughout
 - **Service manager:** launchd (macOS), two LaunchAgents
-- **Dependencies:** LiteLLM, httpx, asyncio, psutil (Phase 2+)
+- **Dependencies:** httpx, psutil, LiteLLM (legacy fallthrough path only)
+- **Frozen interface:** the `ProviderAdapter` Protocol in `src/reverso/protocols/adapter.py` (create_response, stream_response, list_models, get_response, list_input_items) is frozen per ADR 0002 section 11.3; never modify it
 
-## Runtime topology
+## Runtime topology (current, ADR 0002/0003)
 
 Two long-lived processes:
+
+```
+launchd
+  |-- Gateway process (:64946, 127.0.0.1 only)
+  |     |-- ResponsesGatewayApp (src/reverso/protocols/responses_app.py)
+  |     |     |-- /claude/v1   -> ClaudeAdapter   (subscription OAuth, claude CLI)
+  |     |     |-- /copilot/v1  -> CopilotAdapter  (direct upstream forward)
+  |     |     |-- /auggie/v1   -> AuggieAdapter   (auggie CLI completions)
+  |     |     |-- /deepseek/v1 -> DeepSeekAdapter (first-party HTTP, ADR 0003)
+  |     |     |-- replay seam (protocols/replay.py): canonical SSE sequence +
+  |     |     |   store-before-drain for buffered providers (claude/auggie/deepseek)
+  |     |     |-- in-memory ResponseStore (protocols/store.py)
+  |     |-- legacy LiteLLM app: fallthrough ONLY for paths the first-party app
+  |         does not own (legacy PROVIDER_PREFIXES is intentionally not mutated)
+  |
+  |-- Session daemon process (UDS only, no TCP)
+        |-- Internal HTTP API over ~/Library/Application Support/reverso/daemon.sock
+        |-- Session table: (machine, workspace, provider) -> Session
+        |-- Wrapped CLI subprocesses: claude, codex
+        |-- Recycle sweeper (asyncio task, 60-min tick; pure decide_recycle policy)
+        |-- Output parsers: parsers/claude_code.py, parsers/codex_cli.py
+```
+
+The two processes talk over a Unix-domain socket. The daemon has no TCP listener and cannot be exposed to the network even by misconfiguration.
+
+### Runtime topology (legacy, superseded 2026-06-10)
+
+Deprecated, kept for history per the never-delete rule. This described the pre-ADR-0002 LiteLLM-fronted topology; do not use it for routing decisions.
 
 ```
 launchd
@@ -51,14 +80,7 @@ launchd
   |     |-- HTTP-forwarded: DeepSeek (standard LiteLLM, no custom code)
   |
   |-- Session daemon process (UDS only, no TCP)
-        |-- Internal HTTP API over ~/Library/Application Support/reverso/daemon.sock
-        |-- Session table: (machine, workspace, provider) -> Session
-        |-- Wrapped CLI subprocesses: claude, codex
-        |-- Recycle sweeper (asyncio task, 60-min tick)
-        |-- Output parsers: parsers/claude_code.py, parsers/codex_cli.py
 ```
-
-The two processes talk over a Unix-domain socket. LiteLLM uses `httpx.HTTPTransport(uds=...)`. The daemon has no TCP listener and cannot be exposed to the network even by misconfiguration.
 
 ## Repository layout
 
@@ -68,19 +90,27 @@ reverso/
   src/
     reverso/
       __init__.py
-      proxy/               # LiteLLM process code
+      protocols/           # First-party Responses gateway (ADR 0002/0003)
+        responses_app.py   # ResponsesGatewayApp, owns /claude|copilot|auggie|deepseek /v1
+        adapter.py         # FROZEN ProviderAdapter Protocol (ADR 0002 11.3)
+        adapters/          # claude.py, copilot.py, auggie.py, deepseek.py
+        replay.py          # Canonical SSE replay seam (store-before-drain)
+        store.py           # In-memory ResponseStore
+        auth.py            # AuthResolution / ProviderAuth (subscription OAuth)
+        middleware.py
+      proxy/               # Legacy LiteLLM process code (fallthrough only)
         anthropic_cli_provider.py
         openai_cli_provider.py
+        compose.py         # Composes ResponsesGatewayApp in front of LiteLLM
       daemon/              # Session daemon process code
         main.py
-        session.py
+        session_daemon.py
+        session_table.py
         recycler.py
-        api.py
         parsers/
           claude_code.py
           codex_cli.py
-      middleware/
-        x_gateway.py       # Response envelope injector
+      middleware/          # Response envelope + Codex compat shims
   config/
     models.yaml            # Model registry for Reverso-supported models
     config.yaml            # Runtime config (port, timeouts, paths)
@@ -109,7 +139,8 @@ reverso/
 | Area | Location | Key constraint |
 |---|---|---|
 | Model registry edits | `config/models.yaml` | Loaded at startup only; changes require restart |
-| CLI provider logic | `src/reverso/proxy/` | Stateless in Phase 1; session-routed in Phase 2+ |
+| Responses providers | `src/reverso/protocols/` | `adapter.py` Protocol is FROZEN (ADR 0002 11.3); buffered adapters must stream via `replay.py` (store-before-drain) |
+| CLI provider logic (legacy) | `src/reverso/proxy/` | Fallthrough only; do not add new providers here, use `protocols/adapters/` |
 | Session management | `src/reverso/daemon/` | In-memory only; no persistence; restart loses all sessions |
 | Tool-use parsing | `src/reverso/daemon/parsers/` | Most fragile component; upstream CLIs control output format |
 | Response envelope | `src/reverso/middleware/x_gateway.py` | Must be present on every response, all providers |
@@ -154,7 +185,7 @@ The existing LaunchAgents (`com.andres.codex-litellm-minimax.plist`, `com.andres
 
 ## Testing
 
-- Run `python -m pytest tests/` from the repo root.
+- Run `uv run pytest tests/unit -q` and `uv run pytest tests/integration -q` from the repo root (uv-managed Python; `python -m pytest` is deprecated here).
 - Smoke tests: `./scripts/smoke.sh` (requires gateway running).
 - Phase-specific integration tests are under `tests/integration/`.
 - For Phase 0, results go in `docs/spike-notes.md`.

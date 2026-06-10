@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.0",
+  "strategy": "hybrid",
+  "tag": "",
+  "base_version": "0.1.0",
+  "base_sha": "",
+  "timestamp_utc": "2026-06-10T05:13:35Z",
+  "trace_id": "",
+  "provider": "github-actions",
+  "guardrails": {
+    "green_ci": "skipped",
+    "conventional_commits": "skipped",
+    "secrets_permissions_preflight": "skipped",
+    "no_dirty_generated_state": "skipped",
+    "protected_tag_policy": "skipped"
+  },
+  "guardrail_reasons": {
+    "green_ci": "no release run yet",
+    "conventional_commits": "no release run yet",
+    "secrets_permissions_preflight": "no release run yet",
+    "no_dirty_generated_state": "no release run yet",
+    "protected_tag_policy": "tag-protection ruleset is checklist-only; see docs/agents/release-versioning-github.md"
+  },
+  "tag_creation": "blocked",
+  "tag_creation_reason": "initialized manifest; no release has been initiated and the repository has zero tags"
+}

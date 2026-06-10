@@ -1,7 +1,29 @@
 {
   "schema_version": "1.0",
-  "last_checked_at": "2026-06-07T21:00:00Z",
-  "result": "no-drift",
-  "checked_paths": [],
-  "actions": []
+  "last_checked_at": "2026-06-10T05:13:35Z",
+  "result": "drift-found-and-resolved",
+  "checked_paths": [
+    "AGENTS.md",
+    "CLAUDE.md",
+    "docs/architecture/adr/0001-init.md",
+    "docs/architecture/adr/0002-responses-native-provider-gateway.md",
+    "docs/architecture/adr/0003-single-port-composition-auggie-deepseek.md",
+    "src/reverso/protocols/",
+    "src/reverso/proxy/",
+    "src/reverso/daemon/",
+    "tests/unit/",
+    ".github/workflows/"
+  ],
+  "actions": [
+    {
+      "path": "AGENTS.md",
+      "action": "refreshed",
+      "detail": "Topology, stack, repository layout, routing table, and testing commands were stale (pre-ADR-0002 LiteLLM-fronted description). Updated to first-party ResponsesGatewayApp topology per ADR 0002/0003; legacy topology kept in place as deprecated."
+    },
+    {
+      "path": ".ai/drift/last-drift.json",
+      "action": "refreshed",
+      "detail": "Previous record claimed no-drift with empty checked_paths and predated PRs #5, #6, #7."
+    }
+  ]
 }

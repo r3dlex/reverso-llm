@@ -1,0 +1,160 @@
+# Release CI (AI SDLC release-versioning module, Hybrid strategy).
+# Distinct from validation CI: this workflow gates TAG CREATION, not PR merges.
+# It never publishes packages, never deploys, never rewrites history.
+# Trigger is workflow_dispatch only (deliberate deviation from the module's
+# active-on-main default; recorded in docs/agents/release-versioning-github.md).
+
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Run guardrails and emit the manifest without creating a tag
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  checks: read
+  actions: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run tag guardrails and emit release manifest
+        id: guardrails
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          declare -A status reason
+
+          # Guardrail 1: green CI on the candidate SHA (hosted legs only; the
+          # self-hosted Pre-commit leg is known-broken and excluded by policy).
+          status[green_ci]=fail
+          reason[green_ci]="required hosted checks not all successful"
+          runs_json=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-runs" --paginate 2>/dev/null || echo '{}')
+          ok=true
+          for check in "Pre-commit Hooks" "test (3.12)" "test (gate)"; do
+            conclusion=$(echo "$runs_json" | jq -r --arg n "$check" '[.check_runs[]? | select(.name == $n)] | sort_by(.completed_at) | last | .conclusion // "missing"')
+            if [ "$conclusion" != "success" ]; then ok=false; fi
+          done
+          if [ "$ok" = true ]; then status[green_ci]=pass; reason[green_ci]=""; fi
+
+          # Guardrail 2: conventional commits. With zero prior tags the first
+          # run validates the HEAD commit only; afterwards the full tag range.
+          status[conventional_commits]=fail
+          pattern='^(feat|fix|docs|test|refactor|perf|build|chore|ci)(\([^)]+\))?!?: '
+          last_tag=$(git describe --tags --abbrev=0 2>/dev/null || true)
+          if [ -z "$last_tag" ]; then
+            subjects=$(git log -1 --pretty=%s)
+          else
+            subjects=$(git log "${last_tag}..HEAD" --pretty=%s --no-merges)
+          fi
+          bad=$(echo "$subjects" | grep -vE "$pattern" || true)
+          if [ -z "$bad" ]; then
+            status[conventional_commits]=pass
+            reason[conventional_commits]=""
+          else
+            reason[conventional_commits]="non-conventional commit subjects in candidate range"
+          fi
+
+          # Guardrail 3: secrets/permissions preflight. Names only, never values.
+          # No registry publish is configured, so GITHUB_TOKEN is the only need.
+          if [ -n "${GH_TOKEN}" ]; then
+            echo "preflight: GH_TOKEN present (value not logged)"
+            status[secrets_permissions_preflight]=pass
+            reason[secrets_permissions_preflight]=""
+          else
+            status[secrets_permissions_preflight]=fail
+            reason[secrets_permissions_preflight]="GH_TOKEN absent"
+          fi
+
+          # Guardrail 4: no dirty generated state.
+          if [ -z "$(git status --porcelain)" ]; then
+            status[no_dirty_generated_state]=pass
+            reason[no_dirty_generated_state]=""
+          else
+            status[no_dirty_generated_state]=fail
+            reason[no_dirty_generated_state]="working tree not clean in release job"
+          fi
+
+          # Guardrail 5: protected tag policy. Detect a v* tag ruleset; if the
+          # admin checklist has not been applied yet, record skipped + reason.
+          rulesets=$(gh api "repos/${GITHUB_REPOSITORY}/rulesets" --jq '[.[] | select(.target == "tag")] | length' 2>/dev/null || echo 0)
+          if [ "${rulesets:-0}" -gt 0 ]; then
+            status[protected_tag_policy]=pass
+            reason[protected_tag_policy]=""
+          else
+            status[protected_tag_policy]=skipped
+            reason[protected_tag_policy]="tag-protection ruleset not yet applied; checklist in docs/agents/release-versioning-github.md"
+          fi
+
+          base_version=$(grep -m1 '^version' pyproject.toml | sed 's/.*"\(.*\)"/\1/')
+          tag="v${base_version}+$(date -u +%Y.%m.%d).trace-${GITHUB_RUN_ID}"
+          blocked=false
+          for key in green_ci conventional_commits secrets_permissions_preflight no_dirty_generated_state protected_tag_policy; do
+            if [ "${status[$key]}" = "fail" ]; then blocked=true; fi
+          done
+          if [ "$blocked" = true ]; then
+            tag_creation=blocked
+            tag_creation_reason="one or more guardrails failed; see guardrail_reasons"
+          else
+            tag_creation=allowed
+            tag_creation_reason="all guardrails pass or are skipped with documented reasons"
+          fi
+
+          jq -n \
+            --arg strategy hybrid \
+            --arg tag "$tag" \
+            --arg base_version "$base_version" \
+            --arg base_sha "$GITHUB_SHA" \
+            --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg trace "$GITHUB_RUN_ID" \
+            --arg g1 "${status[green_ci]}" --arg r1 "${reason[green_ci]}" \
+            --arg g2 "${status[conventional_commits]}" --arg r2 "${reason[conventional_commits]}" \
+            --arg g3 "${status[secrets_permissions_preflight]}" --arg r3 "${reason[secrets_permissions_preflight]}" \
+            --arg g4 "${status[no_dirty_generated_state]}" --arg r4 "${reason[no_dirty_generated_state]}" \
+            --arg g5 "${status[protected_tag_policy]}" --arg r5 "${reason[protected_tag_policy]}" \
+            --arg tc "$tag_creation" --arg tcr "$tag_creation_reason" \
+            '{schema_version: "1.0", strategy: $strategy, tag: $tag,
+              base_version: $base_version, base_sha: $base_sha,
+              timestamp_utc: $ts, trace_id: $trace, provider: "github-actions",
+              guardrails: {green_ci: $g1, conventional_commits: $g2,
+                secrets_permissions_preflight: $g3, no_dirty_generated_state: $g4,
+                protected_tag_policy: $g5},
+              guardrail_reasons: {green_ci: $r1, conventional_commits: $r2,
+                secrets_permissions_preflight: $r3, no_dirty_generated_state: $r4,
+                protected_tag_policy: $r5},
+              tag_creation: $tc, tag_creation_reason: $tcr}' > release-manifest.json
+
+          cat release-manifest.json
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "tag_creation=$tag_creation" >> "$GITHUB_OUTPUT"
+          if [ "$blocked" = true ]; then
+            echo "::error::tag creation blocked by failed guardrails"
+            exit 1
+          fi
+
+      - name: Upload release manifest artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-manifest
+          path: release-manifest.json
+
+      - name: Create tag via GitHub API (CI identity, never a local push)
+        if: ${{ steps.guardrails.outputs.tag_creation == 'allowed' && inputs.dry_run == false }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/git/refs" \
+            -f ref="refs/tags/${{ steps.guardrails.outputs.tag }}" \
+            -f sha="${GITHUB_SHA}"
+          echo "created tag ${{ steps.guardrails.outputs.tag }}"
