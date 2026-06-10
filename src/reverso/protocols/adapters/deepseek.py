@@ -24,7 +24,6 @@ import json
 import logging
 import os
 import time
-import uuid
 from typing import Any, AsyncIterator
 
 import httpx
@@ -35,6 +34,14 @@ from reverso.protocols.adapter import (
     ResponseEnvelope,
     ResponsesRequest,
     SSEEvent,
+)
+from reverso.protocols.replay import (
+    flatten_input,
+    message_item,
+    new_message_id,
+    new_response_id,
+    record_input_items,
+    replay_turn,
 )
 from reverso.protocols.store import ResponseStore
 from reverso.proxy.profile_routing import resolve_profile_model
@@ -70,69 +77,6 @@ class DeepSeekError(RuntimeError):
     surfaces only the class name, but the message itself must also never carry
     the API key or any upstream body that could contain secrets.
     """
-
-
-def _input_to_text(value: Any) -> str:
-    """Flatten a Responses ``input`` (string or item list) into prompt text."""
-    if value is None:
-        return ""
-    if isinstance(value, str):
-        return value
-    parts: list[str] = []
-    if isinstance(value, list):
-        for item in value:
-            parts.append(_input_item_to_text(item))
-    else:
-        parts.append(str(value))
-    return "\n".join(part for part in parts if part)
-
-
-def _input_item_to_text(item: Any) -> str:
-    if isinstance(item, str):
-        return item
-    if not isinstance(item, dict):
-        return str(item)
-    content = item.get("content")
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        texts: list[str] = []
-        for part in content:
-            if isinstance(part, dict):
-                text = part.get("text")
-                if isinstance(text, str):
-                    texts.append(text)
-            elif isinstance(part, str):
-                texts.append(part)
-        return "\n".join(texts)
-    text = item.get("text")
-    return text if isinstance(text, str) else ""
-
-
-def _message_item(item_id: str, text: str) -> dict[str, Any]:
-    """Build a completed Responses assistant message output item."""
-    return {
-        "id": item_id,
-        "type": "message",
-        "role": "assistant",
-        "status": "completed",
-        "content": [{"type": "output_text", "text": text, "annotations": []}],
-    }
-
-
-def _event(event_type: str, body: dict[str, Any]) -> SSEEvent:
-    """Build an SSEEvent whose data carries its own ``type`` (OpenAI shape)."""
-    data = {"type": event_type}
-    data.update(body)
-    return SSEEvent(event=event_type, data=data)
-
-
-def _new_response_id() -> str:
-    return f"resp_{uuid.uuid4().hex}"
-
-
-def _new_message_id() -> str:
-    return f"msg_{uuid.uuid4().hex}"
 
 
 class DeepSeekAdapter:
@@ -188,7 +132,7 @@ class DeepSeekAdapter:
         if prior is not None:
             messages.extend(prior)
 
-        user_text = _input_to_text(request.input)
+        user_text = flatten_input(request.input)
         if user_text:
             messages.append({"role": "user", "content": user_text})
         return messages
@@ -251,8 +195,8 @@ class DeepSeekAdapter:
         """
         message = _first_message(raw)
         text = message.get("content") or ""
-        response_id = _new_response_id()
-        output: list[dict[str, Any]] = [_message_item(_new_message_id(), str(text))]
+        response_id = new_response_id()
+        output: list[dict[str, Any]] = [message_item(new_message_id(), str(text))]
 
         tool_calls = message.get("tool_calls")
         if isinstance(tool_calls, list):
@@ -314,7 +258,7 @@ class DeepSeekAdapter:
         body = self._build_body(request, stream=False)
         raw = await self._call_upstream(body)
         envelope = self._map_completion(request, raw)
-        self._store.put_response(envelope, _record_input_items(request))
+        self._store.put_response(envelope, record_input_items(request))
         return envelope
 
     def stream_response(self, request: ResponsesRequest) -> AsyncIterator[SSEEvent]:
@@ -324,91 +268,15 @@ class DeepSeekAdapter:
     async def _stream_response(
         self, request: ResponsesRequest
     ) -> AsyncIterator[SSEEvent]:
-        # A single upstream chat call backs the stream; the chat response is then
-        # re-emitted as the Responses SSE event sequence (claude.py shape).
+        # A single upstream chat call backs the stream; the completed turn is
+        # then replayed as the canonical Responses SSE sequence.
         body = self._build_body(request, stream=False)
         raw = await self._call_upstream(body)
         envelope = self._map_completion(request, raw)
-        message = _first_message(raw)
-        text = str(message.get("content") or "")
-        response_id = envelope.id
-        message_id = envelope.output[0]["id"]
-
-        # Store before emitting events: the upstream turn is already complete, so
-        # a client disconnect mid-stream must not lose the response for later
-        # previous_response_id chaining or get_response/input_items lookups.
-        self._store.put_response(envelope, _record_input_items(request))
-
-        base_response = {
-            "id": response_id,
-            "object": "response",
-            "status": "in_progress",
-            "model": envelope.model,
-        }
-        yield _event("response.created", {"response": dict(base_response)})
-        yield _event("response.in_progress", {"response": dict(base_response)})
-        yield _event(
-            "response.output_item.added",
-            {
-                "output_index": 0,
-                "item": {
-                    "id": message_id,
-                    "type": "message",
-                    "role": "assistant",
-                    "status": "in_progress",
-                    "content": [],
-                },
-            },
-        )
-        yield _event(
-            "response.content_part.added",
-            {
-                "item_id": message_id,
-                "output_index": 0,
-                "content_index": 0,
-                "part": {"type": "output_text", "text": "", "annotations": []},
-            },
-        )
-        yield _event(
-            "response.output_text.delta",
-            {
-                "item_id": message_id,
-                "output_index": 0,
-                "content_index": 0,
-                "delta": text,
-            },
-        )
-        yield _event(
-            "response.output_text.done",
-            {
-                "item_id": message_id,
-                "output_index": 0,
-                "content_index": 0,
-                "text": text,
-            },
-        )
-        yield _event(
-            "response.content_part.done",
-            {
-                "item_id": message_id,
-                "output_index": 0,
-                "content_index": 0,
-                "part": {"type": "output_text", "text": text, "annotations": []},
-            },
-        )
-        yield _event(
-            "response.output_item.done",
-            {"output_index": 0, "item": envelope.output[0]},
-        )
-        completed_response = {
-            "id": response_id,
-            "object": "response",
-            "status": "completed",
-            "model": envelope.model,
-            "output": envelope.output,
-            "usage": envelope.usage,
-        }
-        yield _event("response.completed", {"response": completed_response})
+        async for event in replay_turn(
+            envelope, store=self._store, input_items=record_input_items(request)
+        ):
+            yield event
 
     async def list_models(self) -> ModelList:
         """Return the DeepSeek model listing for ``/v1/models``."""
@@ -472,26 +340,10 @@ def _tool_call_item(call: dict[str, Any]) -> dict[str, Any]:
     """
     function = call.get("function", {}) if isinstance(call, dict) else {}
     return {
-        "id": _new_message_id(),
+        "id": new_message_id(),
         "type": "function_call",
         "status": "completed",
         "call_id": call.get("id") if isinstance(call, dict) else None,
         "name": function.get("name"),
         "arguments": function.get("arguments"),
     }
-
-
-def _record_input_items(request: ResponsesRequest) -> list[dict[str, Any]]:
-    """Build the stored input-item record for previous_response_id chaining."""
-    value = request.input
-    if isinstance(value, list):
-        return [item for item in value if isinstance(item, dict)]
-    if value is None:
-        return []
-    return [
-        {
-            "type": "message",
-            "role": "user",
-            "content": [{"type": "input_text", "text": _input_to_text(value)}],
-        }
-    ]
