@@ -46,8 +46,10 @@ BACKUP_SUFFIX_PREFIX = ".reverso-sync."
 
 DEFAULT_CONFIG_PATH = Path.home() / ".codex" / "config.toml"
 
+# The trailing \r? keeps CRLF-edited configs on the header-aware merge path;
+# with MULTILINE, $ anchors before \n only, so the \r must be consumed.
 _NUX_TABLE_HEADER_RE = re.compile(
-    r"^[ \t]*\[tui\.model_availability_nux\][ \t]*(?:#.*)?$",
+    r"^[ \t]*\[tui\.model_availability_nux\][ \t]*(?:#.*)?\r?$",
     re.MULTILINE,
 )
 _TABLE_HEADER_LINE_RE = re.compile(r"^[ \t]*\[", re.MULTILINE)
@@ -131,10 +133,10 @@ def _render_profiles_block(provider_models: list[ProviderModels]) -> str:
             seen_sections.add(section)
             lines.append("")
             lines.append(f"[model_providers.{section}]")
-            lines.append(f'name = "Reverso {entry.prefix} {model_id}"')
+            lines.append(f"name = {_toml_string(f'Reverso {entry.prefix} {model_id}')}")
             lines.append(f'base_url = "{GATEWAY_BASE_URL}/{entry.prefix}/v1"')
             lines.append('wire_api = "responses"')
-            lines.append(f'model = "{model_id}"')
+            lines.append(f"model = {_toml_string(model_id)}")
     lines.append("")
     lines.append(PROFILES_END)
     return "\n".join(lines)
@@ -152,10 +154,14 @@ def _render_nux_block(provider_models: list[ProviderModels]) -> str:
     seen: set[str] = set()
     for entry in provider_models:
         for model_id in entry.models:
-            if model_id in seen:
+            # Dedupe on the coerced key so ids that collide after coercion
+            # (gpt-5.5 vs gpt-5_5) surface the same single model the profiles
+            # block keeps, never a picker entry without a backing profile.
+            key = _toml_table_key(model_id)
+            if key in seen:
                 continue
-            seen.add(model_id)
-            lines.append(f'"{model_id}" = 4')
+            seen.add(key)
+            lines.append(f"{_toml_string(model_id)} = 4")
     lines.append(NUX_END)
     return "\n".join(lines)
 
@@ -174,10 +180,11 @@ def _render_nux_entries(
     seen: set[str] = set()
     for entry in provider_models:
         for model_id in entry.models:
-            if model_id in seen or model_id in existing_keys:
+            key = _toml_table_key(model_id)
+            if key in seen or model_id in existing_keys:
                 continue
-            seen.add(model_id)
-            lines.append(f'"{model_id}" = 4')
+            seen.add(key)
+            lines.append(f"{_toml_string(model_id)} = 4")
     if not lines:
         return None
     return "\n".join([NUX_BEGIN, *lines, NUX_END])
@@ -185,10 +192,10 @@ def _render_nux_entries(
 
 def _strip_managed_block(text: str, begin: str, end: str) -> str:
     """Remove a sentinel-delimited block (and its trailing newline) if present."""
-    start_idx = text.find(begin)
+    start_idx = _find_sentinel(text, begin)
     if start_idx == -1:
         return text
-    end_idx = text.find(end, start_idx)
+    end_idx = _find_sentinel(text, end, start_idx)
     if end_idx == -1:
         msg = (
             f"Found managed begin sentinel without matching end sentinel: "
@@ -280,6 +287,28 @@ def _toml_table_key(model_id: str) -> str:
     return "".join(out_chars) or "model"
 
 
+def _toml_string(value: str) -> str:
+    """Encode ``value`` as a TOML basic string.
+
+    JSON and TOML share basic-string escaping for everything json.dumps can
+    emit (quotes, backslashes, control chars, \\uXXXX), so this round-trips
+    through tomllib even for hostile model ids.
+    """
+    return json.dumps(value)
+
+
+def _find_sentinel(text: str, token: str, start: int = 0) -> int:
+    """Find ``token`` at a line start only, skipping mid-line mentions.
+
+    A user comment that merely mentions a sentinel string mid-line must not
+    be treated as a managed block boundary.
+    """
+    idx = text.find(token, start)
+    while idx > 0 and text[idx - 1] != "\n":
+        idx = text.find(token, idx + 1)
+    return idx
+
+
 def _replace_managed_block(
     text: str,
     begin: str,
@@ -293,7 +322,7 @@ def _replace_managed_block(
     fixed point: calling it twice with the same ``new_block`` produces the
     same output as calling it once.
     """
-    start_idx = text.find(begin)
+    start_idx = _find_sentinel(text, begin)
     if start_idx == -1:
         if text and not text.endswith("\n"):
             text = text + "\n"
@@ -301,7 +330,7 @@ def _replace_managed_block(
             return text + "\n" + new_block + "\n"
         return new_block + "\n"
 
-    end_idx = text.find(end, start_idx)
+    end_idx = _find_sentinel(text, end, start_idx)
     if end_idx == -1:
         msg = (
             f"Found managed begin sentinel without matching end sentinel: "
@@ -444,6 +473,8 @@ def sync(
             provider_models=provider_models,
         )
 
+    # Fail-closed invariant: validation MUST precede backup and write so a
+    # render bug can never replace a valid user config with broken TOML.
     _parse_toml(new_text, "rendered config")
 
     backup = _make_backup(target, now=now)

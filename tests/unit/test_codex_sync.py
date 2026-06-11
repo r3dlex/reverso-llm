@@ -612,3 +612,73 @@ def test_render_profiles_block_dedupes_coerced_section_collisions() -> None:
     pm = [codex_sync.ProviderModels("copilot", ("gpt-5.5", "gpt-5_5"))]
     block = codex_sync._render_profiles_block(pm)
     assert block.count("[model_providers.reverso_copilot__gpt-5_5]") == 1
+
+
+def test_sync_handles_crlf_config_with_existing_nux_table(tmp_path: Path) -> None:
+    """Regression: CRLF-edited configs must take the header-aware merge path.
+
+    Before the \\r-tolerant header regex, the user table went undetected and
+    sync emitted a duplicate header, failing closed with exit 3 forever.
+    """
+    crlf_baseline = _baseline_config_text().replace("\n", "\r\n")
+    target = tmp_path / "config.toml"
+    target.write_bytes(crlf_baseline.encode("utf-8"))
+
+    first = codex_sync.sync(target=target, fetcher=_make_fetcher())
+    assert first.changed is True
+    text = target.read_bytes().decode("utf-8")
+
+    assert text.count("[tui.model_availability_nux]") == 1
+    parsed = tomllib.loads(text)
+    nux = parsed["tui"]["model_availability_nux"]
+    assert nux["gpt-5.5"] == 4
+    assert nux["claude-fable-5"] == 4
+
+    second = codex_sync.sync(target=target, fetcher=_make_fetcher())
+    assert second.changed is False
+
+
+def test_renderers_escape_hostile_model_ids(tmp_path: Path) -> None:
+    hostile = 'we"ird\\id'
+    pm = [codex_sync.ProviderModels("claude", (hostile,))]
+
+    entries = codex_sync._render_nux_entries(pm, frozenset())
+    assert entries is not None
+    body = "\n".join(line for line in entries.splitlines() if not line.startswith("#"))
+    assert tomllib.loads("[t]\n" + body) == {"t": {hostile: 4}}
+
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+    codex_sync.sync(target=target, fetcher=_make_fetcher({"claude": [hostile]}))
+    text = target.read_text(encoding="utf-8")
+    full = tomllib.loads(text)
+    assert full["tui"]["model_availability_nux"][hostile] == 4
+    section = f"reverso_claude__{codex_sync._toml_table_key(hostile)}"
+    assert full["model_providers"][section]["model"] == hostile
+
+
+def test_nux_entries_dedupe_on_coerced_key_matching_profiles() -> None:
+    pm = [codex_sync.ProviderModels("copilot", ("gpt-5.5", "gpt-5_5"))]
+    entries = codex_sync._render_nux_entries(pm, frozenset())
+    assert entries is not None
+    assert '"gpt-5.5" = 4' in entries
+    assert '"gpt-5_5"' not in entries
+
+    block = codex_sync._render_nux_block(pm)
+    assert block.count(" = 4") == 1
+
+
+def test_sentinel_mentioned_midline_in_comment_is_ignored(tmp_path: Path) -> None:
+    baseline = (
+        _baseline_config_text()
+        + f"# note: the marker {codex_sync.NUX_BEGIN} is managed tooling\n"
+    )
+    target = tmp_path / "config.toml"
+    target.write_text(baseline, encoding="utf-8")
+
+    result = codex_sync.sync(target=target, fetcher=_make_fetcher())
+    assert result.changed is True
+    text = target.read_text(encoding="utf-8")
+    assert f"# note: the marker {codex_sync.NUX_BEGIN} is managed tooling" in text
+    assert text.count("[tui.model_availability_nux]") == 1
+    tomllib.loads(text)
