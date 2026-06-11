@@ -125,7 +125,7 @@ def test_auggie_default_workspace_root_is_ephemeral_sandbox(
         captured["argv"] = argv
         return _Completed()
 
-    monkeypatch.setattr("reverso.protocols.adapters.auggie.subprocess.run", _fake_run)
+    monkeypatch.setattr("reverso.protocols.adapters.cli_spine.subprocess.run", _fake_run)
 
     adapter = AuggieAdapter()
     text = adapter._run_auggie_cli("prompt", "auggie-default")

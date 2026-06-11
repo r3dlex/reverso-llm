@@ -1,10 +1,10 @@
 """Auggie provider adapter backed by the local @augmentcode/auggie CLI (ADR 0003).
 
 There is NO Python auggie-sdk: Auggie ships as the npm CLI ``@augmentcode/auggie``
-(binary ``auggie`` on PATH). This adapter therefore uses the bounded subprocess
-spine (precedent ``src/reverso/protocols/adapters/claude.py``), shelling to the
-locally installed ``auggie`` binary so it rides the user's OAuth session rather
-than any repository-stored secret.
+(binary ``auggie`` on PATH). This adapter therefore runs the locally installed
+``auggie`` binary through the shared bounded CLI spine
+(``src/reverso/protocols/adapters/cli_spine.py``, ADR 0005) so it rides the
+user's OAuth session rather than any repository-stored secret.
 
 Indexing posture (see ``.omc/research/auggie-indexing-spike.md``): ``--print``
 auto-indexes whatever ``--workspace-root`` resolves to and there is no global
@@ -26,7 +26,6 @@ import json
 import logging
 import os
 import shutil
-import subprocess
 import tempfile
 import time
 from pathlib import Path
@@ -39,7 +38,8 @@ from reverso.protocols.adapter import (
     ResponsesRequest,
     SSEEvent,
 )
-from reverso.protocols.auth import redact_mapping, redact_secret
+from reverso.protocols.adapters.cli_spine import run_bounded_cli
+from reverso.protocols.auth import redact_mapping
 from reverso.protocols.replay import (
     build_prompt,
     estimate_usage,
@@ -62,9 +62,6 @@ INDEXING_CAVEAT = "hard-disable unproven"
 # token contents are never read or logged.
 _SESSION_PATH = Path.home() / ".augment" / "session.json"
 _SESSION_ENV = "AUGMENT_SESSION_AUTH"
-
-# Subprocess wall-clock bound; a timeout surfaces a bounded AuggieError.
-_CLI_TIMEOUT_SECONDS = 300.0
 
 
 class AuggieError(RuntimeError):
@@ -249,60 +246,28 @@ class AuggieAdapter:
         """Run the local ``auggie`` CLI for a single-shot completion.
 
         Uses an ephemeral sandbox workspace root so indexing never touches the
-        caller's workspace; the sandbox is removed after the call. Returns the
-        assistant text. Never logs token material.
+        caller's workspace; the sandbox is removed after the call. Bounding,
+        redaction, and cause suppression live in the shared CLI spine. Returns
+        the assistant text. Never logs token material.
         """
         workspace_root = tempfile.mkdtemp(prefix="reverso-auggie-")
         argv = _build_completion_argv(prompt, model, workspace_root)
         try:
-            result = subprocess.run(
-                argv,
-                capture_output=True,
-                text=True,
-                check=True,
-                timeout=_CLI_TIMEOUT_SECONDS,
-            )
-        except FileNotFoundError as exc:
-            raise AuggieError("auggie CLI not found on PATH") from exc
-        except subprocess.TimeoutExpired as exc:
-            raise AuggieError("auggie CLI timed out") from exc
-        except subprocess.CalledProcessError as exc:
-            logger.warning(
-                "auggie CLI failed (rc=%s): %s",
-                exc.returncode,
-                redact_secret(exc.stderr or None),
-            )
-            # Suppress the cause: CalledProcessError carries raw stderr/argv that
-            # could include token material and must not ride along in a traceback.
-            raise AuggieError("auggie CLI invocation failed") from None
+            stdout = run_bounded_cli(argv, error=AuggieError, cli_label="auggie CLI")
         finally:
             shutil.rmtree(workspace_root, ignore_errors=True)
-        return _parse_completion_output(result.stdout)
+        return _parse_completion_output(stdout)
 
     def _run_auggie_models(self) -> Any:
         """Run ``auggie model list --json`` and return the parsed payload."""
+        stdout = run_bounded_cli(
+            ["auggie", "model", "list", "--json"],
+            error=AuggieError,
+            cli_label="auggie CLI",
+            failure_message="auggie model list failed",
+        )
         try:
-            result = subprocess.run(
-                ["auggie", "model", "list", "--json"],
-                capture_output=True,
-                text=True,
-                check=True,
-                timeout=_CLI_TIMEOUT_SECONDS,
-            )
-        except FileNotFoundError as exc:
-            raise AuggieError("auggie CLI not found on PATH") from exc
-        except subprocess.TimeoutExpired as exc:
-            raise AuggieError("auggie CLI timed out") from exc
-        except subprocess.CalledProcessError as exc:
-            logger.warning(
-                "auggie model list failed (rc=%s): %s",
-                exc.returncode,
-                redact_secret(exc.stderr or None),
-            )
-            # Suppress the cause (raw stderr/argv) from any downstream traceback.
-            raise AuggieError("auggie model list failed") from None
-        try:
-            return json.loads(result.stdout or "[]")
+            return json.loads(stdout or "[]")
         except json.JSONDecodeError as exc:
             raise AuggieError("auggie model list returned invalid JSON") from exc
 

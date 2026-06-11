@@ -88,7 +88,7 @@ async def test_auggie_turn_invokes_cli_backend_exactly_once(
         raise AssertionError("real subprocess.run must not be spawned this turn")
 
     monkeypatch.setattr(
-        "reverso.protocols.adapters.auggie.subprocess.run", _real_subprocess_spy
+        "reverso.protocols.adapters.cli_spine.subprocess.run", _real_subprocess_spy
     )
 
     def _spy_runner(prompt: str, model: str) -> str:
@@ -120,7 +120,7 @@ async def test_auggie_tool_style_payload_does_not_auto_execute(
         raise AssertionError("real subprocess.run must not be spawned this turn")
 
     monkeypatch.setattr(
-        "reverso.protocols.adapters.auggie.subprocess.run", _real_subprocess_spy
+        "reverso.protocols.adapters.cli_spine.subprocess.run", _real_subprocess_spy
     )
 
     tool_payload = json.dumps(
@@ -161,7 +161,7 @@ async def test_auggie_stream_turn_invokes_cli_backend_exactly_once(
         raise AssertionError("real subprocess.run must not be spawned this turn")
 
     monkeypatch.setattr(
-        "reverso.protocols.adapters.auggie.subprocess.run", _real_subprocess_spy
+        "reverso.protocols.adapters.cli_spine.subprocess.run", _real_subprocess_spy
     )
 
     def _spy_runner(prompt: str, model: str) -> str:

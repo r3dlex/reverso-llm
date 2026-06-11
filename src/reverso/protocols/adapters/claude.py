@@ -38,6 +38,7 @@ from reverso.protocols.adapter import (
     ResponsesRequest,
     SSEEvent,
 )
+from reverso.protocols.adapters.cli_spine import run_bounded_cli
 from reverso.protocols.auth import (
     AuthResolution,
     redact_mapping,
@@ -394,30 +395,20 @@ class ClaudeAdapter:
 
         Uses the existing CLI login session (subscription OAuth). The resolved
         token is passed via the process environment for the child only; it is
-        never logged. Returns the assistant text.
+        never logged. Bounding, redaction, and cause suppression live in the
+        shared CLI spine. Returns the assistant text.
         """
         token = _resolve_token_sync(self._auth)
         child_env = dict(os.environ)
         # Hand the child the live subscription token; redact before any logging.
         child_env["CLAUDE_CODE_OAUTH_TOKEN"] = token
-        try:
-            result = subprocess.run(
-                ["claude", "--print", "--model", model, "--", prompt],
-                capture_output=True,
-                text=True,
-                check=True,
-                env=child_env,
-            )
-        except FileNotFoundError as exc:
-            raise ClaudeAuthError("claude CLI not found on PATH") from exc
-        except subprocess.CalledProcessError as exc:
-            logger.warning(
-                "claude CLI failed (rc=%s): %s",
-                exc.returncode,
-                redact_secret(exc.stderr or None),
-            )
-            raise ClaudeAuthError("claude CLI invocation failed") from exc
-        return result.stdout.strip()
+        stdout = run_bounded_cli(
+            ["claude", "--print", "--model", model, "--", prompt],
+            error=ClaudeAuthError,
+            cli_label="claude CLI",
+            env=child_env,
+        )
+        return stdout.strip()
 
     async def create_response(self, request: ResponsesRequest) -> ResponseEnvelope:
         """Return a non-streaming Responses object for ``request``."""
