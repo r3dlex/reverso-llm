@@ -322,6 +322,27 @@ def test_parse_completion_output_skips_warning_prefix_lines() -> None:
     no_envelope = "warning only\nno json here"
     assert _parse_completion_output(no_envelope) == no_envelope
 
+    tool_use_line = json.dumps({"type": "tool_use", "name": "f", "arguments": {}})
+    assert _parse_completion_output(tool_use_line + "\n" + envelope) == "ok\n"
+
+
+def test_parse_completion_output_result_envelope_beats_trailing_dict() -> None:
+    """A trailing diagnostic dict must not shadow the real result envelope.
+
+    The reverse scan anchors on type == "result" first; a later JSON line
+    with a defensive key (e.g. "message") only wins when no result-typed
+    envelope exists anywhere in the output.
+    """
+    envelope = json.dumps({"type": "result", "result": "ok\n", "is_error": False})
+    debug_line = json.dumps({"type": "debug", "message": "model fallback engaged"})
+
+    stdout = "warning line\n" + envelope + "\n" + debug_line
+    assert _parse_completion_output(stdout) == "ok\n"
+
+    # No result-typed envelope at all: the defensive key pass still applies.
+    defensive_only = "warning line\n" + debug_line
+    assert _parse_completion_output(defensive_only) == "model fallback engaged"
+
 
 async def test_b4_multiturn_message_list_is_role_labeled_in_prompt() -> None:
     """A role-tagged message list reaches the CLI as labeled segments.

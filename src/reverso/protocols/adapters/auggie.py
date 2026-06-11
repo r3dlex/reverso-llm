@@ -103,8 +103,20 @@ def _build_completion_argv(prompt: str, model: str, workspace_root: str) -> list
     ]
 
 
+def _safe_json_loads(text: str) -> Any | None:
+    """Parse ``text`` as JSON, returning None instead of raising on failure."""
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return None
+
+
 def _extract_from_envelope(parsed: Any) -> str | None:
-    """Pull the assistant text out of a parsed CLI result envelope, if any."""
+    """Pull the assistant text out of a parsed CLI result envelope, if any.
+
+    Only non-empty string values are returned; empty or non-string values are
+    skipped so the caller falls through to the next key or candidate.
+    """
     if not isinstance(parsed, dict):
         return None
     # "result" is the key the auggie CLI actually emits
@@ -116,29 +128,48 @@ def _extract_from_envelope(parsed: Any) -> str | None:
     return None
 
 
+def _scan_lines_for_envelope(text: str) -> str | None:
+    """Scan stdout lines from the end for the CLI result envelope.
+
+    The CLI sometimes prefixes the single-line JSON envelope with
+    human-readable warning lines on stdout (e.g. unknown-model fallback),
+    which makes the whole text invalid JSON. The first pass anchors on the
+    authoritative ``{"type": "result", ...}`` envelope so a trailing
+    diagnostic dict cannot shadow it; the defensive key list is consulted
+    only when no result-typed line exists. A pretty-printed (multi-line)
+    envelope would defeat this line scan; the live CLI emits a single line,
+    so that case degrades to raw-text passthrough in the caller.
+    """
+    candidates: list[dict[str, Any]] = []
+    for raw_line in reversed(text.splitlines()):
+        stripped_line = raw_line.strip()
+        if not stripped_line.startswith("{"):
+            continue
+        parsed = _safe_json_loads(stripped_line)
+        if isinstance(parsed, dict):
+            candidates.append(parsed)
+    for candidate in candidates:
+        if candidate.get("type") == "result":
+            extracted = _extract_from_envelope(candidate)
+            if extracted is not None:
+                return extracted
+    for candidate in candidates:
+        extracted = _extract_from_envelope(candidate)
+        if extracted is not None:
+            return extracted
+    return None
+
+
 def _parse_completion_output(stdout: str) -> str:
     """Extract the assistant text from ``auggie --print --output-format json``."""
     text = stdout.strip()
     if not text:
         return ""
-    try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError:
-        # The CLI sometimes prefixes the JSON envelope with human-readable
-        # warning lines on stdout (e.g. unknown-model fallback), which makes
-        # the whole text invalid JSON. Scan from the end for the envelope
-        # line before giving up and returning the raw text.
-        for line in reversed(text.splitlines()):
-            line = line.strip()
-            if not line.startswith("{"):
-                continue
-            try:
-                candidate = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            extracted = _extract_from_envelope(candidate)
-            if extracted is not None:
-                return extracted
+    parsed = _safe_json_loads(text)
+    if parsed is None:
+        scanned = _scan_lines_for_envelope(text)
+        if scanned is not None:
+            return scanned
         return text
     extracted = _extract_from_envelope(parsed)
     if extracted is not None:
