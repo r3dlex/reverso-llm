@@ -103,6 +103,19 @@ def _build_completion_argv(prompt: str, model: str, workspace_root: str) -> list
     ]
 
 
+def _extract_from_envelope(parsed: Any) -> str | None:
+    """Pull the assistant text out of a parsed CLI result envelope, if any."""
+    if not isinstance(parsed, dict):
+        return None
+    # "result" is the key the auggie CLI actually emits
+    # ({"type":"result","result":...}); the rest are defensive fallbacks.
+    for key in ("result", "response", "text", "output", "content", "message"):
+        value = parsed.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
 def _parse_completion_output(stdout: str) -> str:
     """Extract the assistant text from ``auggie --print --output-format json``."""
     text = stdout.strip()
@@ -111,16 +124,25 @@ def _parse_completion_output(stdout: str) -> str:
     try:
         parsed = json.loads(text)
     except json.JSONDecodeError:
-        # Fall back to the raw text when the payload is not JSON.
+        # The CLI sometimes prefixes the JSON envelope with human-readable
+        # warning lines on stdout (e.g. unknown-model fallback), which makes
+        # the whole text invalid JSON. Scan from the end for the envelope
+        # line before giving up and returning the raw text.
+        for line in reversed(text.splitlines()):
+            line = line.strip()
+            if not line.startswith("{"):
+                continue
+            try:
+                candidate = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            extracted = _extract_from_envelope(candidate)
+            if extracted is not None:
+                return extracted
         return text
-    if isinstance(parsed, dict):
-        # "result" is the key the auggie CLI actually emits
-        # ({"type":"result","result":...}); the rest are defensive fallbacks.
-        for key in ("result", "response", "text", "output", "content", "message"):
-            value = parsed.get(key)
-            if isinstance(value, str) and value:
-                return value
-        return text
+    extracted = _extract_from_envelope(parsed)
+    if extracted is not None:
+        return extracted
     return text
 
 
