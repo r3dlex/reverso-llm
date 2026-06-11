@@ -42,3 +42,11 @@ the response for `previous_response_id` chaining or `get_response` and
 
 The in memory, per adapter store (`src/reverso/protocols/store.py`) keyed by
 response id. In memory only is an explicit ADR 0002 milestone decision.
+
+## Bounded CLI spine
+
+The single module (`src/reverso/protocols/adapters/cli_spine.py`, ADR 0005)
+that runs a CLI backed provider turn as a one-shot subprocess: wall clock
+bound (default 300s), stderr redacted before logging, and the nonzero-exit
+cause suppressed so raw stderr never rides a traceback. CLI backed provider
+adapters (claude, auggie) contribute only argv and stdout parsing.
