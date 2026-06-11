@@ -779,9 +779,9 @@ async def test_replay_incremental_indexless_tool_call_deltas_accumulate_into_one
         usage: dict | None,
         tool_calls: list[dict],
     ) -> ResponseEnvelope:
-        assert len(tool_calls) == 1, (
-            "index-less continuation deltas must collapse into ONE tool_call"
-        )
+        assert (
+            len(tool_calls) == 1
+        ), "index-less continuation deltas must collapse into ONE tool_call"
         call = tool_calls[0]
         assert call["id"] == "call_idxless_1"
         assert call["function"]["name"] == "lookup"
