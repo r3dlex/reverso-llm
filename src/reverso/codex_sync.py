@@ -22,9 +22,11 @@ import argparse
 import datetime
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
+import tomllib
 import typing as t
 from dataclasses import dataclass
 from pathlib import Path
@@ -43,6 +45,12 @@ BACKUPS_KEPT = 5
 BACKUP_SUFFIX_PREFIX = ".reverso-sync."
 
 DEFAULT_CONFIG_PATH = Path.home() / ".codex" / "config.toml"
+
+_NUX_TABLE_HEADER_RE = re.compile(
+    r"^[ \t]*\[tui\.model_availability_nux\][ \t]*(?:#.*)?$",
+    re.MULTILINE,
+)
+_TABLE_HEADER_LINE_RE = re.compile(r"^[ \t]*\[", re.MULTILINE)
 
 
 @dataclass(frozen=True)
@@ -114,9 +122,13 @@ def _render_profiles_block(provider_models: list[ProviderModels]) -> str:
     the base entries.
     """
     lines: list[str] = [PROFILES_BEGIN]
+    seen_sections: set[str] = set()
     for entry in provider_models:
         for model_id in entry.models:
             section = f"reverso_{entry.prefix}__{_toml_table_key(model_id)}"
+            if section in seen_sections:
+                continue
+            seen_sections.add(section)
             lines.append("")
             lines.append(f"[model_providers.{section}]")
             lines.append(f'name = "Reverso {entry.prefix} {model_id}"')
@@ -129,11 +141,11 @@ def _render_profiles_block(provider_models: list[ProviderModels]) -> str:
 
 
 def _render_nux_block(provider_models: list[ProviderModels]) -> str:
-    """Render the managed [tui.model_availability_nux] additions block.
+    """Render the managed NUX block including the table header.
 
-    The base ``[tui.model_availability_nux]`` table stays hand-managed; this
-    block injects per-model entries inside a separate fenced section so
-    unrelated user entries are preserved.
+    Only used when the user config does NOT already define
+    ``[tui.model_availability_nux]``; emitting the header next to an existing
+    user-owned table would be a duplicate-table TOML error.
     """
     lines: list[str] = [NUX_BEGIN]
     lines.append("[tui.model_availability_nux]")
@@ -146,6 +158,115 @@ def _render_nux_block(provider_models: list[ProviderModels]) -> str:
             lines.append(f'"{model_id}" = 4')
     lines.append(NUX_END)
     return "\n".join(lines)
+
+
+def _render_nux_entries(
+    provider_models: list[ProviderModels],
+    existing_keys: frozenset[str],
+) -> str | None:
+    """Render a headerless fenced NUX block for merging into the user table.
+
+    Keys the user already defines are excluded so the merged table never
+    carries a duplicate key. Returns ``None`` when nothing new needs to be
+    added, in which case no managed block should be present at all.
+    """
+    lines: list[str] = []
+    seen: set[str] = set()
+    for entry in provider_models:
+        for model_id in entry.models:
+            if model_id in seen or model_id in existing_keys:
+                continue
+            seen.add(model_id)
+            lines.append(f'"{model_id}" = 4')
+    if not lines:
+        return None
+    return "\n".join([NUX_BEGIN, *lines, NUX_END])
+
+
+def _strip_managed_block(text: str, begin: str, end: str) -> str:
+    """Remove a sentinel-delimited block (and its trailing newline) if present."""
+    start_idx = text.find(begin)
+    if start_idx == -1:
+        return text
+    end_idx = text.find(end, start_idx)
+    if end_idx == -1:
+        msg = (
+            f"Found managed begin sentinel without matching end sentinel: "
+            f"{begin!r}. Refusing to write to avoid corruption."
+        )
+        raise RuntimeError(msg)
+    tail_start = end_idx + len(end)
+    if tail_start < len(text) and text[tail_start] == "\n":
+        tail_start += 1
+    return text[:start_idx] + text[tail_start:]
+
+
+def _parse_toml(text: str, context: str) -> dict[str, t.Any]:
+    """Parse TOML text, converting parse errors into fail-closed RuntimeErrors."""
+    try:
+        return tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        msg = f"{context} is not valid TOML; refusing to write: {exc}"
+        raise RuntimeError(msg) from exc
+
+
+def _existing_nux_keys(text: str) -> frozenset[str]:
+    """Return the keys the user already defines under the NUX table."""
+    parsed = _parse_toml(text, "target config (outside managed blocks)")
+    tui = parsed.get("tui")
+    if not isinstance(tui, dict):
+        return frozenset()
+    nux = tui.get("model_availability_nux")
+    if not isinstance(nux, dict):
+        return frozenset()
+    return frozenset(nux)
+
+
+def _insert_into_nux_table(text: str, block: str) -> str:
+    """Insert ``block`` inside the user's NUX table, before the next table.
+
+    The caller guarantees the table header exists in ``text``. The block is
+    placed immediately before the next ``[``-led header line (or at EOF when
+    the NUX table is last), so user-owned key lines stay byte-identical.
+    """
+    header = _NUX_TABLE_HEADER_RE.search(text)
+    if header is None:
+        raise RuntimeError("NUX table header vanished during merge; refusing to write.")
+    line_end = text.find("\n", header.end())
+    if line_end == -1:
+        return text + "\n" + block + "\n"
+    scan_from = line_end + 1
+    next_header = _TABLE_HEADER_LINE_RE.search(text, scan_from)
+    if next_header is None:
+        if not text.endswith("\n"):
+            text += "\n"
+        return text + block + "\n"
+    insert_at = next_header.start()
+    return text[:insert_at] + block + "\n" + text[insert_at:]
+
+
+def _merge_nux_block(
+    text: str,
+    provider_models: list[ProviderModels],
+) -> str:
+    """Merge live model NUX entries into ``text`` without duplicating tables.
+
+    When the user config already defines ``[tui.model_availability_nux]``,
+    the managed block is rendered headerless, excludes user-owned keys, and
+    is relocated inside that table (self-healing any block a previous run
+    emitted elsewhere). Otherwise the block keeps its own header and the
+    fixed-point replace/append path applies.
+    """
+    stripped = _strip_managed_block(text, NUX_BEGIN, NUX_END)
+    if _NUX_TABLE_HEADER_RE.search(stripped) is None:
+        return _replace_managed_block(
+            text, NUX_BEGIN, NUX_END, _render_nux_block(provider_models)
+        )
+    existing_keys = _existing_nux_keys(stripped)
+    entries_block = _render_nux_entries(provider_models, existing_keys)
+    if entries_block is None:
+        return stripped
+    return _insert_into_nux_table(stripped, entries_block)
 
 
 def _toml_table_key(model_id: str) -> str:
@@ -308,12 +429,11 @@ def sync(
     old_text = target.read_text(encoding="utf-8") if target.exists() else ""
 
     profiles_block = _render_profiles_block(provider_models)
-    nux_block = _render_nux_block(provider_models)
 
     new_text = _replace_managed_block(
         old_text, PROFILES_BEGIN, PROFILES_END, profiles_block
     )
-    new_text = _replace_managed_block(new_text, NUX_BEGIN, NUX_END, nux_block)
+    new_text = _merge_nux_block(new_text, provider_models)
 
     if new_text == old_text:
         return SyncResult(
@@ -323,6 +443,8 @@ def sync(
             rotated=[],
             provider_models=provider_models,
         )
+
+    _parse_toml(new_text, "rendered config")
 
     backup = _make_backup(target, now=now)
     _atomic_write(target, new_text)
@@ -409,6 +531,9 @@ def main(argv: list[str] | None = None) -> int:
     except httpx.HTTPError as exc:
         sys.stderr.write(f"reverso-codex-sync: gateway error: {exc}\n")
         return 2
+    except RuntimeError as exc:
+        sys.stderr.write(f"reverso-codex-sync: {exc}\n")
+        return 3
 
     report = {
         "target": str(result.target),
