@@ -17,10 +17,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Install prek
-        run: pip install prek
+      # uv ships its own Python toolchain; the runner's cached
+      # tool-cache Python is broken (missing libpython shared object),
+      # so nothing here may rely on bare python/pip from PATH.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
       - name: Run prek
-        run: prek run --all-files
+        run: uvx prek run --all-files
       - name: Validate .rules.ts
         run: bash scripts/validate-rules.sh
       - name: Archgate structural check
@@ -40,12 +45,14 @@ jobs:
       - name: Checkout
         if: needs._prek-check-self-hosted.outputs.passed != 'true'
         uses: actions/checkout@v4
-      - name: Install prek
+      - name: Install uv
         if: needs._prek-check-self-hosted.outputs.passed != 'true'
-        run: pip install prek
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
       - name: Run prek
         if: needs._prek-check-self-hosted.outputs.passed != 'true'
-        run: prek run --all-files
+        run: uvx prek run --all-files
       - name: Validate .rules.ts
         if: needs._prek-check-self-hosted.outputs.passed != 'true'
         run: bash scripts/validate-rules.sh
