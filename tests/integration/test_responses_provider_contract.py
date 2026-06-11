@@ -196,8 +196,12 @@ async def test_previous_response_id_chain(provider: str) -> None:
     assert text == asserts["second_turn_output_text"]
 
 
+TOOL_PROVIDERS = ["copilot", "deepseek"]
+TOOL_PARTIAL_PROVIDERS = ["claude", "auggie"]
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize("provider", PROVIDERS)
+@pytest.mark.parametrize("provider", TOOL_PROVIDERS)
 async def test_tools_function_call(provider: str) -> None:
     fixture = load_fixture("tools_function_call.json")
     asserts = fixture["assertions"]
@@ -225,3 +229,95 @@ async def test_tools_function_call(provider: str) -> None:
         part["text"] for part in message["content"] if part["type"] == "output_text"
     )
     assert text == asserts["followup_output_text"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", TOOL_PARTIAL_PROVIDERS)
+async def test_tools_function_call_partial_text_only(provider: str) -> None:
+    """claude/auggie accept tools.function for codex-compat but emit no function_call items.
+
+    Codex 0.139.0 sends a 22-entry built-in tool surface (exec_command, MCP
+    tools, web_search, etc.) plus parallel_tool_calls and tool_choice="auto"
+    in every Responses request. The capability table classifies those fields
+    as `partial` for the CLI-spine providers: the gate accepts them (so codex
+    turns can complete) but the CLI runners cannot execute client tools, so
+    the response contract is a 200 with a text-only message and no
+    function_call output items.
+    """
+    fixture = load_fixture("tools_function_call.json")
+    async with _build_client() as client:
+        resp = await client.post(
+            f"{_prefix(provider)}/responses",
+            json=fixture["request"]["body"],
+        )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "completed"
+    assert all(
+        item.get("type") != "function_call" for item in body.get("output", [])
+    ), "claude/auggie must NOT emit function_call output items for tools.function"
+    message = next(item for item in body["output"] if item["type"] == "message")
+    text = "".join(
+        part["text"] for part in message["content"] if part["type"] == "output_text"
+    )
+    assert text, "claude/auggie must return a non-empty text message"
+
+
+WEB_SEARCH_PARTIAL_PROVIDERS = ["claude", "auggie", "deepseek"]
+
+
+def _web_search_model(provider: str) -> str:
+    if provider == "claude":
+        return "claude-haiku-4-5-20251001"
+    if provider == "auggie":
+        return "prism-a"
+    return "deepseek-v4-flash"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", WEB_SEARCH_PARTIAL_PROVIDERS)
+async def test_tools_web_search_partial_text_only(provider: str) -> None:
+    """tools.web_search is classified partial on claude, auggie, AND deepseek.
+
+    The codex default tool surface includes a built-in `{"type":"web_search"}`
+    entry on every request. claude/auggie ignore it in the CLI runner;
+    deepseek's `_chat_tools` filters non-`function` tool entries before the
+    upstream call. The gate accepts the field in all three cases so the turn
+    completes with a text-only reply and no function_call output items.
+    """
+    body_in = {
+        "model": _web_search_model(provider),
+        "input": "Find me the latest news.",
+        "tools": [{"type": "web_search"}],
+    }
+    async with _build_client() as client:
+        resp = await client.post(f"{_prefix(provider)}/responses", json=body_in)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "completed"
+    assert all(item.get("type") != "function_call" for item in body.get("output", []))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", TOOL_PARTIAL_PROVIDERS)
+async def test_still_unsupported_tool_returns_400(provider: str) -> None:
+    """A tool type the capability table still classifies as unsupported keeps the 400.
+
+    The codex-compat partial reclassification only covers the default surface
+    (tools.function, tools.web_search, tool_choice.auto, parallel_tool_calls);
+    explicitly requested tools that fall outside the default surface (e.g.
+    file_search, computer_use, code_interpreter) still raise
+    unsupported_feature.
+    """
+    body_in = {
+        "model": "claude-haiku-4-5-20251001" if provider == "claude" else "prism-a",
+        "input": "hi",
+        "tools": [{"type": "file_search"}],
+    }
+    async with _build_client() as client:
+        resp = await client.post(f"{_prefix(provider)}/responses", json=body_in)
+    assert resp.status_code == 400
+    body = resp.json()
+    assert body["error"]["type"] == "invalid_request_error"
+    assert body["error"]["code"] == "unsupported_feature"
+    assert body["error"]["message"] == f"{provider} does not support tools.file_search"

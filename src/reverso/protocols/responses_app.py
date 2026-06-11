@@ -27,6 +27,12 @@ from reverso.protocols.adapter import (
     ResponsesRequest,
     SSEEvent,
 )
+from reverso.protocols.feature_policy import (
+    UnsupportedFeature,
+    build_unsupported_payload,
+    check_features,
+    extract_features,
+)
 from reverso.protocols.middleware import (
     encode_sse_event,
     models_with_codex_refresh,
@@ -179,17 +185,36 @@ def _sse_event_bytes(event: SSEEvent) -> bytes:
     return encode_sse_event(event.event, event.data)
 
 
+async def _send_unsupported_feature(send: Send, provider: str, feature: str) -> None:
+    await _send_json(send, 400, build_unsupported_payload(provider, feature))
+
+
 async def _handle_create_response(
     adapter: ProviderAdapter,
+    provider: str,
     payload: dict[str, Any],
     send: Send,
 ) -> None:
+    # The gate inspects the raw payload (Codex-only fields preserved in extra)
+    # so it can reject e.g. parallel_tool_calls on claude even though the Codex
+    # normalizer would silently strip it before the adapter sees it.
+    raw_request = ResponsesRequest.from_payload(payload)
+    try:
+        check_features(provider, extract_features(raw_request))
+    except UnsupportedFeature as exc:
+        await _send_unsupported_feature(send, exc.provider, exc.feature)
+        return
+
     normalized = normalize_request_payload(payload)
     request = ResponsesRequest.from_payload(normalized)
     if request.stream:
-        await _stream(adapter, request, send)
+        await _stream(adapter, provider, request, send)
         return
-    envelope = await adapter.create_response(request)
+    try:
+        envelope = await adapter.create_response(request)
+    except UnsupportedFeature as exc:
+        await _send_unsupported_feature(send, exc.provider, exc.feature)
+        return
     await _send_json(send, 200, _envelope_to_payload(envelope))
 
 
@@ -206,14 +231,38 @@ async def _start_stream(send: Send) -> None:
     )
 
 
+async def _emit_mid_stream_failure(send: Send, exc: Exception) -> None:
+    """Terminate an already-200 stream with response.failed + [DONE]."""
+    failure = encode_sse_event(
+        "response.failed",
+        {
+            "type": "response.failed",
+            "response": {
+                "status": "failed",
+                "error": {
+                    "message": _safe_error_message(exc),
+                    "type": "server_error",
+                },
+            },
+        },
+    )
+    await send({"type": "http.response.body", "body": failure, "more_body": True})
+    await send({"type": "http.response.body", "body": _DONE_EVENT, "more_body": True})
+    await send({"type": "http.response.body", "body": b"", "more_body": False})
+
+
 async def _stream(
     adapter: ProviderAdapter,
+    provider: str,
     request: ResponsesRequest,
     send: Send,
 ) -> None:
     # The 200 header is held until the first event so a failure that happens
     # before any output (auth, connect, upstream non-2xx) can still return a
-    # structured error instead of a truncated 200 stream.
+    # structured error instead of a truncated 200 stream. UnsupportedFeature
+    # raised before the first event becomes the structured 400 body; raised
+    # after a delta has been emitted it surfaces through the same mid-stream
+    # response.failed + [DONE] contract as any other provider error.
     started = False
     saw_done = False
     try:
@@ -225,31 +274,20 @@ async def _stream(
             if _DONE_EVENT.strip() in chunk:
                 saw_done = True
             await send({"type": "http.response.body", "body": chunk, "more_body": True})
+    except UnsupportedFeature as exc:
+        if not started:
+            await _send_unsupported_feature(send, exc.provider, exc.feature)
+            return
+        # Once the 200 header is committed the structured 400 body can no
+        # longer reach the client, so surface a response.failed + [DONE] like
+        # any other terminal error.
+        await _emit_mid_stream_failure(send, exc)
+        return
     except Exception as exc:  # noqa: BLE001 - a provider failure must not crash the app
         if not started:
             await _send_server_error(send, _safe_error_message(exc))
             return
-        # Headers are already committed at 200; terminate the stream with an
-        # explicit failure event plus [DONE] so the client never sees a silent
-        # truncation.
-        failure = encode_sse_event(
-            "response.failed",
-            {
-                "type": "response.failed",
-                "response": {
-                    "status": "failed",
-                    "error": {
-                        "message": _safe_error_message(exc),
-                        "type": "server_error",
-                    },
-                },
-            },
-        )
-        await send({"type": "http.response.body", "body": failure, "more_body": True})
-        await send(
-            {"type": "http.response.body", "body": _DONE_EVENT, "more_body": True}
-        )
-        await send({"type": "http.response.body", "body": b"", "more_body": False})
+        await _emit_mid_stream_failure(send, exc)
         return
     if not started:
         await _start_stream(send)
@@ -331,7 +369,7 @@ class ResponsesGatewayApp:
             if not isinstance(payload, dict):
                 await _send_error(send, 400, "request body must be an object")
                 return
-            await _handle_create_response(adapter, payload, send)
+            await _handle_create_response(adapter, routed.provider, payload, send)
             return
 
         if method == "GET" and local_no_slash.endswith("/v1/models"):

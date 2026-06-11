@@ -1,0 +1,257 @@
+{
+  "$schema_note": "Per-feature classification per provider. Values: native | translated | unsupported | partial. 'partial' is used only where the adapter handles a subset of the feature and the remainder is unsupported_feature; the parity doc must spell out the boundary. Source: read of src/reverso/protocols/adapters/{claude,copilot,auggie,deepseek}.py at 2026-06-10. B1 generates capability tables from this JSON.",
+  "providers": ["claude", "copilot", "auggie", "deepseek"],
+  "features": {
+    "input.string": {
+      "claude": "native",
+      "copilot": "native",
+      "auggie": "native",
+      "deepseek": "native"
+    },
+    "input.message_list_text": {
+      "claude": "translated",
+      "copilot": "native",
+      "auggie": "translated",
+      "deepseek": "translated"
+    },
+    "input.image": {
+      "claude": "unsupported",
+      "copilot": "native",
+      "auggie": "unsupported",
+      "deepseek": "unsupported"
+    },
+    "input.file": {
+      "claude": "unsupported",
+      "copilot": "native",
+      "auggie": "unsupported",
+      "deepseek": "unsupported"
+    },
+    "instructions": {
+      "claude": "translated",
+      "copilot": "native",
+      "auggie": "translated",
+      "deepseek": "translated"
+    },
+    "previous_response_id": {
+      "claude": "native",
+      "copilot": "native",
+      "auggie": "native",
+      "deepseek": "native"
+    },
+    "store": {
+      "claude": "native",
+      "copilot": "native",
+      "auggie": "native",
+      "deepseek": "native"
+    },
+    "stream": {
+      "claude": "translated",
+      "copilot": "native",
+      "auggie": "translated",
+      "deepseek": "translated"
+    },
+    "stream.incremental_deltas": {
+      "claude": "translated",
+      "copilot": "native",
+      "auggie": "unsupported",
+      "deepseek": "translated"
+    },
+    "tools.function": {
+      "claude": "partial",
+      "copilot": "native",
+      "auggie": "partial",
+      "deepseek": "translated"
+    },
+    "tools.web_search": {
+      "claude": "partial",
+      "copilot": "native",
+      "auggie": "partial",
+      "deepseek": "partial"
+    },
+    "tools.file_search": {
+      "claude": "unsupported",
+      "copilot": "native",
+      "auggie": "unsupported",
+      "deepseek": "unsupported"
+    },
+    "tools.computer_use": {
+      "claude": "unsupported",
+      "copilot": "unsupported",
+      "auggie": "unsupported",
+      "deepseek": "unsupported"
+    },
+    "tools.code_interpreter": {
+      "claude": "unsupported",
+      "copilot": "unsupported",
+      "auggie": "unsupported",
+      "deepseek": "unsupported"
+    },
+    "tool_choice.auto": {
+      "claude": "partial",
+      "copilot": "native",
+      "auggie": "partial",
+      "deepseek": "translated"
+    },
+    "tool_choice.required": {
+      "claude": "unsupported",
+      "copilot": "native",
+      "auggie": "unsupported",
+      "deepseek": "translated"
+    },
+    "tool_choice.named": {
+      "claude": "unsupported",
+      "copilot": "native",
+      "auggie": "unsupported",
+      "deepseek": "translated"
+    },
+    "tool_choice.none": {
+      "claude": "unsupported",
+      "copilot": "native",
+      "auggie": "unsupported",
+      "deepseek": "translated"
+    },
+    "parallel_tool_calls": {
+      "claude": "partial",
+      "copilot": "native",
+      "auggie": "partial",
+      "deepseek": "translated"
+    },
+    "reasoning.effort": {
+      "claude": "unsupported",
+      "copilot": "native",
+      "auggie": "unsupported",
+      "deepseek": "translated"
+    },
+    "reasoning.summary": {
+      "claude": "unsupported",
+      "copilot": "native",
+      "auggie": "unsupported",
+      "deepseek": "translated"
+    },
+    "sampling.temperature": {
+      "claude": "unsupported",
+      "copilot": "native",
+      "auggie": "unsupported",
+      "deepseek": "translated"
+    },
+    "sampling.top_p": {
+      "claude": "unsupported",
+      "copilot": "native",
+      "auggie": "unsupported",
+      "deepseek": "translated"
+    },
+    "max_output_tokens": {
+      "claude": "unsupported",
+      "copilot": "native",
+      "auggie": "unsupported",
+      "deepseek": "translated"
+    },
+    "truncation": {
+      "claude": "unsupported",
+      "copilot": "native",
+      "auggie": "unsupported",
+      "deepseek": "unsupported"
+    },
+    "metadata": {
+      "claude": "unsupported",
+      "copilot": "native",
+      "auggie": "unsupported",
+      "deepseek": "unsupported"
+    },
+    "include": {
+      "claude": "unsupported",
+      "copilot": "native",
+      "auggie": "unsupported",
+      "deepseek": "unsupported"
+    },
+    "background": {
+      "claude": "unsupported",
+      "copilot": "native",
+      "auggie": "unsupported",
+      "deepseek": "unsupported"
+    },
+    "text.format.text": {
+      "claude": "native",
+      "copilot": "native",
+      "auggie": "native",
+      "deepseek": "native"
+    },
+    "text.format.json_schema": {
+      "claude": "unsupported",
+      "copilot": "native",
+      "auggie": "unsupported",
+      "deepseek": "translated"
+    },
+    "text.format.json_object": {
+      "claude": "unsupported",
+      "copilot": "native",
+      "auggie": "unsupported",
+      "deepseek": "translated"
+    },
+    "service_tier": {
+      "claude": "unsupported",
+      "copilot": "native",
+      "auggie": "unsupported",
+      "deepseek": "unsupported"
+    },
+    "user": {
+      "claude": "unsupported",
+      "copilot": "native",
+      "auggie": "unsupported",
+      "deepseek": "translated"
+    },
+    "safety_identifier": {
+      "claude": "unsupported",
+      "copilot": "native",
+      "auggie": "unsupported",
+      "deepseek": "unsupported"
+    }
+  },
+  "endpoints": {
+    "POST /v1/responses": {
+      "claude": "native",
+      "copilot": "native",
+      "auggie": "native",
+      "deepseek": "native"
+    },
+    "GET /v1/responses/{id}": {
+      "claude": "native",
+      "copilot": "native",
+      "auggie": "native",
+      "deepseek": "native"
+    },
+    "GET /v1/responses/{id}/input_items": {
+      "claude": "native",
+      "copilot": "native",
+      "auggie": "native",
+      "deepseek": "native"
+    },
+    "POST /v1/responses/{id}/cancel": {
+      "claude": "unsupported",
+      "copilot": "unsupported",
+      "auggie": "unsupported",
+      "deepseek": "unsupported"
+    },
+    "GET /v1/models": {
+      "claude": "native",
+      "copilot": "native",
+      "auggie": "native",
+      "deepseek": "native"
+    }
+  },
+  "events_emitted": {
+    "response.created": ["claude", "copilot", "auggie", "deepseek"],
+    "response.in_progress": ["claude", "copilot", "auggie", "deepseek"],
+    "response.output_item.added": ["claude", "copilot", "auggie", "deepseek"],
+    "response.content_part.added": ["claude", "copilot", "auggie", "deepseek"],
+    "response.output_text.delta": ["claude", "copilot", "auggie", "deepseek"],
+    "response.output_text.done": ["claude", "copilot", "auggie", "deepseek"],
+    "response.content_part.done": ["claude", "copilot", "auggie", "deepseek"],
+    "response.output_item.done": ["claude", "copilot", "auggie", "deepseek"],
+    "response.completed": ["claude", "copilot", "auggie", "deepseek"],
+    "response.failed": ["claude", "copilot", "auggie", "deepseek"],
+    "response.refusal.delta": ["copilot"],
+    "response.reasoning_summary_text.delta": ["copilot"],
+    "response.function_call_arguments.delta": ["copilot", "deepseek"]
+  }
+}

@@ -289,3 +289,105 @@ async def test_no_token_substring_in_logs(tmp_path, caplog):
     assert FAKE_OAUTH_TOKEN not in log_text
     assert FAKE_BEARER_TOKEN[8:] not in log_text
     assert FAKE_OAUTH_TOKEN[4:] not in log_text
+
+
+async def test_b4_passthrough_include_background_metadata_text_format():
+    """Copilot is Responses-native; the verbatim spine forwards extras as sent.
+
+    The B4 lane requires the four Responses-only fields the gate marks as
+    native for copilot (include, background, metadata, text.format) to reach
+    the upstream body unchanged. Falsifiable: a future over-eager
+    normalization step that stripped these would break tooling that relies on
+    them (json-schema mode, structured event filters, response continuation).
+    """
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content.decode("utf-8"))
+        return httpx.Response(
+            200,
+            json={
+                "id": "resp_b4",
+                "model": "gpt-4o",
+                "status": "completed",
+                "output": [{"type": "message"}],
+            },
+        )
+
+    adapter = _fake_auth_adapter(handler)
+    request = ResponsesRequest.from_payload(
+        {
+            "model": "gpt-4o",
+            "input": "hi",
+            "include": ["reasoning.encrypted_content"],
+            "background": False,
+            "metadata": {"trace_id": "abc123"},
+            "text": {
+                "format": {
+                    "type": "json_schema",
+                    "name": "answer",
+                    "schema": {"type": "object"},
+                }
+            },
+        }
+    )
+
+    await adapter.create_response(request)
+
+    body = captured["body"]
+    assert body["include"] == ["reasoning.encrypted_content"]
+    assert body["background"] is False
+    assert body["metadata"] == {"trace_id": "abc123"}
+    assert body["text"] == {
+        "format": {
+            "type": "json_schema",
+            "name": "answer",
+            "schema": {"type": "object"},
+        }
+    }
+
+
+async def test_b4_passthrough_extras_survive_streaming_request():
+    """Streaming requests also forward the four B4 native extras verbatim.
+
+    Falsifiable: a body builder branch that dropped extras only on the
+    streaming path would silently break tool/text-format settings when stream
+    is true (a regression a non-streaming-only check would miss).
+    """
+    captured = {}
+    sse = (
+        b"event: response.output_text.delta\n"
+        b'data: {"type":"response.output_text.delta","delta":"hi"}\n\n'
+        b"data: [DONE]\n\n"
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content.decode("utf-8"))
+        return httpx.Response(
+            200, content=sse, headers={"content-type": "text/event-stream"}
+        )
+
+    adapter = _fake_auth_adapter(handler)
+    request = ResponsesRequest.from_payload(
+        {
+            "model": "gpt-4o",
+            "input": "hi",
+            "stream": True,
+            "include": ["reasoning.encrypted_content"],
+            "background": True,
+            "metadata": {"trace_id": "stream-1"},
+            "text": {"format": {"type": "text"}},
+        }
+    )
+
+    events = []
+    async for event in adapter.stream_response(request):
+        events.append(event)
+
+    body = captured["body"]
+    assert body["stream"] is True
+    assert body["include"] == ["reasoning.encrypted_content"]
+    assert body["background"] is True
+    assert body["metadata"] == {"trace_id": "stream-1"}
+    assert body["text"] == {"format": {"type": "text"}}
+    assert events  # the upstream SSE block was consumed

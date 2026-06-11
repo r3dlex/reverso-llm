@@ -422,11 +422,14 @@ async def test_real_previous_response_id_chain(provider: str) -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("provider", PROVIDERS)
 async def test_real_tools_function_call(provider: str) -> None:
-    """Tools surface: copilot forwards function_call shapes; claude has no native
+    """Tools surface: copilot forwards function_call shapes; claude accepts and ignores.
 
-    tool-call surface (text-only CLI spine) so the contract for it is a valid
-    pass-through Response, not a synthesized function_call (test-spec class 5
-    allows pass-through / translation / explicit unsupported handling).
+    Claude is a text-only CLI spine. The capability table classifies
+    tools.function as `partial` on claude so codex-compat turns can complete
+    (codex 0.139.0 sends 22 built-in function tools in every default Responses
+    request); the CLI runner ignores the `tools` field and emits no
+    function_call output items. Copilot keeps the native function_call
+    pass-through.
     """
     fixture = load_fixture("tools_function_call.json")
     asserts = fixture["assertions"]
@@ -434,6 +437,18 @@ async def test_real_tools_function_call(provider: str) -> None:
         resp = await client.post(
             f"{_prefix(provider)}/responses", json=fixture["request"]["body"]
         )
+        if provider != "copilot":
+            assert resp.status_code == 200
+            body = resp.json()
+            assert body["object"] == "response"
+            assert body["status"] == "completed"
+            assert all(
+                item.get("type") != "function_call" for item in body.get("output", [])
+            ), "claude must NOT emit function_call items for tools.function"
+            text = _message_text(body)
+            assert text, "claude must return a non-empty text message"
+            return
+
         assert resp.status_code == asserts["status"]
         body = resp.json()
         assert body["object"] == "response"
@@ -442,17 +457,10 @@ async def test_real_tools_function_call(provider: str) -> None:
         function_calls = [
             item for item in body["output"] if item.get("type") == "function_call"
         ]
-        if provider == "copilot":
-            call = function_calls[0]
-            assert call["name"] == asserts["function_call_name"]
-            assert isinstance(call["call_id"], str) and call["call_id"]
-            json.loads(call["arguments"])
-        else:
-            # Claude text CLI cannot emit a native function_call item; it must
-            # still return a well-formed Response (graceful pass-through).
-            assert function_calls == []
-            assert any(item.get("type") == "message" for item in body["output"])
-            return
+        call = function_calls[0]
+        assert call["name"] == asserts["function_call_name"]
+        assert isinstance(call["call_id"], str) and call["call_id"]
+        json.loads(call["arguments"])
 
         followup_body = dict(fixture["followup"]["request"]["body"])
         followup_body["previous_response_id"] = body["id"]
@@ -463,3 +471,24 @@ async def test_real_tools_function_call(provider: str) -> None:
     fbody = followup.json()
     assert fbody["previous_response_id"] == body["id"]
     assert _message_text(fbody) == asserts["followup_output_text"]
+
+
+@pytest.mark.asyncio
+async def test_real_claude_still_unsupported_tool_returns_400() -> None:
+    """Tool types outside codex's default surface still trigger the 400 on claude.
+
+    The partial reclassification only covers the codex-compat default surface;
+    explicitly requested types like file_search remain unsupported.
+    """
+    body_in = {
+        "model": "claude-haiku-4-5-20251001",
+        "input": "hi",
+        "tools": [{"type": "file_search"}],
+    }
+    async with _build_client() as client:
+        resp = await client.post(f"{_prefix('claude')}/responses", json=body_in)
+    assert resp.status_code == 400
+    body = resp.json()
+    assert body["error"]["type"] == "invalid_request_error"
+    assert body["error"]["code"] == "unsupported_feature"
+    assert body["error"]["message"] == "claude does not support tools.file_search"
