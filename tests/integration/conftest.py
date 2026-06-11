@@ -76,6 +76,12 @@ class FixtureAdapter:
 
     def _select_nonstream_body(self, request: ResponsesRequest) -> dict[str, Any]:
         if request.tools:
+            if self.provider in {"claude", "auggie"}:
+                # claude/auggie classify tools.function as partial: the field is
+                # accepted (so codex turns can complete) but the CLI runners
+                # cannot execute client tools and emit no function_call items;
+                # the contract is a text-only message reply.
+                return self._tools_text_only_body(request.model)
             return self._tools["expected"]["body"]
         if request.previous_response_id is not None:
             input_items = request.input
@@ -90,6 +96,30 @@ class FixtureAdapter:
         if request.input == chain_first["request"]["body"]["input"]:
             return chain_first["expected"]["body"]
         return self._nonstream["expected"]["body"]
+
+    def _tools_text_only_body(self, model: str) -> dict[str, Any]:
+        return {
+            "id": "resp_partial_tools_textonly",
+            "object": "response",
+            "status": "completed",
+            "model": model,
+            "output": [
+                {
+                    "id": "msg_partial_tools_textonly",
+                    "type": "message",
+                    "role": "assistant",
+                    "status": "completed",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": "I cannot call functions in this environment.",
+                            "annotations": [],
+                        }
+                    ],
+                }
+            ],
+            "usage": {"input_tokens": 12, "output_tokens": 9, "total_tokens": 21},
+        }
 
     async def stream_response(
         self, request: ResponsesRequest

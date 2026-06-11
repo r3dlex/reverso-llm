@@ -285,16 +285,29 @@ def test_list_models_falls_back_to_cli_aliases_when_unauthenticated(tmp_path) ->
 
 
 def test_adapter_streams_fixture_event_order(tmp_path) -> None:
-    """The stream emits the Codex-observed Responses event order."""
+    """The stream emits the Codex-observed Responses event order.
+
+    Uses the buffered fallback path (no stream_cli_runner injected) so the
+    asserted event sequence has exactly one delta. Multi-chunk streaming is
+    covered by test_stream_runner_emits_multiple_deltas below.
+    """
     import asyncio
 
     from reverso.protocols.adapter import ResponsesRequest
-    from reverso.protocols.adapters.claude import ClaudeAdapter
+    from reverso.protocols.adapters.claude import ClaudeAdapter, _StreamPreflightError
+
+    async def _missing_stream(prompt, model):
+        raise _StreamPreflightError("no streaming runner in this test")
+        yield  # pragma: no cover - keep the function an async generator
 
     cred_file = tmp_path / ".credentials.json"
     cred_file.write_text(_artifact(expires_at=_future_ms()), encoding="utf-8")
     auth = ClaudeOAuthAuth(credentials_path=cred_file, keychain_reader=lambda: None)
-    adapter = ClaudeAdapter(auth=auth, cli_runner=lambda prompt, model: "Hi there.")
+    adapter = ClaudeAdapter(
+        auth=auth,
+        cli_runner=lambda prompt, model: "Hi there.",
+        stream_cli_runner=_missing_stream,
+    )
     request = ResponsesRequest(
         model="claude-sonnet-4-20250514", input="Say hi.", stream=True
     )
@@ -314,3 +327,288 @@ def test_adapter_streams_fixture_event_order(tmp_path) -> None:
         "response.output_item.done",
         "response.completed",
     ]
+
+
+def test_stream_runner_emits_multiple_deltas(tmp_path) -> None:
+    """Fake async-generator runner: multiple deltas concatenate to full text.
+
+    Asserts the B2 contract: an injected stream_cli_runner that yields several
+    text fragments produces one response.output_text.delta per fragment, the
+    canonical event sequence (collapsed across consecutive deltas) is
+    preserved, the concatenated deltas equal the full assistant text, and the
+    completed envelope is persisted for previous_response_id lookup.
+    """
+    import asyncio
+
+    from reverso.protocols.adapter import ResponsesRequest
+    from reverso.protocols.adapters.claude import ClaudeAdapter
+
+    chunks = ["Hel", "lo", " ", "world"]
+
+    async def _runner(prompt: str, model: str):
+        for chunk in chunks:
+            yield chunk
+
+    cred_file = tmp_path / ".credentials.json"
+    cred_file.write_text(_artifact(expires_at=_future_ms()), encoding="utf-8")
+    auth = ClaudeOAuthAuth(credentials_path=cred_file, keychain_reader=lambda: None)
+
+    def _cli_must_not_run(prompt: str, model: str) -> str:  # pragma: no cover
+        raise AssertionError("buffered CLI must not run when streaming succeeds")
+
+    adapter = ClaudeAdapter(
+        auth=auth,
+        cli_runner=_cli_must_not_run,
+        stream_cli_runner=_runner,
+    )
+    request = ResponsesRequest(
+        model="claude-sonnet-4-20250514", input="Say hi.", stream=True
+    )
+
+    async def _collect():
+        out = []
+        async for event in adapter.stream_response(request):
+            out.append((event.event, event.data))
+        return out
+
+    events = asyncio.run(_collect())
+    types = [event_type for event_type, _ in events]
+
+    def _collapse(seq: list[str]) -> list[str]:
+        collapsed: list[str] = []
+        for entry in seq:
+            if (
+                entry == "response.output_text.delta"
+                and collapsed
+                and collapsed[-1] == "response.output_text.delta"
+            ):
+                continue
+            collapsed.append(entry)
+        return collapsed
+
+    assert _collapse(types) == [
+        "response.created",
+        "response.in_progress",
+        "response.output_item.added",
+        "response.content_part.added",
+        "response.output_text.delta",
+        "response.output_text.done",
+        "response.content_part.done",
+        "response.output_item.done",
+        "response.completed",
+    ]
+
+    delta_payloads = [
+        data["delta"]
+        for event_type, data in events
+        if event_type == "response.output_text.delta"
+    ]
+    assert delta_payloads == chunks
+    assert "".join(delta_payloads) == "Hello world"
+
+    completed = next(
+        data for event_type, data in events if event_type == "response.completed"
+    )
+    assert completed["response"]["status"] == "completed"
+    response_id = completed["response"]["id"]
+
+    stored = asyncio.run(adapter.get_response(response_id))
+    assert stored.status == "completed"
+    assert stored.output[0]["content"][0]["text"] == "Hello world"
+
+
+def test_stream_runner_fallback_when_runner_fails_before_first_chunk(tmp_path) -> None:
+    """Pre-first-chunk runner failure -> buffered CLI serves the request.
+
+    Mirrors the named B2 fallback conditions ((a) nonzero exit before the
+    first chunk, (b) first-chunk parse error) by raising _StreamPreflightError
+    from a fake runner before yielding anything. The buffered cli_runner must
+    be invoked and the canonical single-delta replay served.
+    """
+    import asyncio
+
+    from reverso.protocols.adapter import ResponsesRequest
+    from reverso.protocols.adapters.claude import ClaudeAdapter, _StreamPreflightError
+
+    async def _failing_runner(prompt: str, model: str):
+        raise _StreamPreflightError("simulated nonzero exit before first chunk")
+        yield  # pragma: no cover - keeps the function an async generator
+
+    cli_calls: list[tuple[str, str]] = []
+
+    def _cli(prompt: str, model: str) -> str:
+        cli_calls.append((prompt, model))
+        return "buffered text"
+
+    cred_file = tmp_path / ".credentials.json"
+    cred_file.write_text(_artifact(expires_at=_future_ms()), encoding="utf-8")
+    auth = ClaudeOAuthAuth(credentials_path=cred_file, keychain_reader=lambda: None)
+    adapter = ClaudeAdapter(
+        auth=auth, cli_runner=_cli, stream_cli_runner=_failing_runner
+    )
+    request = ResponsesRequest(
+        model="claude-sonnet-4-20250514", input="Say hi.", stream=True
+    )
+
+    async def _collect():
+        out = []
+        async for event in adapter.stream_response(request):
+            out.append((event.event, event.data))
+        return out
+
+    events = asyncio.run(_collect())
+    assert cli_calls, "buffered cli_runner must be invoked on pre-first-chunk failure"
+
+    types = [event_type for event_type, _ in events]
+    assert types == [
+        "response.created",
+        "response.in_progress",
+        "response.output_item.added",
+        "response.content_part.added",
+        "response.output_text.delta",
+        "response.output_text.done",
+        "response.content_part.done",
+        "response.output_item.done",
+        "response.completed",
+    ]
+    delta_payloads = [
+        data["delta"]
+        for event_type, data in events
+        if event_type == "response.output_text.delta"
+    ]
+    assert delta_payloads == ["buffered text"]
+
+
+def test_stream_runner_mid_stream_failure_propagates(tmp_path) -> None:
+    """Mid-stream runner failure -> exception propagates after first delta.
+
+    The gateway's responses_app contract (response.failed event + [DONE])
+    handles this OUTSIDE the adapter; the adapter must NOT silently swap to
+    the buffered runner once any delta has been emitted. This test asserts
+    the adapter yields at least one delta and then re-raises the iterator
+    error unwrapped.
+    """
+    import asyncio
+
+    from reverso.protocols.adapter import ResponsesRequest
+    from reverso.protocols.adapters.claude import ClaudeAdapter
+
+    class _MidStreamBoom(RuntimeError):
+        pass
+
+    async def _runner(prompt: str, model: str):
+        yield "Hello"
+        raise _MidStreamBoom("upstream went away mid-stream")
+
+    def _cli_must_not_run(prompt: str, model: str) -> str:  # pragma: no cover
+        raise AssertionError("no silent fallback after a delta has been emitted")
+
+    cred_file = tmp_path / ".credentials.json"
+    cred_file.write_text(_artifact(expires_at=_future_ms()), encoding="utf-8")
+    auth = ClaudeOAuthAuth(credentials_path=cred_file, keychain_reader=lambda: None)
+    adapter = ClaudeAdapter(
+        auth=auth, cli_runner=_cli_must_not_run, stream_cli_runner=_runner
+    )
+    request = ResponsesRequest(
+        model="claude-sonnet-4-20250514", input="Say hi.", stream=True
+    )
+
+    async def _drain():
+        collected = []
+        with pytest.raises(_MidStreamBoom):
+            async for event in adapter.stream_response(request):
+                collected.append((event.event, event.data))
+        return collected
+
+    events = asyncio.run(_drain())
+    types = [event_type for event_type, _ in events]
+    assert (
+        "response.output_text.delta" in types
+    ), "mid-stream failure test requires at least one delta before the boom"
+    delta_payloads = [
+        data["delta"]
+        for event_type, data in events
+        if event_type == "response.output_text.delta"
+    ]
+    assert delta_payloads == ["Hello"]
+    assert "response.completed" not in types
+
+
+def test_extract_assistant_text_ignores_non_text_events() -> None:
+    """The stream-json parser must only surface assistant text content.
+
+    Per A3 evidence the CLI interleaves system lifecycle, thinking parts,
+    rate_limit_event and the terminal result event around the assistant text.
+    The gateway must never stream reasoning or metadata as user-visible deltas.
+    """
+    from reverso.protocols.adapters.claude import _extract_assistant_text
+
+    assert _extract_assistant_text({"type": "system", "subtype": "init"}) == ""
+    assert _extract_assistant_text({"type": "result", "result": "ok"}) == ""
+    assert (
+        _extract_assistant_text(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {"type": "thinking", "thinking": "redact me"},
+                        {"type": "text", "text": "Hello"},
+                        {"type": "text", "text": " world"},
+                    ]
+                },
+            }
+        )
+        == "Hello world"
+    )
+    assert (
+        _extract_assistant_text(
+            {"type": "assistant", "message": {"content": "not a list"}}
+        )
+        == ""
+    )
+    assert _extract_assistant_text({"type": "rate_limit_event"}) == ""
+
+
+def test_stream_runner_never_consumes_env_oauth_token(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """The streaming adapter must never authenticate from env tokens.
+
+    With ANTHROPIC_API_KEY and CLAUDE_CODE_OAUTH_TOKEN in the parent env but
+    NO claudeAiOauth artifact present, the streaming path must refuse to
+    serve the request rather than infer auth from those env values.
+    """
+    import asyncio
+
+    from reverso.protocols.adapter import ResponsesRequest
+    from reverso.protocols.adapters.claude import ClaudeAdapter
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-should-be-ignored")
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "env-token-should-be-ignored")
+
+    async def _runner_must_not_run(prompt: str, model: str):  # pragma: no cover
+        raise AssertionError("streaming runner must not run without OAuth artifact")
+        yield  # pragma: no cover
+
+    def _cli_must_not_run(prompt: str, model: str) -> str:  # pragma: no cover
+        raise AssertionError("buffered CLI must not run without OAuth artifact")
+
+    auth = ClaudeOAuthAuth(
+        credentials_path=tmp_path / "missing.json",
+        keychain_reader=lambda: None,
+    )
+    adapter = ClaudeAdapter(
+        auth=auth,
+        cli_runner=_cli_must_not_run,
+        stream_cli_runner=_runner_must_not_run,
+    )
+    request = ResponsesRequest(
+        model="claude-sonnet-4-20250514", input="hi", stream=True
+    )
+
+    async def _drain():
+        async for _ in adapter.stream_response(request):  # pragma: no cover
+            pass
+
+    with pytest.raises(ClaudeAuthError):
+        asyncio.run(_drain())

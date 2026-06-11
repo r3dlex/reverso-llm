@@ -290,3 +290,49 @@ def test_parse_completion_output_handles_plain_text() -> None:
     assert _parse_completion_output("plain text reply") == "plain text reply"
     assert _parse_completion_output(json.dumps({"text": "json reply"})) == "json reply"
     assert _parse_completion_output("") == ""
+
+
+async def test_b4_multiturn_message_list_is_role_labeled_in_prompt() -> None:
+    """A role-tagged message list reaches the CLI as labeled segments.
+
+    The Auggie spine is a single-shot CLI: the only translation seam is the
+    prompt string. The B4 lane labels each role so the model can tell
+    speakers apart. Falsifiable: omitting roles would feed an unsegmented
+    blob to the CLI and the model could not reconstruct the dialogue.
+    """
+    captured = {}
+
+    def runner(prompt: str, model: str) -> str:
+        captured["prompt"] = prompt
+        return "ack"
+
+    adapter = AuggieAdapter(cli_runner=runner)
+    request = ResponsesRequest.from_payload(
+        {
+            "model": "auggie-default",
+            "instructions": "Be concise.",
+            "input": [
+                {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "Capital of France?"}],
+                },
+                {
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "Paris."}],
+                },
+                {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "And Spain?"}],
+                },
+            ],
+        }
+    )
+
+    await adapter.create_response(request)
+
+    assert captured["prompt"] == (
+        "Be concise.\n\n"
+        "User: Capital of France?\n\n"
+        "Assistant: Paris.\n\n"
+        "User: And Spain?"
+    )
