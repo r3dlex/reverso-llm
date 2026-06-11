@@ -8,6 +8,7 @@ gateway. The target ``config.toml`` path is always under ``tmp_path`` so
 from __future__ import annotations
 
 import datetime
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -409,7 +410,9 @@ def test_toml_table_key_replaces_invalid_characters() -> None:
     assert codex_sync._toml_table_key("") == "model"
 
 
-def test_sync_with_no_models_still_writes_empty_managed_blocks(tmp_path: Path) -> None:
+def test_sync_with_no_models_writes_empty_profiles_and_no_nux_block(
+    tmp_path: Path,
+) -> None:
     target = tmp_path / "config.toml"
     target.write_text(_baseline_config_text(), encoding="utf-8")
     empty = _make_fetcher({"claude": [], "copilot": [], "auggie": [], "deepseek": []})
@@ -417,8 +420,12 @@ def test_sync_with_no_models_still_writes_empty_managed_blocks(tmp_path: Path) -
     codex_sync.sync(target=target, fetcher=empty)
     text = target.read_text(encoding="utf-8")
     assert codex_sync.PROFILES_BEGIN in text
-    assert codex_sync.NUX_BEGIN in text
     assert "[model_providers.reverso_claude__" not in text
+    # The user already owns [tui.model_availability_nux]; with nothing new to
+    # add, no managed NUX block may exist (an empty one earned its deletion).
+    assert codex_sync.NUX_BEGIN not in text
+    assert text.count("[tui.model_availability_nux]") == 1
+    assert '"gpt-5.5" = 4' in text
 
 
 def test_atomic_write_round_trip(tmp_path: Path) -> None:
@@ -444,3 +451,234 @@ def test_atomic_write_unlinks_tmp_on_failure(
 
     leftovers = [p for p in tmp_path.iterdir() if p.name.endswith(".tmp")]
     assert leftovers == []
+
+
+def test_sync_merges_into_existing_nux_table_single_header(tmp_path: Path) -> None:
+    """Regression: a pre-existing user NUX table must never get a second header.
+
+    The live ~/.codex/config.toml already had [tui.model_availability_nux]
+    (with "gpt-5.5" = 4); the old renderer emitted its own header at EOF,
+    producing a duplicate-table TOML error that broke codex entirely.
+    """
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+
+    codex_sync.sync(target=target, fetcher=_make_fetcher())
+    text = target.read_text(encoding="utf-8")
+
+    assert text.count("[tui.model_availability_nux]") == 1
+    parsed = tomllib.loads(text)
+    nux = parsed["tui"]["model_availability_nux"]
+    assert nux["gpt-5.5"] == 4
+    assert nux["claude-fable-5"] == 4
+    assert nux["deepseek-v3"] == 4
+    # User-owned colliding key must appear exactly once, never re-emitted.
+    assert text.count('"gpt-5.5" = 4') == 1
+
+
+def test_sync_inserts_nux_entries_inside_user_table(tmp_path: Path) -> None:
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+
+    codex_sync.sync(target=target, fetcher=_make_fetcher())
+    text = target.read_text(encoding="utf-8")
+
+    header_idx = text.index("[tui.model_availability_nux]")
+    begin_idx = text.index(codex_sync.NUX_BEGIN)
+    end_idx = text.index(codex_sync.NUX_END)
+    projects_idx = text.index('[projects."/Users/example/repo"]')
+    assert header_idx < begin_idx < end_idx < projects_idx
+
+
+def test_sync_idempotent_with_existing_nux_table(tmp_path: Path) -> None:
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+
+    first = codex_sync.sync(target=target, fetcher=_make_fetcher())
+    assert first.changed is True
+    text_first = target.read_text(encoding="utf-8")
+
+    second = codex_sync.sync(target=target, fetcher=_make_fetcher())
+    assert second.changed is False
+    text_second = target.read_text(encoding="utf-8")
+    assert text_first == text_second
+    assert text_second.count("[tui.model_availability_nux]") == 1
+
+
+def test_sync_all_keys_already_present_writes_no_nux_block(tmp_path: Path) -> None:
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+    only_collision = _make_fetcher(
+        {"claude": [], "copilot": ["gpt-5.5"], "auggie": [], "deepseek": []}
+    )
+
+    codex_sync.sync(target=target, fetcher=only_collision)
+    text = target.read_text(encoding="utf-8")
+
+    assert codex_sync.NUX_BEGIN not in text
+    assert text.count('"gpt-5.5" = 4') == 1
+    assert tomllib.loads(text)["tui"]["model_availability_nux"]["gpt-5.5"] == 4
+
+
+def test_sync_relocates_legacy_eof_nux_block_into_user_table(tmp_path: Path) -> None:
+    """Self-healing: a block written by the buggy version (duplicate header at
+    EOF) must be stripped and re-merged inside the user table."""
+    legacy_block = "\n".join(
+        [
+            codex_sync.NUX_BEGIN,
+            "[tui.model_availability_nux]",
+            '"claude-fable-5" = 4',
+            '"gpt-5.5" = 4',
+            codex_sync.NUX_END,
+        ]
+    )
+    corrupted = _baseline_config_text() + "\n" + legacy_block + "\n"
+    assert corrupted.count("[tui.model_availability_nux]") == 2
+
+    target = tmp_path / "config.toml"
+    target.write_text(corrupted, encoding="utf-8")
+
+    result = codex_sync.sync(target=target, fetcher=_make_fetcher())
+    assert result.changed is True
+    text = target.read_text(encoding="utf-8")
+
+    assert text.count("[tui.model_availability_nux]") == 1
+    parsed = tomllib.loads(text)
+    nux = parsed["tui"]["model_availability_nux"]
+    assert nux["gpt-5.5"] == 4
+    assert nux["claude-fable-5"] == 4
+    assert text.count('"gpt-5.5" = 4') == 1
+
+
+def test_sync_refuses_to_write_when_user_toml_is_invalid(tmp_path: Path) -> None:
+    """Fail closed: user-owned duplicate tables (invalid TOML) must abort the
+    sync before any backup or write happens."""
+    broken = _baseline_config_text() + "\n[tui.model_availability_nux]\n'again' = 1\n"
+    target = tmp_path / "config.toml"
+    target.write_text(broken, encoding="utf-8")
+
+    with pytest.raises(RuntimeError):
+        codex_sync.sync(target=target, fetcher=_make_fetcher())
+
+    assert target.read_text(encoding="utf-8") == broken
+    backups = [
+        p
+        for p in target.parent.iterdir()
+        if p.name.startswith(target.name + codex_sync.BACKUP_SUFFIX_PREFIX)
+    ]
+    assert backups == []
+
+
+def test_main_returns_3_on_runtime_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    broken = _baseline_config_text() + "\n[tui.model_availability_nux]\n'again' = 1\n"
+    target = tmp_path / "config.toml"
+    target.write_text(broken, encoding="utf-8")
+    monkeypatch.setenv("REVERSO_CODEX_CONFIG", str(target))
+    monkeypatch.setattr(
+        codex_sync,
+        "_default_fetcher",
+        lambda base_url: _make_fetcher(),
+    )
+
+    rc = codex_sync.main([])
+    assert rc == 3
+    assert target.read_text(encoding="utf-8") == broken
+    err = capsys.readouterr().err
+    assert "refusing to write" in err
+
+
+def test_render_nux_entries_excludes_existing_keys() -> None:
+    pm = [
+        codex_sync.ProviderModels("claude", ("claude-fable-5",)),
+        codex_sync.ProviderModels("copilot", ("gpt-5.5",)),
+    ]
+    block = codex_sync._render_nux_entries(pm, frozenset({"gpt-5.5"}))
+    assert block is not None
+    assert '"claude-fable-5" = 4' in block
+    assert "gpt-5.5" not in block
+    assert "[tui.model_availability_nux]" not in block
+
+    nothing_new = codex_sync._render_nux_entries(
+        pm, frozenset({"gpt-5.5", "claude-fable-5"})
+    )
+    assert nothing_new is None
+
+
+def test_render_profiles_block_dedupes_coerced_section_collisions() -> None:
+    pm = [codex_sync.ProviderModels("copilot", ("gpt-5.5", "gpt-5_5"))]
+    block = codex_sync._render_profiles_block(pm)
+    assert block.count("[model_providers.reverso_copilot__gpt-5_5]") == 1
+
+
+def test_sync_handles_crlf_config_with_existing_nux_table(tmp_path: Path) -> None:
+    """Regression: CRLF-edited configs must take the header-aware merge path.
+
+    Before the \\r-tolerant header regex, the user table went undetected and
+    sync emitted a duplicate header, failing closed with exit 3 forever.
+    """
+    crlf_baseline = _baseline_config_text().replace("\n", "\r\n")
+    target = tmp_path / "config.toml"
+    target.write_bytes(crlf_baseline.encode("utf-8"))
+
+    first = codex_sync.sync(target=target, fetcher=_make_fetcher())
+    assert first.changed is True
+    text = target.read_bytes().decode("utf-8")
+
+    assert text.count("[tui.model_availability_nux]") == 1
+    parsed = tomllib.loads(text)
+    nux = parsed["tui"]["model_availability_nux"]
+    assert nux["gpt-5.5"] == 4
+    assert nux["claude-fable-5"] == 4
+
+    second = codex_sync.sync(target=target, fetcher=_make_fetcher())
+    assert second.changed is False
+
+
+def test_renderers_escape_hostile_model_ids(tmp_path: Path) -> None:
+    hostile = 'we"ird\\id'
+    pm = [codex_sync.ProviderModels("claude", (hostile,))]
+
+    entries = codex_sync._render_nux_entries(pm, frozenset())
+    assert entries is not None
+    body = "\n".join(line for line in entries.splitlines() if not line.startswith("#"))
+    assert tomllib.loads("[t]\n" + body) == {"t": {hostile: 4}}
+
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+    codex_sync.sync(target=target, fetcher=_make_fetcher({"claude": [hostile]}))
+    text = target.read_text(encoding="utf-8")
+    full = tomllib.loads(text)
+    assert full["tui"]["model_availability_nux"][hostile] == 4
+    section = f"reverso_claude__{codex_sync._toml_table_key(hostile)}"
+    assert full["model_providers"][section]["model"] == hostile
+
+
+def test_nux_entries_dedupe_on_coerced_key_matching_profiles() -> None:
+    pm = [codex_sync.ProviderModels("copilot", ("gpt-5.5", "gpt-5_5"))]
+    entries = codex_sync._render_nux_entries(pm, frozenset())
+    assert entries is not None
+    assert '"gpt-5.5" = 4' in entries
+    assert '"gpt-5_5"' not in entries
+
+    block = codex_sync._render_nux_block(pm)
+    assert block.count(" = 4") == 1
+
+
+def test_sentinel_mentioned_midline_in_comment_is_ignored(tmp_path: Path) -> None:
+    baseline = (
+        _baseline_config_text()
+        + f"# note: the marker {codex_sync.NUX_BEGIN} is managed tooling\n"
+    )
+    target = tmp_path / "config.toml"
+    target.write_text(baseline, encoding="utf-8")
+
+    result = codex_sync.sync(target=target, fetcher=_make_fetcher())
+    assert result.changed is True
+    text = target.read_text(encoding="utf-8")
+    assert f"# note: the marker {codex_sync.NUX_BEGIN} is managed tooling" in text
+    assert text.count("[tui.model_availability_nux]") == 1
+    tomllib.loads(text)
