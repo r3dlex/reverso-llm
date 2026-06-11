@@ -292,6 +292,58 @@ def test_parse_completion_output_handles_plain_text() -> None:
     assert _parse_completion_output("") == ""
 
 
+def test_parse_completion_output_skips_warning_prefix_lines() -> None:
+    """Regression: the live CLI prefixes the JSON envelope with warning lines.
+
+    Observed stdout for an unknown model id: a human-readable warning line
+    followed by the {"type":"result",...} envelope. The old parser failed
+    json.loads on the whole text and leaked the raw envelope to the client.
+    """
+    envelope = json.dumps(
+        {
+            "type": "result",
+            "result": "ok\n",
+            "is_error": False,
+            "subtype": "success",
+            "session_id": "7cea6f7b",
+            "num_turns": 0,
+        }
+    )
+    stdout = (
+        'Unknown model: "claude-fable-5", falling back to default model.\n'
+        + envelope
+        + "\n"
+    )
+    assert _parse_completion_output(stdout) == "ok\n"
+
+    multi_prefix = "line one\nline two {not json\n" + envelope
+    assert _parse_completion_output(multi_prefix) == "ok\n"
+
+    no_envelope = "warning only\nno json here"
+    assert _parse_completion_output(no_envelope) == no_envelope
+
+    tool_use_line = json.dumps({"type": "tool_use", "name": "f", "arguments": {}})
+    assert _parse_completion_output(tool_use_line + "\n" + envelope) == "ok\n"
+
+
+def test_parse_completion_output_result_envelope_beats_trailing_dict() -> None:
+    """A trailing diagnostic dict must not shadow the real result envelope.
+
+    The reverse scan anchors on type == "result" first; a later JSON line
+    with a defensive key (e.g. "message") only wins when no result-typed
+    envelope exists anywhere in the output.
+    """
+    envelope = json.dumps({"type": "result", "result": "ok\n", "is_error": False})
+    debug_line = json.dumps({"type": "debug", "message": "model fallback engaged"})
+
+    stdout = "warning line\n" + envelope + "\n" + debug_line
+    assert _parse_completion_output(stdout) == "ok\n"
+
+    # No result-typed envelope at all: the defensive key pass still applies.
+    defensive_only = "warning line\n" + debug_line
+    assert _parse_completion_output(defensive_only) == "model fallback engaged"
+
+
 async def test_b4_multiturn_message_list_is_role_labeled_in_prompt() -> None:
     """A role-tagged message list reaches the CLI as labeled segments.
 
