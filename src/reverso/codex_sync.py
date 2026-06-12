@@ -35,11 +35,47 @@ import httpx
 
 GATEWAY_BASE_URL = "http://127.0.0.1:64946"
 GATEWAY_PREFIXES: tuple[str, ...] = ("claude", "copilot", "auggie", "deepseek")
+_COPILOT_RESPONSES_ANTHROPIC_MODELS = frozenset(
+    {
+        "claude-fable-5",
+        "claude-opus-4-8",
+        "claude-opus-4-7",
+        "claude-sonnet-4-6",
+    }
+)
+
+
+def _has_safe_model_id_chars(model_id: str) -> bool:
+    return model_id.isascii() and all(
+        not char.isspace() and 32 <= ord(char) < 127 for char in model_id
+    )
+
+
+def _is_codex_copilot_responses_compatible_model(model_id: str) -> bool:
+    if not _has_safe_model_id_chars(model_id):
+        return False
+    return (
+        model_id.startswith("gpt-5") or model_id in _COPILOT_RESPONSES_ANTHROPIC_MODELS
+    )
+
+
+def _codex_responses_compatible_models(prefix: str, model_ids: list[str]) -> list[str]:
+    """Filter live listings to models Codex can call through Responses."""
+    if prefix != "copilot":
+        return model_ids
+    return [
+        model_id
+        for model_id in model_ids
+        if _is_codex_copilot_responses_compatible_model(model_id)
+    ]
+
 
 PROFILES_BEGIN = "# BEGIN REVERSO MODELS PROFILES (managed by reverso-codex-sync)"
 PROFILES_END = "# END REVERSO MODELS PROFILES (managed by reverso-codex-sync)"
 NUX_BEGIN = "# BEGIN REVERSO MODELS NUX (managed by reverso-codex-sync)"
 NUX_END = "# END REVERSO MODELS NUX (managed by reverso-codex-sync)"
+CATALOG_BEGIN = "# BEGIN REVERSO MODEL CATALOG (managed by reverso-codex-sync)"
+CATALOG_END = "# END REVERSO MODEL CATALOG (managed by reverso-codex-sync)"
 
 BACKUPS_KEPT = 5
 BACKUP_SUFFIX_PREFIX = ".reverso-sync."
@@ -103,7 +139,7 @@ def fetch_all(
     """Fetch model ids for every prefix; preserve order, drop empty results."""
     out: list[ProviderModels] = []
     for prefix in prefixes:
-        ids = fetcher(prefix)
+        ids = _codex_responses_compatible_models(prefix, fetcher(prefix))
         deduped: list[str] = []
         seen: set[str] = set()
         for model_id in ids:
@@ -173,7 +209,7 @@ def _render_nux_block(provider_models: list[ProviderModels]) -> str:
 
 
 def _generate_catalog_json(provider_models: list[ProviderModels]) -> str:
-    """Generate a model-catalog.json content for all synced models."""
+    """Generate Codex-compatible model catalog JSON for synced models."""
     models: list[dict[str, t.Any]] = []
     seen: set[str] = set()
 
@@ -183,7 +219,6 @@ def _generate_catalog_json(provider_models: list[ProviderModels]) -> str:
                 continue
             seen.add(model_id)
 
-            # Default metadata; 500k in name suggests larger window.
             context_window = 128000
             if "500k" in model_id:
                 context_window = 500000
@@ -193,12 +228,96 @@ def _generate_catalog_json(provider_models: list[ProviderModels]) -> str:
                     "slug": model_id,
                     "display_name": f"Reverso {entry.prefix} {model_id}",
                     "description": f"Reverso-synced {entry.prefix} model",
-                    "context_window": context_window,
+                    "default_reasoning_level": "medium",
+                    "supported_reasoning_levels": [
+                        {
+                            "effort": "low",
+                            "description": "Fast responses with lighter reasoning",
+                        },
+                        {
+                            "effort": "medium",
+                            "description": "Balances speed and reasoning depth",
+                        },
+                        {
+                            "effort": "high",
+                            "description": "Greater reasoning depth for complex tasks",
+                        },
+                    ],
+                    "shell_type": "shell_command",
+                    "visibility": "list",
                     "supported_in_api": True,
+                    "priority": 1,
+                    "additional_speed_tiers": [],
+                    "service_tiers": [],
+                    "availability_nux": None,
+                    "upgrade": None,
+                    "base_instructions": "",
+                    "model_messages": {},
+                    "supports_reasoning_summaries": False,
+                    "default_reasoning_summary": "none",
+                    "support_verbosity": True,
+                    "default_verbosity": "low",
+                    "apply_patch_tool_type": "freeform",
+                    "web_search_tool_type": "text_and_image",
+                    "truncation_policy": {"mode": "tokens", "limit": 10000},
+                    "supports_parallel_tool_calls": True,
+                    "supports_image_detail_original": False,
+                    "context_window": context_window,
+                    "max_context_window": context_window,
+                    "effective_context_window_percent": 95,
+                    "experimental_supported_tools": [],
+                    "input_modalities": ["text"],
+                    "supports_search_tool": False,
+                    "use_responses_lite": False,
                 }
             )
 
     return json.dumps({"models": models}, indent=2)
+
+
+def _render_catalog_config_block(catalog_path: Path) -> str:
+    """Render the top-level Codex catalog pointer block."""
+    return "\n".join(
+        [
+            CATALOG_BEGIN,
+            f"model_catalog_json = {_toml_string(str(catalog_path))}",
+            CATALOG_END,
+        ]
+    )
+
+
+def _merge_catalog_config_block(text: str, catalog_path: Path | None) -> str:
+    """Manage the top-level Codex ``model_catalog_json`` pointer.
+
+    Codex loads custom metadata from a top-level key. Provider-local
+    ``model_catalog_json`` entries do not feed the active catalog, so the
+    managed pointer is inserted before the first TOML table.
+    """
+    had_catalog_block = _find_sentinel(text, CATALOG_BEGIN) != -1
+    stripped = _strip_managed_block(text, CATALOG_BEGIN, CATALOG_END)
+    if catalog_path is None:
+        return stripped
+
+    block = _render_catalog_config_block(catalog_path)
+    if not stripped:
+        return block + "\n"
+
+    first_table = _TABLE_HEADER_LINE_RE.search(stripped)
+    if first_table is None:
+        if stripped and not stripped.endswith("\n"):
+            stripped += "\n"
+        return stripped + block + "\n"
+
+    insert_at = first_table.start()
+    prefix = stripped[:insert_at]
+    suffix = stripped[insert_at:]
+    if had_catalog_block:
+        prefix = prefix.rstrip()
+    if prefix and not prefix.endswith("\n"):
+        prefix += "\n"
+    if prefix and not prefix.endswith("\n\n"):
+        prefix += "\n"
+    return prefix + block + "\n\n" + suffix
 
 
 def _render_nux_entries(
@@ -494,12 +613,11 @@ def sync(
 
     old_text = target.read_text(encoding="utf-8") if target.exists() else ""
 
-    profiles_block = _render_profiles_block(
-        provider_models, catalog_path=catalog_target
-    )
+    profiles_block = _render_profiles_block(provider_models)
 
+    new_text = _merge_catalog_config_block(old_text, catalog_target)
     new_text = _replace_managed_block(
-        old_text, PROFILES_BEGIN, PROFILES_END, profiles_block
+        new_text, PROFILES_BEGIN, PROFILES_END, profiles_block
     )
     new_text = _merge_nux_block(new_text, provider_models)
 

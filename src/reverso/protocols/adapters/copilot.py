@@ -31,6 +31,7 @@ from reverso.protocols.adapter import (
     SSEEvent,
 )
 from reverso.protocols.auth import AuthResolution, redact_secret
+from reverso.protocols.feature_policy import UnsupportedFeature
 from reverso.protocols.store import ResponseStore
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,41 @@ GITHUB_TOKEN_URL = "https://api.github.com/copilot_internal/v2/token"
 _REFRESH_SKEW_SECONDS = 120
 _STALE_LOCK_SECONDS = 300
 _FORWARD_TIMEOUT_SECONDS = 300.0
+_COPILOT_RESPONSES_ANTHROPIC_MODELS = frozenset(
+    {
+        "claude-fable-5",
+        "claude-opus-4-8",
+        "claude-opus-4-7",
+        "claude-sonnet-4-6",
+    }
+)
+
+
+def _has_safe_model_id_chars(model_id: str) -> bool:
+    return model_id.isascii() and all(
+        not char.isspace() and 32 <= ord(char) < 127 for char in model_id
+    )
+
+
+def _canonical_responses_model(model_id: str) -> str | None:
+    """Return the Copilot Responses model id to put on the wire."""
+    if not _has_safe_model_id_chars(model_id):
+        return None
+    if model_id.startswith("gpt-5"):
+        return model_id
+    if model_id.startswith("gpt5"):
+        suffix = model_id[len("gpt5") :]
+        if suffix.startswith((".", "-")):
+            return f"gpt-5{suffix}"
+        return None
+    if model_id in _COPILOT_RESPONSES_ANTHROPIC_MODELS:
+        return model_id
+    return None
+
+
+def _is_responses_compatible_model(model_id: str) -> bool:
+    """Return whether Copilot accepts the model on its Responses API."""
+    return _canonical_responses_model(model_id) is not None
 
 
 def _github_copilot_config_dir() -> Path:
@@ -210,9 +246,14 @@ def _normalize_models(payload: dict) -> ModelList:
     for model in data:
         if not isinstance(model, dict):
             continue
+        model_id = model.get("id")
+        if not isinstance(model_id, str) or not _is_responses_compatible_model(
+            model_id
+        ):
+            continue
         normalized.append(
             {
-                "id": model.get("id"),
+                "id": model_id,
                 "object": "model",
                 "created": created,
                 "owned_by": model.get("vendor", "github-copilot"),
@@ -246,7 +287,8 @@ class CopilotAdapter:
         )
 
     def _request_body(self, request: ResponsesRequest, *, stream: bool) -> bytes:
-        payload: dict = {"model": request.model, "input": request.input}
+        model = _canonical_responses_model(request.model) or request.model
+        payload: dict = {"model": model, "input": request.input}
         if request.instructions is not None:
             payload["instructions"] = request.instructions
         if request.previous_response_id is not None:
@@ -259,7 +301,13 @@ class CopilotAdapter:
         payload["stream"] = stream
         return json.dumps(payload).encode("utf-8")
 
+    def _check_model(self, request: ResponsesRequest) -> None:
+        if not _is_responses_compatible_model(request.model):
+            raise UnsupportedFeature("copilot", f"model:{request.model}")
+
     async def create_response(self, request: ResponsesRequest) -> ResponseEnvelope:
+        self._check_model(request)
+        model = _canonical_responses_model(request.model) or request.model
         bearer = await self._auth.bearer_token()
         body = self._request_body(request, stream=False)
         async with self._client_factory() as client:
@@ -272,7 +320,7 @@ class CopilotAdapter:
         raw = response.json()
         envelope = ResponseEnvelope(
             id=raw.get("id", ""),
-            model=raw.get("model", request.model),
+            model=raw.get("model", model),
             output=raw.get("output", []) if isinstance(raw.get("output"), list) else [],
             status=raw.get("status", "completed"),
             usage=raw.get("usage"),
@@ -285,6 +333,7 @@ class CopilotAdapter:
         return envelope
 
     async def stream_response(self, request: ResponsesRequest):
+        self._check_model(request)
         bearer = await self._auth.bearer_token()
         body = self._request_body(request, stream=True)
         async with self._client_factory() as client:

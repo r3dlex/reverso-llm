@@ -177,7 +177,7 @@ class _FakeCopilotClient:
             200,
             json={
                 "data": [
-                    {"id": "gpt-4o-copilot", "vendor": "github-copilot"},
+                    {"id": "gpt-5.5", "vendor": "github-copilot"},
                 ]
             },
             request=httpx.Request("GET", url),

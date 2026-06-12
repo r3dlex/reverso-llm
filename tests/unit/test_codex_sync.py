@@ -21,7 +21,7 @@ def _fixture_payload() -> dict[str, list[str]]:
     """Stable fixture model id payload, frozen here so changes are deliberate."""
     return {
         "claude": ["claude-fable-5", "claude-sonnet-4-6"],
-        "copilot": ["gpt-4o", "gpt-5.5"],
+        "copilot": ["claude-fable-5", "gpt-4o", "gpt-5.5", "claude-opus-4-8"],
         "auggie": ["prism-a"],
         "deepseek": ["deepseek-v3", "deepseek-r1"],
     }
@@ -68,6 +68,41 @@ def _baseline_config_text() -> str:
         '[projects."/Users/example/repo"]\n'
         'trust_level = "trusted"\n'
     )
+
+
+def test_fetch_all_filters_copilot_to_responses_compatible_models() -> None:
+    payload = {
+        "copilot": [
+            "claude-fable-5",
+            "gpt-4o",
+            "gpt-5.5",
+            "claude-opus-4-8",
+            "claude-opus-4-7",
+            "claude-sonnet-4-6",
+            "claude-not-real",
+            "gpt-5.5\nmodel:claude-fable-5",
+            "gpt５.５",
+            "gpt-5.4-mini",
+            "gpt-5-mini",
+        ]
+    }
+
+    result = codex_sync.fetch_all(["copilot"], _make_fetcher(payload))
+
+    assert result == [
+        codex_sync.ProviderModels(
+            "copilot",
+            (
+                "claude-fable-5",
+                "gpt-5.5",
+                "claude-opus-4-8",
+                "claude-opus-4-7",
+                "claude-sonnet-4-6",
+                "gpt-5.4-mini",
+                "gpt-5-mini",
+            ),
+        )
+    ]
 
 
 def test_sync_writes_block_and_creates_backup(tmp_path: Path) -> None:
@@ -701,15 +736,27 @@ def test_generate_catalog_json_shape_dedup_and_context_window() -> None:
     assert by_slug["shared-model"]["display_name"] == "Reverso claude shared-model"
     assert by_slug["shared-model"]["context_window"] == 128000
     assert by_slug["big-500k-model"]["context_window"] == 500000
+    required_keys = {
+        "slug",
+        "display_name",
+        "description",
+        "default_reasoning_level",
+        "supported_reasoning_levels",
+        "shell_type",
+        "visibility",
+        "context_window",
+        "max_context_window",
+        "supported_in_api",
+        "priority",
+        "base_instructions",
+    }
     for model in payload["models"]:
-        assert set(model.keys()) == {
-            "slug",
-            "display_name",
-            "description",
-            "context_window",
-            "supported_in_api",
-        }
+        assert required_keys <= set(model.keys())
         assert model["supported_in_api"] is True
+        assert model["shell_type"] == "shell_command"
+        assert model["visibility"] == "list"
+        assert model["default_reasoning_level"] == "medium"
+        assert model["supported_reasoning_levels"]
 
 
 def test_generate_catalog_json_survives_hostile_model_ids() -> None:
@@ -754,7 +801,11 @@ def test_sync_with_catalog_target_writes_catalog_and_references_it(
     assert any(m["slug"] == "claude-fable-5" for m in payload["models"])
 
     text = target.read_text(encoding="utf-8")
+    assert codex_sync.CATALOG_BEGIN in text
+    assert codex_sync.CATALOG_END in text
     assert f'model_catalog_json = "{catalog}"' in text
+    assert text.index("model_catalog_json") < text.index("[model_providers.minimax]")
+    assert "model_catalog_json" not in text[text.index(codex_sync.PROFILES_BEGIN) :]
     tomllib.loads(text)
 
 
@@ -859,3 +910,25 @@ def test_main_dry_run_reports_catalog_target_without_writing(
     assert target.read_text(encoding="utf-8") == baseline
     report = json.loads(capsys.readouterr().out)
     assert report["catalog_target"] == str(catalog)
+
+
+def test_merge_catalog_config_block_replaces_and_removes_when_disabled(
+    tmp_path: Path,
+) -> None:
+    catalog_a = tmp_path / "a.json"
+    catalog_b = tmp_path / "b.json"
+    base = _baseline_config_text()
+
+    first = codex_sync._merge_catalog_config_block(base, catalog_a)
+    assert f'model_catalog_json = "{catalog_a}"' in first
+    assert first.index("model_catalog_json") < first.index("[model_providers.minimax]")
+
+    second = codex_sync._merge_catalog_config_block(first, catalog_b)
+    assert f'model_catalog_json = "{catalog_a}"' not in second
+    assert f'model_catalog_json = "{catalog_b}"' in second
+    assert second.count(codex_sync.CATALOG_BEGIN) == 1
+
+    removed = codex_sync._merge_catalog_config_block(second, None)
+    assert codex_sync.CATALOG_BEGIN not in removed
+    assert "model_catalog_json" not in removed
+    tomllib.loads(removed)
