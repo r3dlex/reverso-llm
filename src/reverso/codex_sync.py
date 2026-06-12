@@ -35,6 +35,8 @@ import httpx
 
 GATEWAY_BASE_URL = "http://127.0.0.1:64946"
 GATEWAY_PREFIXES: tuple[str, ...] = ("claude", "copilot", "auggie", "deepseek")
+
+
 def _has_safe_model_id_chars(model_id: str) -> bool:
     return model_id.isascii() and all(
         not char.isspace() and 32 <= ord(char) < 127 for char in model_id

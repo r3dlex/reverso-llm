@@ -247,9 +247,7 @@ async def test_create_response_rejects_anthropic_model_before_upstream():
         return httpx.Response(200, json={})
 
     adapter = _fake_auth_adapter(handler)
-    request = ResponsesRequest.from_payload(
-        {"model": "claude-opus-4-8", "input": "hi"}
-    )
+    request = ResponsesRequest.from_payload({"model": "claude-opus-4-8", "input": "hi"})
 
     with pytest.raises(UnsupportedFeature) as exc_info:
         await adapter.create_response(request)

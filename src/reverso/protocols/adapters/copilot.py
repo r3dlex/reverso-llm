@@ -41,6 +41,8 @@ GITHUB_TOKEN_URL = "https://api.github.com/copilot_internal/v2/token"
 _REFRESH_SKEW_SECONDS = 120
 _STALE_LOCK_SECONDS = 300
 _FORWARD_TIMEOUT_SECONDS = 300.0
+
+
 def _has_safe_model_id_chars(model_id: str) -> bool:
     return model_id.isascii() and all(
         not char.isspace() and 32 <= ord(char) < 127 for char in model_id
