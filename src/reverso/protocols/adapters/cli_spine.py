@@ -162,6 +162,9 @@ async def stream_bounded_cli(
                 break
             yield line.decode("utf-8", "replace")
 
+        # 1ms floor: stdout has already closed, so the child is exiting; grant
+        # a minimal wait to reap it instead of misreporting a deadline-edge
+        # timeout (unlike the read loop, which checks remaining <= 0 strictly).
         remaining = max(deadline - loop.time(), 0.001)
         try:
             returncode = await asyncio.wait_for(process.wait(), timeout=remaining)
