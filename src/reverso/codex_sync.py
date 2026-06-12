@@ -45,6 +45,7 @@ BACKUPS_KEPT = 5
 BACKUP_SUFFIX_PREFIX = ".reverso-sync."
 
 DEFAULT_CONFIG_PATH = Path.home() / ".codex" / "config.toml"
+DEFAULT_CATALOG_PATH = Path.home() / ".codex" / "reverso-model-catalog.json"
 
 # The trailing \r? keeps CRLF-edited configs on the header-aware merge path;
 # with MULTILINE, $ anchors before \n only, so the \r must be consumed.
@@ -113,7 +114,10 @@ def fetch_all(
     return out
 
 
-def _render_profiles_block(provider_models: list[ProviderModels]) -> str:
+def _render_profiles_block(
+    provider_models: list[ProviderModels],
+    catalog_path: Path | None = None,
+) -> str:
     """Render the managed profiles block between PROFILES_BEGIN/END sentinels.
 
     Each entry is a ``[model_providers.reverso_<prefix>__<model_id>]`` table
@@ -137,6 +141,8 @@ def _render_profiles_block(provider_models: list[ProviderModels]) -> str:
             lines.append(f'base_url = "{GATEWAY_BASE_URL}/{entry.prefix}/v1"')
             lines.append('wire_api = "responses"')
             lines.append(f"model = {_toml_string(model_id)}")
+            if catalog_path:
+                lines.append(f"model_catalog_json = {_toml_string(str(catalog_path))}")
     lines.append("")
     lines.append(PROFILES_END)
     return "\n".join(lines)
@@ -164,6 +170,35 @@ def _render_nux_block(provider_models: list[ProviderModels]) -> str:
             lines.append(f"{_toml_string(model_id)} = 4")
     lines.append(NUX_END)
     return "\n".join(lines)
+
+
+def _generate_catalog_json(provider_models: list[ProviderModels]) -> str:
+    """Generate a model-catalog.json content for all synced models."""
+    models: list[dict[str, t.Any]] = []
+    seen: set[str] = set()
+
+    for entry in provider_models:
+        for model_id in entry.models:
+            if model_id in seen:
+                continue
+            seen.add(model_id)
+
+            # Default metadata; 500k in name suggests larger window.
+            context_window = 128000
+            if "500k" in model_id:
+                context_window = 500000
+
+            models.append(
+                {
+                    "slug": model_id,
+                    "display_name": f"Reverso {entry.prefix} {model_id}",
+                    "description": f"Reverso-synced {entry.prefix} model",
+                    "context_window": context_window,
+                    "supported_in_api": True,
+                }
+            )
+
+    return json.dumps({"models": models}, indent=2)
 
 
 def _render_nux_entries(
@@ -436,6 +471,7 @@ class SyncResult:
     backup: Path | None
     rotated: list[Path]
     provider_models: list[ProviderModels]
+    catalog: Path | None = None
 
 
 def sync(
@@ -446,6 +482,7 @@ def sync(
     base_url: str = GATEWAY_BASE_URL,
     now: datetime.datetime | None = None,
     keep_backups: int = BACKUPS_KEPT,
+    catalog_target: Path | None = None,
 ) -> SyncResult:
     """Synchronize ``target`` against live gateway models.
 
@@ -457,7 +494,9 @@ def sync(
 
     old_text = target.read_text(encoding="utf-8") if target.exists() else ""
 
-    profiles_block = _render_profiles_block(provider_models)
+    profiles_block = _render_profiles_block(
+        provider_models, catalog_path=catalog_target
+    )
 
     new_text = _replace_managed_block(
         old_text, PROFILES_BEGIN, PROFILES_END, profiles_block
@@ -465,17 +504,27 @@ def sync(
     new_text = _merge_nux_block(new_text, provider_models)
 
     if new_text == old_text:
+        # The catalog is regenerated even when the config text is unchanged:
+        # the config references the catalog path, so a deleted or stale
+        # catalog file must come back on every sync, not only on config diffs.
+        if catalog_target:
+            _atomic_write(catalog_target, _generate_catalog_json(provider_models))
         return SyncResult(
             target=target,
             changed=False,
             backup=None,
             rotated=[],
             provider_models=provider_models,
+            catalog=catalog_target,
         )
 
     # Fail-closed invariant: validation MUST precede backup and write so a
     # render bug can never replace a valid user config with broken TOML.
     _parse_toml(new_text, "rendered config")
+
+    if catalog_target:
+        catalog_json = _generate_catalog_json(provider_models)
+        _atomic_write(catalog_target, catalog_json)
 
     backup = _make_backup(target, now=now)
     _atomic_write(target, new_text)
@@ -486,6 +535,7 @@ def sync(
         backup=backup,
         rotated=rotated,
         provider_models=provider_models,
+        catalog=catalog_target,
     )
 
 
@@ -505,6 +555,21 @@ def _build_parser() -> argparse.ArgumentParser:
             "Path to the codex config.toml to update "
             "(default: ~/.codex/config.toml, env: REVERSO_CODEX_CONFIG)."
         ),
+    )
+    parser.add_argument(
+        "--catalog",
+        type=Path,
+        default=None,
+        help=(
+            "Path to the reverso model-catalog.json to write "
+            "(default: ~/.codex/reverso-model-catalog.json, env: "
+            "REVERSO_CODEX_CATALOG). Inert without --write-catalog."
+        ),
+    )
+    parser.add_argument(
+        "--write-catalog",
+        action="store_true",
+        help="Whether to generate and reference a model catalog JSON.",
     )
     parser.add_argument(
         "--base-url",
@@ -532,6 +597,15 @@ def _resolve_config_path(arg_value: Path | None) -> Path:
     return DEFAULT_CONFIG_PATH
 
 
+def _resolve_catalog_path(arg_value: Path | None) -> Path:
+    if arg_value is not None:
+        return arg_value
+    env_value = os.environ.get("REVERSO_CODEX_CATALOG")
+    if env_value:
+        return Path(env_value)
+    return DEFAULT_CATALOG_PATH
+
+
 def _resolve_base_url(arg_value: str | None) -> str:
     if arg_value:
         return arg_value
@@ -546,19 +620,21 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     target = _resolve_config_path(args.config)
     base_url = _resolve_base_url(args.base_url)
+    catalog_target = _resolve_catalog_path(args.catalog) if args.write_catalog else None
 
     if args.dry_run:
         fetcher = _default_fetcher(base_url)
         provider_models = fetch_all(GATEWAY_PREFIXES, fetcher)
         report = {
             "target": str(target),
+            "catalog_target": str(catalog_target) if catalog_target else None,
             "providers": {pm.prefix: list(pm.models) for pm in provider_models},
         }
         sys.stdout.write(json.dumps(report, indent=2) + "\n")
         return 0
 
     try:
-        result = sync(target=target, base_url=base_url)
+        result = sync(target=target, base_url=base_url, catalog_target=catalog_target)
     except httpx.HTTPError as exc:
         sys.stderr.write(f"reverso-codex-sync: gateway error: {exc}\n")
         return 2
@@ -571,6 +647,7 @@ def main(argv: list[str] | None = None) -> int:
         "changed": result.changed,
         "backup": str(result.backup) if result.backup else None,
         "rotated": [str(p) for p in result.rotated],
+        "catalog": str(result.catalog) if result.catalog else None,
         "providers": {pm.prefix: list(pm.models) for pm in result.provider_models},
     }
     sys.stdout.write(json.dumps(report, indent=2) + "\n")
