@@ -178,6 +178,28 @@ def estimate_usage(prompt: str, output: str) -> dict[str, int]:
     }
 
 
+def buffered_envelope(
+    request: ResponsesRequest, *, prompt: str, text: str
+) -> ResponseEnvelope:
+    """Synthesize the completed envelope for a buffered turn.
+
+    CLI-backed adapters (claude, auggie) produce only assistant text, so the
+    envelope shape is fully determined here: fresh response and message ids,
+    a single message output item, status completed, and word-count usage.
+    The caller still owns storage timing (put_response or replay_turn).
+    DeepSeek must NOT use this helper: its envelope carries reasoning_content
+    and tool-call items on .raw, which this text-only shape cannot represent.
+    """
+    return ResponseEnvelope(
+        id=new_response_id(),
+        model=request.model,
+        output=[message_item(new_message_id(), text)],
+        status="completed",
+        usage=estimate_usage(prompt, text),
+        previous_response_id=request.previous_response_id,
+    )
+
+
 def _message_item_events(item: dict[str, Any], *, output_index: int) -> list[SSEEvent]:
     """Per-item SSE sequence for an assistant message output item.
 

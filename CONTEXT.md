@@ -31,6 +31,15 @@ Re-emitting a buffered turn as the canonical Responses SSE sequence. Owned by
 the nine events from `response.created` through `response.completed` listed in
 `CANONICAL_EVENT_SEQUENCE`.
 
+## Incremental replay
+
+Streaming a turn as deltas arrive instead of replaying a buffered turn. Owned
+by `src/reverso/protocols/replay.py` (`replay_incremental`, ADR 0004): the
+adapter contributes only a chunk iterator and a finalize callable; the helper
+owns canonical event emission and the finalize-time store write. Store before
+drain is RELAXED on this path (write at finalize, before
+`response.completed`). DeepSeek and Claude stream through this seam.
+
 ## Store before drain
 
 The invariant that a buffered turn's response envelope is stored BEFORE the

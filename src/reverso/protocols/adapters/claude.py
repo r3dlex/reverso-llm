@@ -45,14 +45,15 @@ from reverso.protocols.auth import (
     redact_secret,
 )
 from reverso.protocols.replay import (
+    buffered_envelope,
     build_prompt,
     estimate_usage,
     message_item,
     new_message_id,
     new_response_id,
     record_input_items,
+    replay_incremental,
     replay_turn,
-    sse_event,
 )
 from reverso.protocols.store import ResponseStore
 from reverso.proxy.profile_routing import resolve_profile_model
@@ -421,15 +422,7 @@ class ClaudeAdapter:
         # The CLI runner is a blocking subprocess; offload it so a single Claude
         # call cannot stall the gateway's shared event loop for its full run.
         text = await asyncio.to_thread(self._cli_runner, prompt, cli_model)
-        message = message_item(new_message_id(), text)
-        envelope = ResponseEnvelope(
-            id=new_response_id(),
-            model=request.model,
-            output=[message],
-            status="completed",
-            usage=estimate_usage(prompt, text),
-            previous_response_id=request.previous_response_id,
-        )
+        envelope = buffered_envelope(request, prompt=prompt, text=text)
         self._store.put_response(envelope, record_input_items(request))
         return envelope
 
@@ -478,126 +471,55 @@ class ClaudeAdapter:
         if first_chunk is None:
             # Fallback: buffered CLI path. Identical shape to create_response.
             text = await asyncio.to_thread(self._cli_runner, prompt, cli_model)
-            envelope = ResponseEnvelope(
-                id=new_response_id(),
-                model=request.model,
-                output=[message_item(new_message_id(), text)],
-                status="completed",
-                usage=estimate_usage(prompt, text),
-                previous_response_id=request.previous_response_id,
-            )
+            envelope = buffered_envelope(request, prompt=prompt, text=text)
             async for event in replay_turn(
                 envelope, store=self._store, input_items=record_input_items(request)
             ):
                 yield event
             return
 
-        # Incremental streaming path. We hold the canonical event sequence and
-        # split the single buffered delta into one delta per chunk yielded by
-        # the runner (the parity suite's _collapse_repeated_deltas absorbs the
-        # chunking difference). After the first delta is emitted any iterator
+        # Incremental streaming path (ADR 0004): the adapter contributes only
+        # its chunk iterator (the preflight-pulled first chunk re-prefixed onto
+        # the runner's stream) and a finalize callable; replay_incremental owns
+        # canonical event emission, the finalize-time store write, and the
+        # chunk-to-delta mapping (the parity suite's _collapse_repeated_deltas
+        # absorbs the chunking difference). After the first delta any iterator
         # failure propagates unwrapped so the gateway's mid-stream contract
         # (response.failed event + [DONE]) takes over verbatim.
         response_id = new_response_id()
         message_id = new_message_id()
-        base_response = {
-            "id": response_id,
-            "object": "response",
-            "status": "in_progress",
-            "model": request.model,
-        }
-        yield sse_event("response.created", {"response": dict(base_response)})
-        yield sse_event("response.in_progress", {"response": dict(base_response)})
-        yield sse_event(
-            "response.output_item.added",
-            {
-                "output_index": 0,
-                "item": {
-                    "id": message_id,
-                    "type": "message",
-                    "role": "assistant",
-                    "status": "in_progress",
-                    "content": [],
-                },
-            },
-        )
-        yield sse_event(
-            "response.content_part.added",
-            {
-                "item_id": message_id,
-                "output_index": 0,
-                "content_index": 0,
-                "part": {"type": "output_text", "text": "", "annotations": []},
-            },
-        )
 
-        accumulated: list[str] = [first_chunk]
-        yield sse_event(
-            "response.output_text.delta",
-            {
-                "item_id": message_id,
-                "output_index": 0,
-                "content_index": 0,
-                "delta": first_chunk,
-            },
-        )
-        async for chunk in stream:
-            if not chunk:
-                continue
-            accumulated.append(chunk)
-            yield sse_event(
-                "response.output_text.delta",
-                {
-                    "item_id": message_id,
-                    "output_index": 0,
-                    "content_index": 0,
-                    "delta": chunk,
-                },
+        async def chunks() -> AsyncIterator[dict[str, Any]]:
+            yield {"text": first_chunk}
+            async for chunk in stream:
+                yield {"text": chunk}
+
+        def finalize(
+            *,
+            full_text: str,
+            full_reasoning: str | None,
+            usage: dict[str, Any] | None,
+            tool_calls: list[dict[str, Any]],
+        ) -> ResponseEnvelope:
+            return ResponseEnvelope(
+                id=response_id,
+                model=request.model,
+                output=[message_item(message_id, full_text)],
+                status="completed",
+                usage=estimate_usage(prompt, full_text),
+                previous_response_id=request.previous_response_id,
             )
 
-        text = "".join(accumulated)
-        primary = message_item(message_id, text)
-        envelope = ResponseEnvelope(
-            id=response_id,
+        async for event in replay_incremental(
+            chunks(),
+            response_id=response_id,
+            message_id=message_id,
             model=request.model,
-            output=[primary],
-            status="completed",
-            usage=estimate_usage(prompt, text),
-            previous_response_id=request.previous_response_id,
-        )
-        self._store.put_response(envelope, record_input_items(request))
-
-        yield sse_event(
-            "response.output_text.done",
-            {
-                "item_id": message_id,
-                "output_index": 0,
-                "content_index": 0,
-                "text": text,
-            },
-        )
-        yield sse_event(
-            "response.content_part.done",
-            {
-                "item_id": message_id,
-                "output_index": 0,
-                "content_index": 0,
-                "part": {"type": "output_text", "text": text, "annotations": []},
-            },
-        )
-        yield sse_event(
-            "response.output_item.done",
-            {"output_index": 0, "item": primary},
-        )
-        completed_response = {
-            "id": response_id,
-            "object": "response",
-            "status": "completed",
-            "model": request.model,
-            "output": envelope.output,
-            "usage": envelope.usage,
-        }
-        yield sse_event("response.completed", {"response": completed_response})
+            store=self._store,
+            input_items=record_input_items(request),
+            finalize=finalize,
+        ):
+            yield event
 
     async def list_models(self) -> ModelList:
         """Return the live Anthropic model listing for ``/v1/models``.
