@@ -41,16 +41,6 @@ GITHUB_TOKEN_URL = "https://api.github.com/copilot_internal/v2/token"
 _REFRESH_SKEW_SECONDS = 120
 _STALE_LOCK_SECONDS = 300
 _FORWARD_TIMEOUT_SECONDS = 300.0
-_COPILOT_RESPONSES_ANTHROPIC_MODELS = frozenset(
-    {
-        "claude-fable-5",
-        "claude-opus-4-8",
-        "claude-opus-4-7",
-        "claude-sonnet-4-6",
-    }
-)
-
-
 def _has_safe_model_id_chars(model_id: str) -> bool:
     return model_id.isascii() and all(
         not char.isspace() and 32 <= ord(char) < 127 for char in model_id
@@ -68,8 +58,6 @@ def _canonical_responses_model(model_id: str) -> str | None:
         if suffix.startswith((".", "-")):
             return f"gpt-5{suffix}"
         return None
-    if model_id in _COPILOT_RESPONSES_ANTHROPIC_MODELS:
-        return model_id
     return None
 
 

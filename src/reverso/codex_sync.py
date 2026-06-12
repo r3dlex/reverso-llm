@@ -35,16 +35,6 @@ import httpx
 
 GATEWAY_BASE_URL = "http://127.0.0.1:64946"
 GATEWAY_PREFIXES: tuple[str, ...] = ("claude", "copilot", "auggie", "deepseek")
-_COPILOT_RESPONSES_ANTHROPIC_MODELS = frozenset(
-    {
-        "claude-fable-5",
-        "claude-opus-4-8",
-        "claude-opus-4-7",
-        "claude-sonnet-4-6",
-    }
-)
-
-
 def _has_safe_model_id_chars(model_id: str) -> bool:
     return model_id.isascii() and all(
         not char.isspace() and 32 <= ord(char) < 127 for char in model_id
@@ -54,9 +44,7 @@ def _has_safe_model_id_chars(model_id: str) -> bool:
 def _is_codex_copilot_responses_compatible_model(model_id: str) -> bool:
     if not _has_safe_model_id_chars(model_id):
         return False
-    return (
-        model_id.startswith("gpt-5") or model_id in _COPILOT_RESPONSES_ANTHROPIC_MODELS
-    )
+    return model_id.startswith("gpt-5")
 
 
 def _codex_responses_compatible_models(prefix: str, model_ids: list[str]) -> list[str]:

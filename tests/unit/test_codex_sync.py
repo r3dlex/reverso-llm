@@ -93,11 +93,7 @@ def test_fetch_all_filters_copilot_to_responses_compatible_models() -> None:
         codex_sync.ProviderModels(
             "copilot",
             (
-                "claude-fable-5",
                 "gpt-5.5",
-                "claude-opus-4-8",
-                "claude-opus-4-7",
-                "claude-sonnet-4-6",
                 "gpt-5.4-mini",
                 "gpt-5-mini",
             ),

@@ -239,27 +239,24 @@ async def test_create_response_canonicalizes_gpt55_alias_before_upstream():
     assert envelope.model == "gpt-5.5"
 
 
-async def test_create_response_forwards_anthropic_frontier_model():
-    captured = {}
+async def test_create_response_rejects_anthropic_model_before_upstream():
+    called = {"value": False}
 
     def handler(request: httpx.Request) -> httpx.Response:
-        captured["body"] = json.loads(request.content.decode("utf-8"))
-        return httpx.Response(
-            200,
-            json={
-                "id": "resp_anthropic",
-                "status": "completed",
-                "output": [],
-            },
-        )
+        called["value"] = True
+        return httpx.Response(200, json={})
 
     adapter = _fake_auth_adapter(handler)
-    request = ResponsesRequest.from_payload({"model": "claude-opus-4-8", "input": "hi"})
+    request = ResponsesRequest.from_payload(
+        {"model": "claude-opus-4-8", "input": "hi"}
+    )
 
-    envelope = await adapter.create_response(request)
+    with pytest.raises(UnsupportedFeature) as exc_info:
+        await adapter.create_response(request)
 
-    assert captured["body"]["model"] == "claude-opus-4-8"
-    assert envelope.model == "claude-opus-4-8"
+    assert exc_info.value.provider == "copilot"
+    assert exc_info.value.feature == "model:claude-opus-4-8"
+    assert called["value"] is False
 
 
 async def test_stream_response_yields_events():
@@ -312,29 +309,24 @@ async def test_stream_response_canonicalizes_gpt55_alias_before_upstream():
     assert events
 
 
-async def test_stream_response_forwards_anthropic_frontier_model():
-    captured = {}
-    sse = (
-        b"event: response.output_text.delta\n"
-        b'data: {"type":"response.output_text.delta","delta":"hi"}\n\n'
-        b"data: [DONE]\n\n"
-    )
+async def test_stream_response_rejects_anthropic_model_before_upstream():
+    called = {"value": False}
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        captured["body"] = json.loads(request.content.decode("utf-8"))
-        return httpx.Response(
-            200, content=sse, headers={"content-type": "text/event-stream"}
-        )
+    def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover
+        called["value"] = True
+        return httpx.Response(200, json={})
 
     adapter = _fake_auth_adapter(handler)
     request = ResponsesRequest.from_payload(
         {"model": "claude-fable-5", "input": "hi", "stream": True}
     )
 
-    events = [event async for event in adapter.stream_response(request)]
+    with pytest.raises(UnsupportedFeature) as exc_info:
+        [event async for event in adapter.stream_response(request)]
 
-    assert captured["body"]["model"] == "claude-fable-5"
-    assert events
+    assert exc_info.value.provider == "copilot"
+    assert exc_info.value.feature == "model:claude-fable-5"
+    assert called["value"] is False
 
 
 async def test_list_models_normalizes_to_openai():
@@ -361,10 +353,9 @@ async def test_list_models_normalizes_to_openai():
     assert models.object == "list"
     assert models.models == []
     ids = [m["id"] for m in models.data]
-    assert ids == ["gpt-5.5", "claude-fable-5", "gpt-5-mini"]
+    assert ids == ["gpt-5.5", "gpt-5-mini"]
     assert models.data[0]["owned_by"] == "openai"
-    assert models.data[1]["owned_by"] == "anthropic"
-    assert models.data[2]["owned_by"] == "github-copilot"
+    assert models.data[1]["owned_by"] == "github-copilot"
 
 
 async def test_create_response_rejects_non_responses_model_before_upstream():
