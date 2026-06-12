@@ -187,6 +187,8 @@ def buffered_envelope(
     envelope shape is fully determined here: fresh response and message ids,
     a single message output item, status completed, and word-count usage.
     The caller still owns storage timing (put_response or replay_turn).
+    DeepSeek must NOT use this helper: its envelope carries reasoning_content
+    and tool-call items on .raw, which this text-only shape cannot represent.
     """
     return ResponseEnvelope(
         id=new_response_id(),
