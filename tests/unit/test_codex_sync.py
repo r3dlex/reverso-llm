@@ -8,6 +8,7 @@ gateway. The target ``config.toml`` path is always under ``tmp_path`` so
 from __future__ import annotations
 
 import datetime
+import json
 import tomllib
 from pathlib import Path
 
@@ -682,3 +683,169 @@ def test_sentinel_mentioned_midline_in_comment_is_ignored(tmp_path: Path) -> Non
     assert f"# note: the marker {codex_sync.NUX_BEGIN} is managed tooling" in text
     assert text.count("[tui.model_availability_nux]") == 1
     tomllib.loads(text)
+
+
+def test_generate_catalog_json_shape_dedup_and_context_window() -> None:
+    pm = [
+        codex_sync.ProviderModels("claude", ("shared-model", "big-500k-model")),
+        codex_sync.ProviderModels("copilot", ("shared-model", "gpt-4o")),
+    ]
+    payload = json.loads(codex_sync._generate_catalog_json(pm))
+
+    assert set(payload.keys()) == {"models"}
+    slugs = [m["slug"] for m in payload["models"]]
+    assert slugs == ["shared-model", "big-500k-model", "gpt-4o"]
+
+    by_slug = {m["slug"]: m for m in payload["models"]}
+    # First prefix carrying the id owns the display name.
+    assert by_slug["shared-model"]["display_name"] == "Reverso claude shared-model"
+    assert by_slug["shared-model"]["context_window"] == 128000
+    assert by_slug["big-500k-model"]["context_window"] == 500000
+    for model in payload["models"]:
+        assert set(model.keys()) == {
+            "slug",
+            "display_name",
+            "description",
+            "context_window",
+            "supported_in_api",
+        }
+        assert model["supported_in_api"] is True
+
+
+def test_resolve_catalog_path_prefers_explicit_then_env(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.delenv("REVERSO_CODEX_CATALOG", raising=False)
+    assert codex_sync._resolve_catalog_path(None) == codex_sync.DEFAULT_CATALOG_PATH
+
+    monkeypatch.setenv("REVERSO_CODEX_CATALOG", str(tmp_path / "env-catalog.json"))
+    assert codex_sync._resolve_catalog_path(None) == tmp_path / "env-catalog.json"
+
+    explicit = tmp_path / "explicit-catalog.json"
+    assert codex_sync._resolve_catalog_path(explicit) == explicit
+
+
+def test_sync_with_catalog_target_writes_catalog_and_references_it(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+    catalog = tmp_path / "catalog.json"
+
+    result = codex_sync.sync(
+        target=target, fetcher=_make_fetcher(), catalog_target=catalog
+    )
+
+    assert result.changed is True
+    assert result.catalog == catalog
+    assert catalog.exists()
+    payload = json.loads(catalog.read_text(encoding="utf-8"))
+    assert any(m["slug"] == "claude-fable-5" for m in payload["models"])
+
+    text = target.read_text(encoding="utf-8")
+    assert f'model_catalog_json = "{catalog}"' in text
+    tomllib.loads(text)
+
+
+def test_sync_without_catalog_target_writes_no_catalog(tmp_path: Path) -> None:
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+
+    result = codex_sync.sync(target=target, fetcher=_make_fetcher())
+
+    assert result.catalog is None
+    assert "model_catalog_json" not in target.read_text(encoding="utf-8")
+    assert not list(tmp_path.glob("*.json"))
+
+
+def test_sync_unchanged_run_regenerates_deleted_catalog(tmp_path: Path) -> None:
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+    catalog = tmp_path / "catalog.json"
+    fetcher = _make_fetcher()
+
+    first = codex_sync.sync(target=target, fetcher=fetcher, catalog_target=catalog)
+    assert first.changed is True
+    assert catalog.exists()
+    catalog_text = catalog.read_text(encoding="utf-8")
+
+    catalog.unlink()
+    second = codex_sync.sync(target=target, fetcher=fetcher, catalog_target=catalog)
+
+    assert second.changed is False
+    assert second.backup is None
+    assert second.catalog == catalog
+    assert catalog.exists(), "unchanged config must still restore a deleted catalog"
+    assert catalog.read_text(encoding="utf-8") == catalog_text
+
+
+def test_main_write_catalog_flag_writes_and_reports(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+    catalog = tmp_path / "catalog.json"
+    monkeypatch.setenv("REVERSO_CODEX_CONFIG", str(target))
+    monkeypatch.setattr(
+        codex_sync,
+        "_default_fetcher",
+        lambda base_url: _make_fetcher(),
+    )
+
+    rc = codex_sync.main(["--write-catalog", "--catalog", str(catalog)])
+
+    assert rc == 0
+    assert catalog.exists()
+    report = json.loads(capsys.readouterr().out)
+    assert report["catalog"] == str(catalog)
+
+
+def test_main_without_write_catalog_flag_ignores_catalog_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+    catalog = tmp_path / "catalog.json"
+    monkeypatch.setenv("REVERSO_CODEX_CONFIG", str(target))
+    monkeypatch.setattr(
+        codex_sync,
+        "_default_fetcher",
+        lambda base_url: _make_fetcher(),
+    )
+
+    rc = codex_sync.main(["--catalog", str(catalog)])
+
+    assert rc == 0
+    assert not catalog.exists()
+    report = json.loads(capsys.readouterr().out)
+    assert report["catalog"] is None
+
+
+def test_main_dry_run_reports_catalog_target_without_writing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    target = tmp_path / "config.toml"
+    baseline = _baseline_config_text()
+    target.write_text(baseline, encoding="utf-8")
+    catalog = tmp_path / "catalog.json"
+    monkeypatch.setenv("REVERSO_CODEX_CONFIG", str(target))
+    monkeypatch.setattr(
+        codex_sync,
+        "_default_fetcher",
+        lambda base_url: _make_fetcher(),
+    )
+
+    rc = codex_sync.main(["--dry-run", "--write-catalog", "--catalog", str(catalog)])
+
+    assert rc == 0
+    assert not catalog.exists()
+    assert target.read_text(encoding="utf-8") == baseline
+    report = json.loads(capsys.readouterr().out)
+    assert report["catalog_target"] == str(catalog)
