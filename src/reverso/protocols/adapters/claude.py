@@ -38,11 +38,14 @@ from reverso.protocols.adapter import (
     ResponsesRequest,
     SSEEvent,
 )
-from reverso.protocols.adapters.cli_spine import run_bounded_cli
+from reverso.protocols.adapters.cli_spine import (
+    BoundedCliStreamFailure,
+    run_bounded_cli,
+    stream_bounded_cli,
+)
 from reverso.protocols.auth import (
     AuthResolution,
     redact_mapping,
-    redact_secret,
 )
 from reverso.protocols.replay import (
     buffered_envelope,
@@ -309,47 +312,42 @@ class ClaudeAdapter:
     ) -> AsyncIterator[str]:
         """Default streaming runner over `claude --output-format stream-json`.
 
-        Spawns the local claude CLI with the documented incremental flags and
-        yields one text fragment per assistant text content chunk. The resolved
+        Runs the local claude CLI through the bounded streaming spine
+        (``stream_bounded_cli``, ADR 0005), which owns the wall-clock
+        deadline, kill-on-abandon, and redacted stderr logging. This runner
+        contributes argv and the stream-json line parsing only: one text
+        fragment is yielded per assistant text content chunk. The resolved
         OAuth token is handed to the child via its environment ONLY and is
         never logged; the parent env is otherwise inherited unchanged.
 
-        Fallback semantics (mirrored in _stream_response): if the subprocess
-        exits nonzero before yielding any chunk, or if the first stdout line
-        cannot be parsed as the documented stream-json envelope, raise
+        Fallback semantics (mirrored in _stream_response): any spine failure
+        or unparseable stream-json BEFORE the first fragment raises
         _StreamPreflightError so the caller can switch to the buffered path.
-        Once any chunk has been yielded, errors propagate unwrapped so the
-        gateway's mid-stream contract (response.failed + [DONE]) takes over.
+        Once any fragment has been yielded, errors propagate unwrapped so the
+        gateway's mid-stream contract (response.failed + [DONE]) takes over,
+        EXCEPT a nonzero exit after emitted text, which is treated as benign
+        EOF (long-standing parity: the emitted text stands as the turn).
         """
         token = _resolve_token_sync(self._auth)
         child_env = dict(os.environ)
         child_env["CLAUDE_CODE_OAUTH_TOKEN"] = token
-        try:
-            process = await asyncio.create_subprocess_exec(
-                "claude",
-                "--print",
-                "--output-format",
-                "stream-json",
-                "--verbose",
-                "--include-partial-messages",
-                "--model",
-                model,
-                "--",
-                prompt,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=child_env,
-            )
-        except FileNotFoundError as exc:
-            raise _StreamPreflightError("claude CLI not found on PATH") from exc
-
-        assert process.stdout is not None
+        argv = [
+            "claude",
+            "--print",
+            "--output-format",
+            "stream-json",
+            "--verbose",
+            "--include-partial-messages",
+            "--model",
+            model,
+            "--",
+            prompt,
+        ]
         emitted = False
         try:
-            while True:
-                line = await process.stdout.readline()
-                if not line:
-                    break
+            async for line in stream_bounded_cli(
+                argv, cli_label="claude CLI", env=child_env
+            ):
                 try:
                     event = json.loads(line)
                 except json.JSONDecodeError as exc:
@@ -368,28 +366,17 @@ class ClaudeAdapter:
                 if fragment:
                     emitted = True
                     yield fragment
-        finally:
-            if process.returncode is None:
-                try:
-                    await process.wait()
-                except Exception:  # noqa: BLE001 - defensive cleanup
-                    pass
-
-        if process.returncode and not emitted:
-            stderr_bytes = b""
-            if process.stderr is not None:
-                try:
-                    stderr_bytes = await process.stderr.read()
-                except Exception:  # noqa: BLE001 - defensive cleanup
-                    stderr_bytes = b""
-            logger.warning(
-                "claude stream CLI exited rc=%s before first chunk: %s",
-                process.returncode,
-                redact_secret(stderr_bytes.decode("utf-8", "replace") or None),
-            )
-            raise _StreamPreflightError(
-                f"claude stream CLI exited rc={process.returncode} before first chunk"
-            )
+        except BoundedCliStreamFailure as exc:
+            if not emitted:
+                if exc.returncode is not None:
+                    raise _StreamPreflightError(
+                        f"claude stream CLI exited rc={exc.returncode} "
+                        "before first chunk"
+                    ) from None
+                raise _StreamPreflightError(str(exc)) from None
+            if exc.returncode is not None:
+                return
+            raise
 
     def _run_claude_cli(self, prompt: str, model: str) -> str:
         """Run the local `claude` CLI for a single-shot completion.

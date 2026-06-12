@@ -82,3 +82,33 @@ only argv construction and stdout parsing.
 - Token material is never logged; `env` values passed to the spine are
   handed to the child process only.
 - The gateway binds 127.0.0.1:64946 only; the spine introduces no listener.
+
+## Amendment 2026-06-12: the spine also owns the streaming subprocess
+
+The Consequences bullet above that left the claude streaming subprocess
+outside the spine is superseded by this amendment. The trigger was not a
+second streaming adapter but a safety divergence of exactly the kind this
+ADR exists to prevent: the streaming runner had NO wall-clock bound (a
+wedged CLI pinned the SSE connection indefinitely), duplicated stderr
+redaction inline, and on consumer abandon (client disconnect mid-stream)
+waited for the child instead of killing it, leaking a running CLI that
+completed its turn unobserved.
+
+`stream_bounded_cli` is the streaming variant of the spine, owning:
+
+1. Wall-clock bound: ONE shared deadline (default 300s) covers the whole
+   invocation; every stdout read is capped by the remaining budget.
+2. Redaction before logging: nonzero-exit stderr passes through
+   `redact_secret`, as in the one-shot path.
+3. Redaction-safe failures: every failure mode raises
+   `BoundedCliStreamFailure` whose message never carries stderr or argv;
+   `returncode` is set only for the nonzero-exit mode so adapters can
+   distinguish it without parsing messages.
+4. Kill-on-abandon: when the consumer stops iterating, the child is killed
+   and reaped, never leaked.
+
+Adapters contribute argv and line parsing only; the claude runner keeps its
+preflight-versus-mid-stream policy (B2) on top of the spine, including the
+preserved parity that a nonzero exit AFTER emitted text is treated as benign
+EOF. The streaming error-mode matrix is pinned in
+`tests/unit/test_cli_spine.py` alongside the one-shot matrix.

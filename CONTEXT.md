@@ -55,7 +55,10 @@ response id. In memory only is an explicit ADR 0002 milestone decision.
 ## Bounded CLI spine
 
 The single module (`src/reverso/protocols/adapters/cli_spine.py`, ADR 0005)
-that runs a CLI backed provider turn as a one-shot subprocess: wall clock
-bound (default 300s), stderr redacted before logging, and the nonzero-exit
-cause suppressed so raw stderr never rides a traceback. CLI backed provider
-adapters (claude, auggie) contribute only argv and stdout parsing.
+that runs a CLI backed provider turn as a subprocess, one-shot
+(`run_bounded_cli`) or streaming line by line (`stream_bounded_cli`): wall
+clock bound (default 300s), stderr redacted before logging, the nonzero-exit
+cause suppressed so raw stderr never rides a traceback, and (streaming only)
+the child killed when the consumer abandons the iterator so a client
+disconnect never leaks a running CLI. CLI backed provider adapters (claude,
+auggie) contribute only argv and stdout parsing.
