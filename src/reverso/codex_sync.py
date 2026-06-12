@@ -562,7 +562,8 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Path to the reverso model-catalog.json to write "
-            "(default: ~/.codex/reverso-model-catalog.json, env: REVERSO_CODEX_CATALOG)."
+            "(default: ~/.codex/reverso-model-catalog.json, env: "
+            "REVERSO_CODEX_CATALOG). Inert without --write-catalog."
         ),
     )
     parser.add_argument(

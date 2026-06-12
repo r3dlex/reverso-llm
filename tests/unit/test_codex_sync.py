@@ -712,6 +712,16 @@ def test_generate_catalog_json_shape_dedup_and_context_window() -> None:
         assert model["supported_in_api"] is True
 
 
+def test_generate_catalog_json_survives_hostile_model_ids() -> None:
+    hostile = 'evil"\\\nmodel\t\x01id'
+    pm = [codex_sync.ProviderModels("claude", (hostile,))]
+
+    payload = json.loads(codex_sync._generate_catalog_json(pm))
+
+    assert payload["models"][0]["slug"] == hostile
+    assert payload["models"][0]["display_name"] == f"Reverso claude {hostile}"
+
+
 def test_resolve_catalog_path_prefers_explicit_then_env(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
