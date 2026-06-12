@@ -41,11 +41,8 @@ from reverso.protocols.adapter import (
 from reverso.protocols.adapters.cli_spine import run_bounded_cli
 from reverso.protocols.auth import redact_mapping
 from reverso.protocols.replay import (
+    buffered_envelope,
     build_prompt,
-    estimate_usage,
-    message_item,
-    new_message_id,
-    new_response_id,
     record_input_items,
     replay_turn,
 )
@@ -278,15 +275,7 @@ class AuggieAdapter:
         # The CLI runner is a blocking subprocess; offload it so a single Auggie
         # call cannot stall the gateway's shared event loop for its full timeout.
         text = await asyncio.to_thread(self._cli_runner, prompt, request.model)
-        message = message_item(new_message_id(), text)
-        envelope = ResponseEnvelope(
-            id=new_response_id(),
-            model=request.model,
-            output=[message],
-            status="completed",
-            usage=estimate_usage(prompt, text),
-            previous_response_id=request.previous_response_id,
-        )
+        envelope = buffered_envelope(request, prompt=prompt, text=text)
         self._store.put_response(envelope, record_input_items(request))
         return envelope
 
@@ -302,14 +291,7 @@ class AuggieAdapter:
         # Offload the blocking CLI subprocess (see create_response) before any
         # event is emitted, so the shared event loop stays responsive.
         text = await asyncio.to_thread(self._cli_runner, prompt, request.model)
-        envelope = ResponseEnvelope(
-            id=new_response_id(),
-            model=request.model,
-            output=[message_item(new_message_id(), text)],
-            status="completed",
-            usage=estimate_usage(prompt, text),
-            previous_response_id=request.previous_response_id,
-        )
+        envelope = buffered_envelope(request, prompt=prompt, text=text)
         async for event in replay_turn(
             envelope, store=self._store, input_items=record_input_items(request)
         ):
