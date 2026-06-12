@@ -14,6 +14,7 @@ import time
 import httpx
 import pytest
 
+from reverso.protocols.feature_policy import UnsupportedFeature
 from reverso.protocols.adapter import (
     InputItemList,
     ModelList,
@@ -189,7 +190,7 @@ async def test_create_response_forwards_and_stores():
             200,
             json={
                 "id": "resp_fake_1",
-                "model": "gpt-4o",
+                "model": "gpt-5.5",
                 "status": "completed",
                 "output": [{"type": "message"}],
             },
@@ -197,7 +198,7 @@ async def test_create_response_forwards_and_stores():
 
     adapter = _fake_auth_adapter(handler)
     request = ResponsesRequest.from_payload(
-        {"model": "gpt-4o", "input": [{"role": "user", "content": "hi"}]}
+        {"model": "gpt-5.5", "input": [{"role": "user", "content": "hi"}]}
     )
 
     envelope = await adapter.create_response(request)
@@ -215,6 +216,52 @@ async def test_create_response_forwards_and_stores():
     assert items.data == [{"role": "user", "content": "hi"}]
 
 
+async def test_create_response_canonicalizes_gpt55_alias_before_upstream():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content.decode("utf-8"))
+        return httpx.Response(
+            200,
+            json={
+                "id": "resp_alias",
+                "status": "completed",
+                "output": [],
+            },
+        )
+
+    adapter = _fake_auth_adapter(handler)
+    request = ResponsesRequest.from_payload({"model": "gpt5.5", "input": "hi"})
+
+    envelope = await adapter.create_response(request)
+
+    assert captured["body"]["model"] == "gpt-5.5"
+    assert envelope.model == "gpt-5.5"
+
+
+async def test_create_response_forwards_anthropic_frontier_model():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content.decode("utf-8"))
+        return httpx.Response(
+            200,
+            json={
+                "id": "resp_anthropic",
+                "status": "completed",
+                "output": [],
+            },
+        )
+
+    adapter = _fake_auth_adapter(handler)
+    request = ResponsesRequest.from_payload({"model": "claude-opus-4-8", "input": "hi"})
+
+    envelope = await adapter.create_response(request)
+
+    assert captured["body"]["model"] == "claude-opus-4-8"
+    assert envelope.model == "claude-opus-4-8"
+
+
 async def test_stream_response_yields_events():
     sse = (
         b"event: response.output_text.delta\n"
@@ -229,7 +276,7 @@ async def test_stream_response_yields_events():
 
     adapter = _fake_auth_adapter(handler)
     request = ResponsesRequest.from_payload(
-        {"model": "gpt-4o", "input": "hi", "stream": True}
+        {"model": "gpt-5.5", "input": "hi", "stream": True}
     )
 
     events = [event async for event in adapter.stream_response(request)]
@@ -240,12 +287,70 @@ async def test_stream_response_yields_events():
     assert events[0].raw is not None
 
 
+async def test_stream_response_canonicalizes_gpt55_alias_before_upstream():
+    captured = {}
+    sse = (
+        b"event: response.output_text.delta\n"
+        b'data: {"type":"response.output_text.delta","delta":"hi"}\n\n'
+        b"data: [DONE]\n\n"
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content.decode("utf-8"))
+        return httpx.Response(
+            200, content=sse, headers={"content-type": "text/event-stream"}
+        )
+
+    adapter = _fake_auth_adapter(handler)
+    request = ResponsesRequest.from_payload(
+        {"model": "gpt5.5", "input": "hi", "stream": True}
+    )
+
+    events = [event async for event in adapter.stream_response(request)]
+
+    assert captured["body"]["model"] == "gpt-5.5"
+    assert events
+
+
+async def test_stream_response_forwards_anthropic_frontier_model():
+    captured = {}
+    sse = (
+        b"event: response.output_text.delta\n"
+        b'data: {"type":"response.output_text.delta","delta":"hi"}\n\n'
+        b"data: [DONE]\n\n"
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content.decode("utf-8"))
+        return httpx.Response(
+            200, content=sse, headers={"content-type": "text/event-stream"}
+        )
+
+    adapter = _fake_auth_adapter(handler)
+    request = ResponsesRequest.from_payload(
+        {"model": "claude-fable-5", "input": "hi", "stream": True}
+    )
+
+    events = [event async for event in adapter.stream_response(request)]
+
+    assert captured["body"]["model"] == "claude-fable-5"
+    assert events
+
+
 async def test_list_models_normalizes_to_openai():
     def handler(request: httpx.Request) -> httpx.Response:
         assert str(request.url).endswith("/models")
         return httpx.Response(
             200,
-            json={"data": [{"id": "gpt-4o", "vendor": "openai"}, "bad", {"id": "o1"}]},
+            json={
+                "data": [
+                    {"id": "gpt-5.5", "vendor": "openai"},
+                    {"id": "gpt-4o", "vendor": "openai"},
+                    {"id": "claude-fable-5", "vendor": "anthropic"},
+                    "bad",
+                    {"id": "gpt-5-mini"},
+                ]
+            },
         )
 
     adapter = _fake_auth_adapter(handler)
@@ -256,9 +361,67 @@ async def test_list_models_normalizes_to_openai():
     assert models.object == "list"
     assert models.models == []
     ids = [m["id"] for m in models.data]
-    assert ids == ["gpt-4o", "o1"]
+    assert ids == ["gpt-5.5", "claude-fable-5", "gpt-5-mini"]
     assert models.data[0]["owned_by"] == "openai"
-    assert models.data[1]["owned_by"] == "github-copilot"
+    assert models.data[1]["owned_by"] == "anthropic"
+    assert models.data[2]["owned_by"] == "github-copilot"
+
+
+async def test_create_response_rejects_non_responses_model_before_upstream():
+    called = {"value": False}
+
+    def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover
+        called["value"] = True
+        return httpx.Response(200, json={})
+
+    adapter = _fake_auth_adapter(handler)
+    bad_model = "gpt-5.5\nmodel:claude-fable-5"
+    request = ResponsesRequest.from_payload({"model": bad_model, "input": "hi"})
+
+    with pytest.raises(UnsupportedFeature) as exc_info:
+        await adapter.create_response(request)
+
+    assert exc_info.value.provider == "copilot"
+    assert exc_info.value.feature == f"model:{bad_model}"
+    assert called["value"] is False
+
+
+async def test_create_response_rejects_unicode_gpt_alias_before_upstream():
+    called = {"value": False}
+
+    def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover
+        called["value"] = True
+        return httpx.Response(200, json={})
+
+    adapter = _fake_auth_adapter(handler)
+    request = ResponsesRequest.from_payload({"model": "gpt５.５", "input": "hi"})
+
+    with pytest.raises(UnsupportedFeature) as exc_info:
+        await adapter.create_response(request)
+
+    assert exc_info.value.provider == "copilot"
+    assert exc_info.value.feature == "model:gpt５.５"
+    assert called["value"] is False
+
+
+async def test_stream_response_rejects_non_responses_model_before_upstream():
+    called = {"value": False}
+
+    def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover
+        called["value"] = True
+        return httpx.Response(200, json={})
+
+    adapter = _fake_auth_adapter(handler)
+    request = ResponsesRequest.from_payload(
+        {"model": "gpt-4o", "input": "hi", "stream": True}
+    )
+
+    with pytest.raises(UnsupportedFeature) as exc_info:
+        _ = [event async for event in adapter.stream_response(request)]
+
+    assert exc_info.value.provider == "copilot"
+    assert exc_info.value.feature == "model:gpt-4o"
+    assert called["value"] is False
 
 
 async def test_create_response_timeout_propagates():
@@ -266,7 +429,7 @@ async def test_create_response_timeout_propagates():
         raise httpx.ReadTimeout("upstream timed out")
 
     adapter = _fake_auth_adapter(handler)
-    request = ResponsesRequest.from_payload({"model": "gpt-4o", "input": "hi"})
+    request = ResponsesRequest.from_payload({"model": "gpt-5.5", "input": "hi"})
 
     with pytest.raises(httpx.TimeoutException):
         await adapter.create_response(request)
@@ -308,7 +471,7 @@ async def test_b4_passthrough_include_background_metadata_text_format():
             200,
             json={
                 "id": "resp_b4",
-                "model": "gpt-4o",
+                "model": "gpt-5.5",
                 "status": "completed",
                 "output": [{"type": "message"}],
             },
@@ -317,7 +480,7 @@ async def test_b4_passthrough_include_background_metadata_text_format():
     adapter = _fake_auth_adapter(handler)
     request = ResponsesRequest.from_payload(
         {
-            "model": "gpt-4o",
+            "model": "gpt-5.5",
             "input": "hi",
             "include": ["reasoning.encrypted_content"],
             "background": False,
@@ -370,7 +533,7 @@ async def test_b4_passthrough_extras_survive_streaming_request():
     adapter = _fake_auth_adapter(handler)
     request = ResponsesRequest.from_payload(
         {
-            "model": "gpt-4o",
+            "model": "gpt-5.5",
             "input": "hi",
             "stream": True,
             "include": ["reasoning.encrypted_content"],
