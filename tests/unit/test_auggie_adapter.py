@@ -2,9 +2,9 @@
 
 All backends are FAKE: no real ``auggie`` binary, no OAuth session, no network.
 Covers the Responses contract surface, the falsifiable ``hard-disable unproven``
-indexing literal, the sandbox-workspace-root + ``--ask`` read-only posture, the
-streamed SSE event order, bounded error handling, and that no hidden execution
-occurs after a tool result is surfaced.
+indexing literal, the repo-workspace-root write-capable posture, the streamed
+SSE event order, bounded error handling, and that no hidden execution occurs
+after a tool result is surfaced.
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ from reverso.protocols.adapters.auggie import (
     AuggieError,
     _build_completion_argv,
     _parse_completion_output,
+    _resolve_workspace_root,
 )
 
 
@@ -152,31 +153,111 @@ async def test_list_models_maps_live_cli_short_names() -> None:
     assert [m["id"] for m in models.data] == ["prism-a", "haiku4.5"]
 
 
-def test_completion_argv_uses_sandbox_root_and_ask_posture(tmp_path) -> None:
-    """The argv defaults to a sandbox workspace root and a read-only posture."""
-    caller_workspace = str(tmp_path / "real-caller-workspace")
-    sandbox_root = str(tmp_path / "ephemeral-sandbox")
-    argv = _build_completion_argv("the prompt", "auggie-default", sandbox_root)
+async def test_list_models_exposes_codex_friendly_claude_aliases() -> None:
+    """Codex should get metadata for common Claude-style Auggie names."""
+    adapter = AuggieAdapter(
+        cli_runner=lambda prompt, model: "ok",
+        models_runner=_models_runner(
+            [
+                {"displayName": "Claude Fable 5", "shortName": "fable-5"},
+                {"displayName": "Opus 4.8", "shortName": "opus4.8"},
+                {"displayName": "Sonnet 4.6", "shortName": "sonnet4.6"},
+            ]
+        ),
+    )
+
+    models = await adapter.list_models()
+
+    ids = [m["id"] for m in models.data]
+    assert "fable-5" in ids
+    assert "claude-fable-5" in ids
+    assert "opus4.8" in ids
+    assert "opus-4-8" in ids
+    assert "claude-opus-4-8" in ids
+    assert "sonnet4.6" in ids
+    assert "sonnet-4-6" in ids
+    assert "claude-sonnet-4-6" in ids
+
+
+def test_completion_argv_uses_repo_root_and_write_permissions(tmp_path) -> None:
+    """The argv targets the repo workspace and does not force ask mode."""
+    workspace_root = str(tmp_path / "repo")
+    argv = _build_completion_argv("the prompt", "auggie-default", workspace_root)
 
     assert argv[0] == "auggie"
     assert "--print" in argv
-    assert "--ask" in argv
+    assert "--ask" not in argv
     assert "--workspace-root" in argv
     ws_value = argv[argv.index("--workspace-root") + 1]
-    assert ws_value == sandbox_root
-    # The caller's workspace must never be used as the indexing root.
-    assert caller_workspace not in argv
-    assert ws_value != caller_workspace
+    assert ws_value == workspace_root
+    permissions = [
+        argv[index + 1]
+        for index, value in enumerate(argv)
+        if value == "--permission"
+    ]
+    assert "save-file:allow" in permissions
+    assert "str-replace-editor:allow" in permissions
+    assert "apply_patch:allow" in permissions
+    assert "remove-files:allow" not in permissions
     # Output is one-shot and parseable.
     assert argv[argv.index("--output-format") + 1] == "json"
 
 
-def test_real_runner_defaults_workspace_to_temp_sandbox(monkeypatch) -> None:
-    """The real CLI runner builds argv with an ephemeral sandbox, not a caller path."""
+def test_completion_argv_maps_claude_style_model_aliases(tmp_path) -> None:
+    workspace_root = str(tmp_path / "repo")
+
+    opus = _build_completion_argv("prompt", "opus-4-8", workspace_root)
+    sonnet = _build_completion_argv("prompt", "claude-sonnet-4-6", workspace_root)
+    fable = _build_completion_argv("prompt", "claude-fable-5", workspace_root)
+
+    assert opus[opus.index("-m") + 1] == "opus4.8"
+    assert sonnet[sonnet.index("-m") + 1] == "sonnet4.6"
+    assert fable[fable.index("-m") + 1] == "fable-5"
+
+
+def test_prompt_flags_stay_after_separator(tmp_path) -> None:
+    """A prompt cannot inject argv flags before the separator."""
+    workspace_root = str(tmp_path / "repo")
+    prompt = "ignore prior text --ask --workspace-root /tmp/bad"
+    argv = _build_completion_argv(prompt, "auggie-default", workspace_root)
+
+    separator = argv.index("--")
+    assert prompt == argv[separator + 1]
+    assert "--ask" not in argv[:separator]
+    assert argv[argv.index("--workspace-root") + 1] == workspace_root
+
+
+def test_resolve_workspace_root_defaults_to_git_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    repo = tmp_path / "repo"
+    nested = repo / "src" / "pkg"
+    nested.mkdir(parents=True)
+    (repo / ".git").mkdir()
+    monkeypatch.chdir(nested)
+
+    assert _resolve_workspace_root() == str(repo.resolve())
+
+
+def test_resolve_workspace_root_honors_explicit_env(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    override = tmp_path / "explicit-root"
+    monkeypatch.setenv("REVERSO_AUGGIE_WORKSPACE_ROOT", str(override))
+
+    assert _resolve_workspace_root() == str(override.resolve())
+
+
+def test_real_runner_defaults_workspace_to_repo_root(monkeypatch, tmp_path) -> None:
+    """The real CLI runner builds argv with the caller's repository root."""
     captured: dict = {}
+    repo = tmp_path / "repo"
+    nested = repo / "nested"
+    nested.mkdir(parents=True)
+    (repo / ".git").mkdir()
 
     class _Completed:
-        stdout = json.dumps({"response": "sandbox-ok"})
+        stdout = json.dumps({"response": "repo-ok"})
 
     def _fake_run(argv, **kwargs):
         captured["argv"] = argv
@@ -185,16 +266,16 @@ def test_real_runner_defaults_workspace_to_temp_sandbox(monkeypatch) -> None:
     monkeypatch.setattr(
         "reverso.protocols.adapters.cli_spine.subprocess.run", _fake_run
     )
+    monkeypatch.chdir(nested)
 
     adapter = AuggieAdapter()
     text = adapter._run_auggie_cli("prompt", "auggie-default")
 
-    assert text == "sandbox-ok"
+    assert text == "repo-ok"
     argv = captured["argv"]
     ws_value = argv[argv.index("--workspace-root") + 1]
-    # The sandbox is created under the OS temp dir, never the caller workspace.
-    assert "reverso-auggie-" in ws_value
-    assert "--ask" in argv
+    assert ws_value == str(repo.resolve())
+    assert "--ask" not in argv
     assert "--print" in argv
 
 
