@@ -70,7 +70,7 @@ def _baseline_config_text() -> str:
     )
 
 
-def test_fetch_all_filters_copilot_to_responses_compatible_models() -> None:
+def test_fetch_all_keeps_safe_copilot_models_for_responses() -> None:
     payload = {
         "copilot": [
             "claude-fable-5",
@@ -79,7 +79,7 @@ def test_fetch_all_filters_copilot_to_responses_compatible_models() -> None:
             "claude-opus-4-8",
             "claude-opus-4-7",
             "claude-sonnet-4-6",
-            "claude-not-real",
+            "gemini-2.5-pro",
             "gpt-5.5\nmodel:claude-fable-5",
             "gpt５.５",
             "gpt-5.4-mini",
@@ -93,7 +93,13 @@ def test_fetch_all_filters_copilot_to_responses_compatible_models() -> None:
         codex_sync.ProviderModels(
             "copilot",
             (
+                "claude-fable-5",
+                "gpt-4o",
                 "gpt-5.5",
+                "claude-opus-4-8",
+                "claude-opus-4-7",
+                "claude-sonnet-4-6",
+                "gemini-2.5-pro",
                 "gpt-5.4-mini",
                 "gpt-5-mini",
             ),
