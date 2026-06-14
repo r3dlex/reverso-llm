@@ -21,7 +21,7 @@ def _fixture_payload() -> dict[str, list[str]]:
     """Stable fixture model id payload, frozen here so changes are deliberate."""
     return {
         "claude": ["claude-fable-5", "claude-sonnet-4-6"],
-        "copilot": ["claude-fable-5", "gpt-4o", "gpt-5.5", "claude-opus-4-8"],
+        "copilot": ["claude-fable-5", "gpt-4o", "gpt-5.5", "claude-opus-4.8"],
         "auggie": ["prism-a"],
         "deepseek": ["deepseek-v3", "deepseek-r1"],
     }
@@ -70,15 +70,15 @@ def _baseline_config_text() -> str:
     )
 
 
-def test_fetch_all_keeps_safe_copilot_models_for_responses() -> None:
+def test_fetch_all_keeps_only_upstream_accepted_copilot_responses_models() -> None:
     payload = {
         "copilot": [
             "claude-fable-5",
             "gpt-4o",
             "gpt-5.5",
-            "claude-opus-4-8",
-            "claude-opus-4-7",
-            "claude-sonnet-4-6",
+            "claude-opus-4.8",
+            "claude-opus-4.7",
+            "claude-sonnet-4.6",
             "gemini-2.5-pro",
             "gpt-5.5\nmodel:claude-fable-5",
             "gpt５.５",
@@ -93,13 +93,8 @@ def test_fetch_all_keeps_safe_copilot_models_for_responses() -> None:
         codex_sync.ProviderModels(
             "copilot",
             (
-                "claude-fable-5",
                 "gpt-4o",
                 "gpt-5.5",
-                "claude-opus-4-8",
-                "claude-opus-4-7",
-                "claude-sonnet-4-6",
-                "gemini-2.5-pro",
                 "gpt-5.4-mini",
                 "gpt-5-mini",
             ),

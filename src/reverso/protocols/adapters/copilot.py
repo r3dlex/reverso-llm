@@ -20,6 +20,7 @@ import logging
 import platform
 import time
 from pathlib import Path
+from typing import Any
 
 import httpx
 
@@ -39,6 +40,17 @@ from reverso.protocols.feature_policy import UnsupportedFeature
 from reverso.protocols.store import ResponseStore
 
 logger = logging.getLogger(__name__)
+
+
+class CopilotUpstreamError(RuntimeError):
+    """Secret-free Copilot upstream error safe to surface to callers."""
+
+    __slots__ = ("public_message",)
+
+    def __init__(self, public_message: str) -> None:
+        super().__init__(public_message)
+        self.public_message = public_message
+
 
 COPILOT_API_BASE = "https://api.githubcopilot.com"
 GITHUB_TOKEN_URL = "https://api.github.com/copilot_internal/v2/token"
@@ -206,6 +218,31 @@ def _forward_headers(bearer: str) -> dict[str, str]:
     }
 
 
+def _safe_upstream_http_error(response: httpx.Response) -> CopilotUpstreamError:
+    """Build a secret-free upstream HTTP error with actionable model detail."""
+    message = f"Copilot upstream HTTP {response.status_code}"
+    try:
+        payload: Any = response.json()
+    except json.JSONDecodeError:
+        payload = None
+    if isinstance(payload, dict):
+        error = payload.get("error")
+        if isinstance(error, dict):
+            upstream_message = error.get("message")
+            upstream_code = error.get("code")
+            if isinstance(upstream_message, str) and upstream_message:
+                message = upstream_message
+            if isinstance(upstream_code, str) and upstream_code:
+                message = f"{message} ({upstream_code})"
+    return CopilotUpstreamError(message)
+
+
+def _raise_for_upstream_status(response: httpx.Response) -> None:
+    """Raise a secret-free error that preserves upstream model diagnostics."""
+    if response.status_code >= 400:
+        raise _safe_upstream_http_error(response)
+
+
 def _normalize_models(payload: dict) -> ModelList:
     data = payload.get("data")
     if not isinstance(data, list):
@@ -283,7 +320,7 @@ class CopilotAdapter:
                 headers=_forward_headers(bearer),
                 content=body,
             )
-        response.raise_for_status()
+        _raise_for_upstream_status(response)
         raw = response.json()
         envelope = ResponseEnvelope(
             id=raw.get("id", ""),
@@ -310,7 +347,7 @@ class CopilotAdapter:
                 headers=_forward_headers(bearer),
                 content=body,
             ) as response:
-                response.raise_for_status()
+                _raise_for_upstream_status(response)
                 buffer = b""
                 async for chunk in response.aiter_bytes():
                     buffer += chunk
