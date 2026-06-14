@@ -141,9 +141,7 @@ def test_auggie_default_workspace_root_is_repo_root(
     assert ws_value == str(repo.resolve())
     assert "--ask" not in argv
     permissions = [
-        argv[index + 1]
-        for index, value in enumerate(argv)
-        if value == "--permission"
+        argv[index + 1] for index, value in enumerate(argv) if value == "--permission"
     ]
     assert "save-file:allow" in permissions
     assert "str-replace-editor:allow" in permissions
@@ -160,9 +158,7 @@ def test_auggie_pure_argv_builder_uses_given_workspace() -> None:
     assert ws_value == workspace_root
     assert "--ask" not in argv
     permissions = [
-        argv[index + 1]
-        for index, value in enumerate(argv)
-        if value == "--permission"
+        argv[index + 1] for index, value in enumerate(argv) if value == "--permission"
     ]
     assert permissions == [
         "save-file:allow",

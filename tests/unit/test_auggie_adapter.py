@@ -191,9 +191,7 @@ def test_completion_argv_uses_repo_root_and_write_permissions(tmp_path) -> None:
     ws_value = argv[argv.index("--workspace-root") + 1]
     assert ws_value == workspace_root
     permissions = [
-        argv[index + 1]
-        for index, value in enumerate(argv)
-        if value == "--permission"
+        argv[index + 1] for index, value in enumerate(argv) if value == "--permission"
     ]
     assert "save-file:allow" in permissions
     assert "str-replace-editor:allow" in permissions
