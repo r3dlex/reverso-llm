@@ -116,6 +116,7 @@ def _sse_bytes_from_fixture(events: list[dict[str, Any]]) -> bytes:
 class _FakeStreamResponse:
     def __init__(self, body: bytes) -> None:
         self._body = body
+        self.status_code = 200
 
     def raise_for_status(self) -> None:
         return None

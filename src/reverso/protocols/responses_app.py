@@ -117,11 +117,15 @@ async def _send_server_error(send: Send, message: str) -> None:
 
 
 def _safe_error_message(exc: Exception) -> str:
-    """A secret-free, detail-free error string.
+    """Return a secret-free error string.
 
-    Only the exception class name is surfaced; the exception payload may carry
-    upstream URLs or other internal detail and must not reach the client.
+    Generic exception payloads may carry upstream URLs or internal details, so
+    only the class name is surfaced by default. Provider exceptions may opt in
+    to exposing a curated ``public_message`` with model-level diagnostics.
     """
+    public_message = getattr(exc, "public_message", None)
+    if isinstance(public_message, str) and public_message:
+        return f"upstream provider error ({type(exc).__name__}): {public_message}"
     return f"upstream provider error ({type(exc).__name__})"
 
 

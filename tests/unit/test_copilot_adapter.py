@@ -25,7 +25,9 @@ from reverso.protocols.adapter import (
 from reverso.protocols.adapters.copilot import (
     CopilotAdapter,
     CopilotAuth,
+    CopilotUpstreamError,
     GITHUB_TOKEN_URL,
+    _raise_for_upstream_status,
 )
 
 FAKE_OAUTH_TOKEN = "gho_FAKEoauthTOKENvalue1234567890"
@@ -239,28 +241,22 @@ async def test_create_response_canonicalizes_gpt55_alias_before_upstream():
     assert envelope.model == "gpt-5.5"
 
 
-async def test_create_response_forwards_safe_copilot_claude_model():
-    captured = {}
+async def test_create_response_rejects_copilot_claude_before_upstream():
+    called = {"value": False}
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        captured["body"] = json.loads(request.content.decode("utf-8"))
-        return httpx.Response(
-            200,
-            json={
-                "id": "resp_claude",
-                "model": "claude-opus-4-8",
-                "status": "completed",
-                "output": [{"type": "message"}],
-            },
-        )
+    def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover
+        called["value"] = True
+        return httpx.Response(200, json={})
 
     adapter = _fake_auth_adapter(handler)
-    request = ResponsesRequest.from_payload({"model": "claude-opus-4-8", "input": "hi"})
+    request = ResponsesRequest.from_payload({"model": "claude-opus-4.8", "input": "hi"})
 
-    envelope = await adapter.create_response(request)
+    with pytest.raises(UnsupportedFeature) as exc_info:
+        await adapter.create_response(request)
 
-    assert captured["body"]["model"] == "claude-opus-4-8"
-    assert envelope.model == "claude-opus-4-8"
+    assert exc_info.value.provider == "copilot"
+    assert exc_info.value.feature == "model:claude-opus-4.8"
+    assert called["value"] is False
 
 
 async def test_stream_response_yields_events():
@@ -313,29 +309,24 @@ async def test_stream_response_canonicalizes_gpt55_alias_before_upstream():
     assert events
 
 
-async def test_stream_response_forwards_safe_copilot_claude_model():
-    captured = {}
-    sse = (
-        b"event: response.output_text.delta\n"
-        b'data: {"type":"response.output_text.delta","delta":"hi"}\n\n'
-        b"data: [DONE]\n\n"
-    )
+async def test_stream_response_rejects_copilot_claude_before_upstream():
+    called = {"value": False}
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        captured["body"] = json.loads(request.content.decode("utf-8"))
-        return httpx.Response(
-            200, content=sse, headers={"content-type": "text/event-stream"}
-        )
+    def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover
+        called["value"] = True
+        return httpx.Response(200, json={})
 
     adapter = _fake_auth_adapter(handler)
     request = ResponsesRequest.from_payload(
-        {"model": "claude-sonnet-4-6", "input": "hi", "stream": True}
+        {"model": "claude-sonnet-4.6", "input": "hi", "stream": True}
     )
 
-    events = [event async for event in adapter.stream_response(request)]
+    with pytest.raises(UnsupportedFeature) as exc_info:
+        _ = [event async for event in adapter.stream_response(request)]
 
-    assert captured["body"]["model"] == "claude-sonnet-4-6"
-    assert events
+    assert exc_info.value.provider == "copilot"
+    assert exc_info.value.feature == "model:claude-sonnet-4.6"
+    assert called["value"] is False
 
 
 async def test_list_models_normalizes_to_openai():
@@ -347,8 +338,8 @@ async def test_list_models_normalizes_to_openai():
                 "data": [
                     {"id": "gpt-5.5", "vendor": "openai"},
                     {"id": "gpt-4o", "vendor": "openai"},
-                    {"id": "claude-opus-4-8", "vendor": "anthropic"},
-                    {"id": "claude-sonnet-4-6", "vendor": "anthropic"},
+                    {"id": "claude-opus-4.8", "vendor": "anthropic"},
+                    {"id": "claude-sonnet-4.6", "vendor": "anthropic"},
                     {"id": "gemini-2.5-pro", "vendor": "google"},
                     {"id": "gpt-5.5\nmodel:claude-fable-5", "vendor": "bad"},
                     "bad",
@@ -368,14 +359,32 @@ async def test_list_models_normalizes_to_openai():
     assert ids == [
         "gpt-5.5",
         "gpt-4o",
-        "claude-opus-4-8",
-        "claude-sonnet-4-6",
-        "gemini-2.5-pro",
         "gpt-5-mini",
     ]
     assert models.data[0]["owned_by"] == "openai"
-    assert models.data[4]["owned_by"] == "google"
-    assert models.data[5]["owned_by"] == "github-copilot"
+    assert models.data[2]["owned_by"] == "github-copilot"
+
+
+def test_copilot_upstream_error_keeps_model_diagnostic_without_headers():
+    request = httpx.Request("POST", "https://api.githubcopilot.com/responses")
+    response = httpx.Response(
+        400,
+        request=request,
+        json={
+            "error": {
+                "message": "model claude-sonnet-4.6 does not support Responses API.",
+                "code": "unsupported_api_for_model",
+            }
+        },
+    )
+
+    with pytest.raises(CopilotUpstreamError) as exc_info:
+        _raise_for_upstream_status(response)
+
+    assert "claude-sonnet-4.6" in exc_info.value.public_message
+    assert "unsupported_api_for_model" in exc_info.value.public_message
+    assert "Bearer" not in exc_info.value.public_message
+    assert "api.githubcopilot.com" not in exc_info.value.public_message
 
 
 async def test_create_response_rejects_non_responses_model_before_upstream():
