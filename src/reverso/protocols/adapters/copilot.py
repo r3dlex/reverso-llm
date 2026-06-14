@@ -242,6 +242,7 @@ def _raise_for_upstream_status(response: httpx.Response) -> None:
     if response.status_code >= 400:
         raise _safe_upstream_http_error(response)
 
+
 def _normalize_models(payload: dict) -> ModelList:
     data = payload.get("data")
     if not isinstance(data, list):
