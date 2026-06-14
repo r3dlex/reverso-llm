@@ -9,10 +9,9 @@ user's OAuth session rather than any repository-stored secret.
 Indexing posture (see ``.omc/research/auggie-indexing-spike.md``): ``--print``
 auto-indexes whatever ``--workspace-root`` resolves to and there is no global
 per-invocation hard-disable. The adapter therefore defaults the workspace root to
-an ephemeral empty sandbox dir (never the caller's workspace) and surfaces the
-literal caveat ``hard-disable unproven`` in model metadata. The read-only posture
-uses ``--ask`` (retrieval and non-editing tools only); the adapter never executes
-tool calls.
+the current repository or codebase root so agent sessions can read and write the
+project by default, and surfaces the literal caveat ``hard-disable unproven`` in
+model metadata.
 
 Auth comes from the local OAuth session (``~/.augment/session.json`` or env
 ``AUGMENT_SESSION_AUTH``); never a repository secret. Diagnostics go through
@@ -25,8 +24,6 @@ import asyncio
 import json
 import logging
 import os
-import shutil
-import tempfile
 import time
 from pathlib import Path
 from typing import Any, AsyncIterator
@@ -59,6 +56,29 @@ INDEXING_CAVEAT = "hard-disable unproven"
 # token contents are never read or logged.
 _SESSION_PATH = Path.home() / ".augment" / "session.json"
 _SESSION_ENV = "AUGMENT_SESSION_AUTH"
+_WORKSPACE_ROOT_ENV = "REVERSO_AUGGIE_WORKSPACE_ROOT"
+
+_WRITE_TOOL_PERMISSIONS = (
+    "save-file:allow",
+    "str-replace-editor:allow",
+    "apply_patch:allow",
+)
+
+_MODEL_ALIASES = {
+    "claude-fable-5": "fable-5",
+    "claude-opus": "opus4.8",
+    "claude-opus-4-8": "opus4.8",
+    "opus-4-8": "opus4.8",
+    "claude-sonnet": "sonnet4.6",
+    "claude-sonnet-4-6": "sonnet4.6",
+    "sonnet-4-6": "sonnet4.6",
+}
+
+_LISTING_ALIASES = {
+    "fable-5": ("claude-fable-5",),
+    "opus4.8": ("opus-4-8", "claude-opus-4-8", "claude-opus"),
+    "sonnet4.6": ("sonnet-4-6", "claude-sonnet-4-6", "claude-sonnet"),
+}
 
 
 class AuggieError(RuntimeError):
@@ -72,29 +92,51 @@ def _session_present() -> bool:
     return _SESSION_PATH.exists()
 
 
+def _find_workspace_root(start: Path) -> Path:
+    """Return the nearest git repository root, falling back to ``start``."""
+    for candidate in (start, *start.parents):
+        if (candidate / ".git").exists():
+            return candidate
+    return start
+
+
+def _resolve_workspace_root() -> str:
+    """Resolve the Auggie workspace root for a write-capable codebase run."""
+    override = os.environ.get(_WORKSPACE_ROOT_ENV)
+    if override:
+        return str(Path(override).expanduser().resolve(strict=False))
+    return str(_find_workspace_root(Path.cwd().resolve()).resolve(strict=False))
+
+
+def _normalize_model_for_cli(model: str) -> str:
+    """Return the Auggie CLI model id for Reverso and Codex-facing aliases."""
+    return _MODEL_ALIASES.get(model, model)
+
+
 def _build_completion_argv(prompt: str, model: str, workspace_root: str) -> list[str]:
     """Build the one-shot ``auggie`` completion argv.
 
     ``--print`` is one-shot, ``--output-format json`` gives parseable output, and
-    ``--ask`` keeps a read-only posture (retrieval and non-editing tools only).
-    ``--workspace-root`` is an ephemeral sandbox so indexing never touches the
-    caller's workspace. This builder is pure so tests can assert the argv without
-    launching anything.
+    ``--workspace-root`` points at the caller's repository or codebase by
+    default. Write tools are explicitly allowed for non-interactive repo work;
+    file removal is not allowed here. This builder is pure so tests can assert
+    the argv without launching anything.
     """
-    return [
+    argv = [
         "auggie",
         "--print",
         "--quiet",
         "--output-format",
         "json",
-        "--ask",
         "-m",
-        model,
+        _normalize_model_for_cli(model),
         "--workspace-root",
         workspace_root,
-        "--",
-        prompt,
     ]
+    for permission in _WRITE_TOOL_PERMISSIONS:
+        argv.extend(["--permission", permission])
+    argv.extend(["--", prompt])
+    return argv
 
 
 def _safe_json_loads(text: str) -> Any | None:
@@ -185,6 +227,7 @@ def _normalize_models(payload: Any) -> list[dict[str, Any]]:
         raw_models = []
     created = int(time.time())
     normalized: list[dict[str, Any]] = []
+    seen: set[str] = set()
     for model in raw_models:
         if isinstance(model, dict):
             # The live CLI registry keys models by "shortName" (the id passed
@@ -196,15 +239,19 @@ def _normalize_models(payload: Any) -> list[dict[str, Any]]:
             continue
         if not model_id:
             continue
-        normalized.append(
-            {
-                "id": model_id,
-                "object": "model",
-                "created": created,
-                "owned_by": "augmentcode",
-                "indexing": INDEXING_CAVEAT,
-            }
-        )
+        for candidate_id in (model_id, *_LISTING_ALIASES.get(model_id, ())):
+            if candidate_id in seen:
+                continue
+            seen.add(candidate_id)
+            normalized.append(
+                {
+                    "id": candidate_id,
+                    "object": "model",
+                    "created": created,
+                    "owned_by": "augmentcode",
+                    "indexing": INDEXING_CAVEAT,
+                }
+            )
     return normalized
 
 
@@ -214,8 +261,8 @@ class AuggieAdapter:
     Completion text is produced by invoking the locally installed ``auggie`` CLI
     as a subprocess (no Python SDK exists), so the adapter rides the user's OAuth
     session. Output is mapped into the Responses ResponseEnvelope and SSE shapes
-    the first-party app serializes. The default workspace root is an ephemeral
-    sandbox so ``--print`` indexing never touches the caller's workspace.
+    the first-party app serializes. The default workspace root is the caller's
+    repository or codebase root so ``--print`` can perform write-capable work.
     """
 
     def __init__(
@@ -242,17 +289,14 @@ class AuggieAdapter:
     def _run_auggie_cli(self, prompt: str, model: str) -> str:
         """Run the local ``auggie`` CLI for a single-shot completion.
 
-        Uses an ephemeral sandbox workspace root so indexing never touches the
-        caller's workspace; the sandbox is removed after the call. Bounding,
-        redaction, and cause suppression live in the shared CLI spine. Returns
-        the assistant text. Never logs token material.
+        Uses the repository or codebase root as workspace root by default so the
+        profile can write files. Bounding, redaction, and cause suppression live
+        in the shared CLI spine. Returns the assistant text. Never logs token
+        material.
         """
-        workspace_root = tempfile.mkdtemp(prefix="reverso-auggie-")
+        workspace_root = _resolve_workspace_root()
         argv = _build_completion_argv(prompt, model, workspace_root)
-        try:
-            stdout = run_bounded_cli(argv, error=AuggieError, cli_label="auggie CLI")
-        finally:
-            shutil.rmtree(workspace_root, ignore_errors=True)
+        stdout = run_bounded_cli(argv, error=AuggieError, cli_label="auggie CLI")
         return _parse_completion_output(stdout)
 
     def _run_auggie_models(self) -> Any:

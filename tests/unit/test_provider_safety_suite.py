@@ -10,8 +10,8 @@ guarantee is shared:
 - The Auggie indexing caveat is the EXACT literal ``hard-disable unproven`` that
   AuggieAdapter.list_models() emits, and the weaker word ``disabled`` is never
   used as the indexing value.
-- The Auggie default workspace root passed to the CLI is an ephemeral sandbox
-  under the OS temp dir and never equals/contains a caller-supplied workspace.
+- The Auggie default workspace root passed to the CLI is the caller's repository
+  root, without ask mode, with explicit write-tool permissions.
 - A secret sentinel never appears in any adapter response envelope, serialized
   output, or captured logs, asserted UNIFORMLY across auggie and deepseek.
 
@@ -24,8 +24,7 @@ from __future__ import annotations
 
 import json
 import logging
-import os
-import tempfile
+from pathlib import Path
 
 import httpx
 import pytest
@@ -101,25 +100,28 @@ async def test_auggie_list_models_emits_hard_disable_unproven_literal() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Auggie ephemeral sandbox workspace root (never the caller's workspace).       #
+# Auggie write-capable repository workspace root.                              #
 # --------------------------------------------------------------------------- #
 
 
-def test_auggie_default_workspace_root_is_ephemeral_sandbox(
-    monkeypatch: pytest.MonkeyPatch,
+def test_auggie_default_workspace_root_is_repo_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """The real runner's --workspace-root is an OS-temp sandbox, never the caller.
+    """The real runner's --workspace-root is the caller's repository root.
 
     Drives the real CLI runner with subprocess.run stubbed to capture argv, then
-    asserts the resolved workspace root lives under the OS temp dir and does not
-    equal or contain a caller-supplied workspace path.
+    asserts the resolved workspace root is write-capable repo context and ask
+    mode is not forced.
     """
     monkeypatch.setenv(AUGGIE_SESSION_ENV, AUGGIE_SESSION_SENTINEL)
-    caller_workspace = "/Users/someone/private-caller-workspace"
+    repo = tmp_path / "repo"
+    nested = repo / "nested"
+    nested.mkdir(parents=True)
+    (repo / ".git").mkdir()
     captured: dict = {}
 
     class _Completed:
-        stdout = json.dumps({"response": "sandbox-ok"})
+        stdout = json.dumps({"response": "repo-ok"})
 
     def _fake_run(argv, **kwargs):
         captured["argv"] = argv
@@ -128,34 +130,41 @@ def test_auggie_default_workspace_root_is_ephemeral_sandbox(
     monkeypatch.setattr(
         "reverso.protocols.adapters.cli_spine.subprocess.run", _fake_run
     )
+    monkeypatch.chdir(nested)
 
     adapter = AuggieAdapter()
     text = adapter._run_auggie_cli("prompt", "auggie-default")
 
-    assert text == "sandbox-ok"
+    assert text == "repo-ok"
     argv = captured["argv"]
     ws_value = argv[argv.index("--workspace-root") + 1]
-    temp_root = os.path.realpath(tempfile.gettempdir())
-    # The sandbox is created under the OS temp dir with the reverso prefix.
-    assert os.path.realpath(ws_value).startswith(temp_root)
-    assert "reverso-auggie-" in ws_value
-    # The caller's workspace is never used, contained, or matched.
-    assert ws_value != caller_workspace
-    assert caller_workspace not in ws_value
-    assert caller_workspace not in argv
+    assert ws_value == str(repo.resolve())
+    assert "--ask" not in argv
+    permissions = [
+        argv[index + 1] for index, value in enumerate(argv) if value == "--permission"
+    ]
+    assert "save-file:allow" in permissions
+    assert "str-replace-editor:allow" in permissions
+    assert "apply_patch:allow" in permissions
+    assert "remove-files:allow" not in permissions
 
 
-def test_auggie_pure_argv_builder_keeps_caller_workspace_out() -> None:
-    """The pure argv builder never substitutes a caller workspace for the sandbox."""
-    caller_workspace = "/Users/someone/private-caller-workspace"
-    sandbox_root = os.path.join(tempfile.gettempdir(), "reverso-auggie-pure")
-    argv = _build_completion_argv("the prompt", "auggie-default", sandbox_root)
+def test_auggie_pure_argv_builder_uses_given_workspace() -> None:
+    """The pure argv builder keeps the given workspace and allows write tools."""
+    workspace_root = "/Users/someone/private-caller-workspace"
+    argv = _build_completion_argv("the prompt", "auggie-default", workspace_root)
 
     ws_value = argv[argv.index("--workspace-root") + 1]
-    assert ws_value == sandbox_root
-    assert ws_value != caller_workspace
-    assert caller_workspace not in argv
-    assert "--ask" in argv
+    assert ws_value == workspace_root
+    assert "--ask" not in argv
+    permissions = [
+        argv[index + 1] for index, value in enumerate(argv) if value == "--permission"
+    ]
+    assert permissions == [
+        "save-file:allow",
+        "str-replace-editor:allow",
+        "apply_patch:allow",
+    ]
 
 
 # --------------------------------------------------------------------------- #
