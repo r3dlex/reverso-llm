@@ -7,6 +7,7 @@ contract surface, timeout handling, and that no token substring is ever logged.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 import json
 import logging
 import time
@@ -48,6 +49,15 @@ def _mock_client(handler):
         return httpx.AsyncClient(transport=transport, timeout=300.0)
 
     return factory
+
+
+class _AsyncBytesStream(httpx.AsyncByteStream):
+    def __init__(self, chunks: list[bytes]) -> None:
+        self._chunks = chunks
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        for chunk in self._chunks:
+            yield chunk
 
 
 def test_read_oauth_token_from_hosts(tmp_path):
@@ -327,6 +337,56 @@ async def test_stream_response_rejects_copilot_claude_before_upstream():
     assert exc_info.value.provider == "copilot"
     assert exc_info.value.feature == "model:claude-sonnet-4.6"
     assert called["value"] is False
+
+
+async def test_stream_response_reads_error_body_before_raising():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            400,
+            request=request,
+            stream=_AsyncBytesStream(
+                [
+                    b'{"error":{"message":"model gpt-5.5 temporarily unavailable",',
+                    b'"code":"unavailable"}}',
+                ]
+            ),
+            headers={"content-type": "application/json"},
+        )
+
+    adapter = _fake_auth_adapter(handler)
+    request = ResponsesRequest.from_payload(
+        {"model": "gpt-5.5", "input": "hello", "stream": True}
+    )
+
+    with pytest.raises(CopilotUpstreamError) as exc_info:
+        _ = [event async for event in adapter.stream_response(request)]
+
+    message = exc_info.value.public_message
+    assert "model gpt-5.5 temporarily unavailable" in message
+    assert "unavailable" in message
+    assert "ResponseNotRead" not in message
+
+
+async def test_stream_response_handles_malformed_error_body_without_response_not_read():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            502,
+            request=request,
+            stream=_AsyncBytesStream([b"{not-json"]),
+            headers={"content-type": "application/json"},
+        )
+
+    adapter = _fake_auth_adapter(handler)
+    request = ResponsesRequest.from_payload(
+        {"model": "gpt-5-mini", "input": "hello", "stream": True}
+    )
+
+    with pytest.raises(CopilotUpstreamError) as exc_info:
+        _ = [event async for event in adapter.stream_response(request)]
+
+    message = exc_info.value.public_message
+    assert "Copilot upstream HTTP 502" in message
+    assert "ResponseNotRead" not in message
 
 
 async def test_list_models_normalizes_to_openai():

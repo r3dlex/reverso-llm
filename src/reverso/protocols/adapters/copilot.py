@@ -223,7 +223,7 @@ def _safe_upstream_http_error(response: httpx.Response) -> CopilotUpstreamError:
     message = f"Copilot upstream HTTP {response.status_code}"
     try:
         payload: Any = response.json()
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, httpx.ResponseNotRead, httpx.StreamConsumed):
         payload = None
     if isinstance(payload, dict):
         error = payload.get("error")
@@ -347,6 +347,8 @@ class CopilotAdapter:
                 headers=_forward_headers(bearer),
                 content=body,
             ) as response:
+                if response.status_code >= 400:
+                    await response.aread()
                 _raise_for_upstream_status(response)
                 buffer = b""
                 async for chunk in response.aiter_bytes():
