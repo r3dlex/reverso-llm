@@ -41,6 +41,17 @@ logger = logging.getLogger(__name__)
 GATEWAY_BASE_URL = "http://127.0.0.1:64946"
 GATEWAY_PREFIXES: tuple[str, ...] = ("claude", "copilot", "auggie", "deepseek")
 
+# Metadata-only aliases that Codex should understand even when the backing
+# provider listing is unavailable. These are deliberately added only to the
+# model catalog JSON, not to generated provider profile tables. A local OAuth
+# outage or unauthenticated CLI must not make live routing look healthy. Codex
+# model metadata is slug-global, so each alias appears once even when multiple
+# Reverso profiles may use the same upstream model family.
+STATIC_CATALOG_MODELS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("minimax", ("MiniMax-M3",)),
+    ("oauth", ("gemini-2.5-pro", "gemini-2.5-flash")),
+)
+
 
 def _codex_responses_compatible_models(prefix: str, model_ids: list[str]) -> list[str]:
     """Filter live listings to models Codex can call through Responses."""
@@ -202,12 +213,27 @@ def _render_nux_block(provider_models: list[ProviderModels]) -> str:
     return "\n".join(lines)
 
 
+def _catalog_provider_models(
+    provider_models: list[ProviderModels],
+) -> list[ProviderModels]:
+    """Return live models plus metadata-only static aliases for catalog JSON."""
+    merged = list(provider_models)
+    seen = {model_id for entry in provider_models for model_id in entry.models}
+    for prefix, model_ids in STATIC_CATALOG_MODELS:
+        missing = tuple(model_id for model_id in model_ids if model_id not in seen)
+        if not missing:
+            continue
+        seen.update(missing)
+        merged.append(ProviderModels(prefix=prefix, models=missing))
+    return merged
+
+
 def _generate_catalog_json(provider_models: list[ProviderModels]) -> str:
     """Generate Codex-compatible model catalog JSON for synced models."""
     models: list[dict[str, t.Any]] = []
     seen: set[str] = set()
 
-    for entry in provider_models:
+    for entry in _catalog_provider_models(provider_models):
         for model_id in entry.models:
             if model_id in seen:
                 continue
