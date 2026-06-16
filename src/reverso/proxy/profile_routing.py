@@ -25,6 +25,11 @@ KNOWN_GPT_MODELS = frozenset(
         "gpt-4.1",
     }
 )
+MODEL_ALIASES = {
+    "claude-opus-4.8": "claude-opus-4-8",
+    "claude-sonnet-4.6": "claude-sonnet-4-6",
+    "claude-haiku-4.6": "claude-haiku-4-6",
+}
 
 PROVIDER_PREFIXES = frozenset({"deepseek", "claude"})
 CURRENT_PROFILE_WORKSPACE: ContextVar[str | None] = ContextVar(
@@ -33,7 +38,8 @@ CURRENT_PROFILE_WORKSPACE: ContextVar[str | None] = ContextVar(
 
 
 def _normalise_model(model: str) -> str:
-    return model.removeprefix("custom/").strip()
+    normalized = model.removeprefix("custom/").strip()
+    return MODEL_ALIASES.get(normalized, normalized)
 
 
 def resolve_profile_model(profile: str, model: str) -> str:
@@ -88,8 +94,28 @@ class ProfileRoutingMiddleware:
             return
 
         path_info = split_profile_path(scope.get("path", ""))
+        method = str(scope.get("method", "GET")).upper()
+        metadata_workspace = _workspace_from_codex_turn_metadata(scope.get("headers", []))
         if path_info is None:
-            await self.app(scope, receive, send)
+            direct_workspace = metadata_workspace
+            if method in {"POST", "PUT", "PATCH"}:
+                body = await _read_body(receive)
+                if body is None:
+                    await self.app(scope, _receive_disconnect(), send)
+                    return
+                direct_workspace = _workspace_from_body(body) or metadata_workspace
+                token = CURRENT_PROFILE_WORKSPACE.set(direct_workspace)
+                try:
+                    await self.app(scope, _receive_replay(body, receive), send)
+                finally:
+                    CURRENT_PROFILE_WORKSPACE.reset(token)
+                return
+
+            token = CURRENT_PROFILE_WORKSPACE.set(direct_workspace)
+            try:
+                await self.app(scope, receive, send)
+            finally:
+                CURRENT_PROFILE_WORKSPACE.reset(token)
             return
 
         new_scope = dict(scope)
@@ -103,24 +129,20 @@ class ProfileRoutingMiddleware:
             await self.app(new_scope, _receive_disconnect(), send)
             return
 
-        method = str(scope.get("method", "GET")).upper()
-        request_workspace: str | None = None
+        profile_workspace: str | None = None
         if method in {"POST", "PUT", "PATCH"} and body:
-            metadata_workspace = _workspace_from_codex_turn_metadata(
-                scope.get("headers", [])
-            )
-            request_workspace = _workspace_from_body(body) or metadata_workspace
+            profile_workspace = _workspace_from_body(body) or metadata_workspace
             body = _rewrite_body_model(
                 body,
                 path_info.profile,
-                request_workspace,
+                profile_workspace,
             )
             new_scope["headers"] = _headers_with_content_length(
                 scope.get("headers", []),
                 len(body),
             )
 
-        token = CURRENT_PROFILE_WORKSPACE.set(request_workspace)
+        token = CURRENT_PROFILE_WORKSPACE.set(profile_workspace)
         try:
             await self.app(new_scope, _receive_replay(body, receive), send)
         finally:
@@ -152,17 +174,38 @@ def _workspace_from_codex_turn_metadata(
             break
     if not metadata_raw:
         return None
+    return _workspace_from_codex_metadata_json(metadata_raw)
+
+
+def _workspace_from_codex_metadata_json(metadata_raw: str) -> str | None:
     try:
         metadata = json.loads(metadata_raw)
     except json.JSONDecodeError:
         return None
+    return _workspace_from_codex_metadata(metadata)
+
+
+def _workspace_from_codex_metadata(metadata: Any) -> str | None:
     if not isinstance(metadata, dict):
         return None
     workspaces = metadata.get("workspaces")
-    if not isinstance(workspaces, dict) or len(workspaces) != 1:
+    if not isinstance(workspaces, dict):
         return None
-    workspace = next(iter(workspaces))
-    return workspace if isinstance(workspace, str) and workspace.strip() else None
+    candidates = [
+        (path, info)
+        for path, info in workspaces.items()
+        if isinstance(path, str) and path.strip()
+    ]
+    if not candidates:
+        return None
+    for path, info in candidates:
+        if isinstance(info, dict) and (
+            info.get("associated_remote_urls")
+            or info.get("latest_git_commit_hash")
+            or info.get("has_changes") is not None
+        ):
+            return path
+    return candidates[0][0]
 
 
 def _with_workspace(payload: dict[str, Any], workspace: str | None) -> dict[str, Any]:
@@ -190,10 +233,20 @@ def _workspace_from_body(body: bytes) -> str | None:
     if not isinstance(payload, dict):
         return None
     x_gateway = payload.get("x_gateway")
-    if not isinstance(x_gateway, dict):
-        return None
-    workspace = x_gateway.get("workspace")
-    return workspace if isinstance(workspace, str) and workspace.strip() else None
+    if isinstance(x_gateway, dict):
+        workspace = x_gateway.get("workspace")
+        if isinstance(workspace, str) and workspace.strip():
+            return workspace
+    client_metadata = payload.get("client_metadata")
+    if isinstance(client_metadata, dict):
+        metadata_raw = client_metadata.get("x-codex-turn-metadata")
+        if isinstance(metadata_raw, str) and metadata_raw.strip():
+            return _workspace_from_codex_metadata_json(metadata_raw)
+        workspace = _workspace_from_codex_metadata(client_metadata)
+        if workspace:
+            return workspace
+    metadata = payload.get("metadata")
+    return _workspace_from_codex_metadata(metadata)
 
 
 def _rewrite_body_model(

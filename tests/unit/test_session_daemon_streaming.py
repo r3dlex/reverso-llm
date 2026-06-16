@@ -32,6 +32,47 @@ class _Proc:
 
 
 @pytest.mark.asyncio
+async def test_codex_turn_uses_explicit_skip_git_repo_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_create_subprocess_exec(*args, **kwargs):
+        captured["args"] = args
+        captured["cwd"] = kwargs.get("cwd")
+        return _Proc()
+
+    class FakeCodexParser:
+        thread_id = "thread-1"
+
+        async def parse_stream(self, _lines):
+            return "OK", []
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr(session_daemon, "CodexCLIParser", FakeCodexParser)
+
+    now = datetime.now(timezone.utc)
+    session = Session(
+        key=("local", "/tmp", "openai"),
+        process=_Proc(),
+        spawned_at=now,
+        last_request_at=now,
+    )
+    text, observations, thread_id = await session_daemon._run_codex_turn(
+        session=session,
+        user_message="hello",
+        model="gpt-5.3-codex-spark",
+        workspace="/tmp",
+        timeout=5,
+    )
+
+    assert text == "OK"
+    assert observations == []
+    assert thread_id == "thread-1"
+    assert "--skip-git-repo-check" in captured["args"]
+
+
+@pytest.mark.asyncio
 async def test_stream_claude_turn_emits_incremental_deltas(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
