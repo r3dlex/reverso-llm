@@ -8,7 +8,7 @@ Spike findings (spike-notes.md):
 - Invoke: `codex exec "prompt" --json -s workspace-write`
 - Thread ID: first event {"type":"thread.started","thread_id":"..."}
 - Assistant text: {"type":"item.completed","item":{"type":"agent_message","text":"..."}}
-- Requires git repo in cwd OR -c skip_git_repo_check=true
+- Requires git repo in cwd OR --skip-git-repo-check
 
 Usage in litellm_config.yaml::
 
@@ -25,13 +25,14 @@ import json
 import logging
 import subprocess
 import time
+from contextvars import copy_context
 from pathlib import Path
 from typing import Any, AsyncIterator, Iterator
 
 import httpx
 from litellm import ModelResponse
 from litellm.llms.custom_llm import CustomLLM
-from litellm.types.utils import GenericStreamingChunk
+from litellm.types.utils import Choices, GenericStreamingChunk, Message
 
 from reverso.proxy.utils import (
     call_daemon,
@@ -43,6 +44,7 @@ from reverso.proxy.utils import (
     strip_think_blocks,
     StreamingThinkStripper,
 )
+from reverso.proxy.profile_routing import CURRENT_PROFILE_WORKSPACE
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +70,17 @@ def _make_x_gateway(session_id: str | None = None) -> dict[str, Any]:
         "provider": "openai",
         "warnings": [],
     }
+
+
+def _request_workspace(kwargs: dict[str, Any]) -> str | None:
+    x_gateway = kwargs.get("x_gateway")
+    if (
+        isinstance(x_gateway, dict)
+        and isinstance(x_gateway.get("workspace"), str)
+        and x_gateway["workspace"].strip()
+    ):
+        return x_gateway["workspace"]
+    return CURRENT_PROFILE_WORKSPACE.get()
 
 
 def _parse_codex_output(stdout: str) -> dict[str, Any]:
@@ -116,8 +129,7 @@ def _invoke_codex(
         "workspace-write",
         "--model",
         model_flag,
-        "-c",
-        "skip_git_repo_check=true",
+        "--skip-git-repo-check",
     ]
     try:
         proc = subprocess.run(
@@ -254,11 +266,7 @@ class OpenAICLIProvider(CustomLLM):
         prompt = last_user_message(messages)
         model_flag = _model_flag(model)
         cli_timeout = int(timeout) if isinstance(timeout, (int, float)) else 300
-        workspace = (
-            (kwargs.get("x_gateway") or {}).get("workspace")
-            if isinstance(kwargs.get("x_gateway"), dict)
-            else None
-        )
+        workspace = _request_workspace(kwargs)
 
         assistant_text, session_id, observations, warnings = _run_turn(
             prompt, model_flag, workspace, cli_timeout
@@ -270,17 +278,13 @@ class OpenAICLIProvider(CustomLLM):
             x_gateway["warnings"] = warnings
 
         response = model_response or ModelResponse()
-        setattr(
-            response,
-            "choices",
-            [
-                {
-                    "index": 0,
-                    "message": {"role": "assistant", "content": assistant_text},
-                    "finish_reason": "stop",
-                }
-            ],
-        )
+        response.choices = [
+            Choices(
+                index=0,
+                message=Message(role="assistant", content=assistant_text),
+                finish_reason="stop",
+            )
+        ]
         response.model = model
         response._hidden_params = {
             "x_gateway": x_gateway,
@@ -312,11 +316,7 @@ class OpenAICLIProvider(CustomLLM):
         prompt = last_user_message(messages)
         model_flag = _model_flag(model)
         cli_timeout = int(timeout) if isinstance(timeout, (int, float)) else 300
-        workspace = (
-            (kwargs.get("x_gateway") or {}).get("workspace")
-            if isinstance(kwargs.get("x_gateway"), dict)
-            else None
-        )
+        workspace = _request_workspace(kwargs)
 
         for delta in _run_turn_stream(prompt, model_flag, workspace, cli_timeout):
             yield {
@@ -359,7 +359,8 @@ class OpenAICLIProvider(CustomLLM):
             finally:
                 loop.call_soon_threadsafe(queue.put_nowait, None)
 
-        threading.Thread(target=produce, daemon=True).start()
+        context = copy_context()
+        threading.Thread(target=lambda: context.run(produce), daemon=True).start()
         while True:
             item = await queue.get()
             if item is None:

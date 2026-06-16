@@ -59,7 +59,10 @@ from reverso.protocols.replay import (
     replay_turn,
 )
 from reverso.protocols.store import ResponseStore
-from reverso.proxy.profile_routing import resolve_profile_model
+from reverso.proxy.profile_routing import (
+    CURRENT_PROFILE_WORKSPACE,
+    resolve_profile_model,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -346,7 +349,10 @@ class ClaudeAdapter:
         emitted = False
         try:
             async for line in stream_bounded_cli(
-                argv, cli_label="claude CLI", env=child_env
+                argv,
+                cli_label="claude CLI",
+                env=child_env,
+                cwd=CURRENT_PROFILE_WORKSPACE.get(),
             ):
                 try:
                     event = json.loads(line)
@@ -395,6 +401,7 @@ class ClaudeAdapter:
             error=ClaudeAuthError,
             cli_label="claude CLI",
             env=child_env,
+            cwd=CURRENT_PROFILE_WORKSPACE.get(),
         )
         return stdout.strip()
 

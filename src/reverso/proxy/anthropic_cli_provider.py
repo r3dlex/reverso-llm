@@ -19,13 +19,14 @@ import json
 import logging
 import subprocess
 import time
+from contextvars import copy_context
 from pathlib import Path
 from typing import Any, AsyncIterator, Iterator
 
 import httpx
 from litellm import ModelResponse
 from litellm.llms.custom_llm import CustomLLM
-from litellm.types.utils import GenericStreamingChunk
+from litellm.types.utils import Choices, GenericStreamingChunk, Message
 
 from reverso.proxy.utils import (
     call_daemon,
@@ -243,17 +244,13 @@ class AnthropicCLIProvider(CustomLLM):
             x_gateway["warnings"] = warnings
 
         response = model_response or ModelResponse()
-        setattr(
-            response,
-            "choices",
-            [
-                {
-                    "index": 0,
-                    "message": {"role": "assistant", "content": assistant_text},
-                    "finish_reason": "stop",
-                }
-            ],
-        )
+        response.choices = [
+            Choices(
+                index=0,
+                message=Message(role="assistant", content=assistant_text),
+                finish_reason="stop",
+            )
+        ]
         response.model = model
         response._hidden_params = {
             "x_gateway": x_gateway,
@@ -328,7 +325,8 @@ class AnthropicCLIProvider(CustomLLM):
             finally:
                 loop.call_soon_threadsafe(queue.put_nowait, None)
 
-        threading.Thread(target=produce, daemon=True).start()
+        context = copy_context()
+        threading.Thread(target=lambda: context.run(produce), daemon=True).start()
         while True:
             item = await queue.get()
             if item is None:

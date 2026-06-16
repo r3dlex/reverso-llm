@@ -39,6 +39,11 @@ from reverso.protocols.middleware import (
     normalize_request_payload,
     strip_think_json,
 )
+from reverso.proxy.profile_routing import (
+    CURRENT_PROFILE_WORKSPACE,
+    _workspace_from_body,
+    _workspace_from_codex_turn_metadata,
+)
 
 Receive = Callable[[], Awaitable[dict[str, Any]]]
 Scope = dict[str, Any]
@@ -198,6 +203,8 @@ async def _handle_create_response(
     provider: str,
     payload: dict[str, Any],
     send: Send,
+    *,
+    workspace: str | None = None,
 ) -> None:
     # The gate inspects the raw payload (Codex-only fields preserved in extra)
     # so it can reject e.g. parallel_tool_calls on claude even though the Codex
@@ -211,14 +218,17 @@ async def _handle_create_response(
 
     normalized = normalize_request_payload(payload)
     request = ResponsesRequest.from_payload(normalized)
-    if request.stream:
-        await _stream(adapter, provider, request, send)
-        return
+    token = CURRENT_PROFILE_WORKSPACE.set(workspace)
     try:
+        if request.stream:
+            await _stream(adapter, provider, request, send)
+            return
         envelope = await adapter.create_response(request)
     except UnsupportedFeature as exc:
         await _send_unsupported_feature(send, exc.provider, exc.feature)
         return
+    finally:
+        CURRENT_PROFILE_WORKSPACE.reset(token)
     await _send_json(send, 200, _envelope_to_payload(envelope))
 
 
@@ -373,7 +383,13 @@ class ResponsesGatewayApp:
             if not isinstance(payload, dict):
                 await _send_error(send, 400, "request body must be an object")
                 return
-            await _handle_create_response(adapter, routed.provider, payload, send)
+            header_workspace = _workspace_from_codex_turn_metadata(
+                scope.get("headers", [])
+            )
+            workspace = _workspace_from_body(body) or header_workspace
+            await _handle_create_response(
+                adapter, routed.provider, payload, send, workspace=workspace
+            )
             return
 
         if method == "GET" and local_no_slash.endswith("/v1/models"):

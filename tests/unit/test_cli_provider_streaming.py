@@ -28,6 +28,35 @@ async def test_anthropic_astreaming_is_async_iterator(
 
 
 @pytest.mark.asyncio
+async def test_anthropic_astreaming_preserves_profile_workspace_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from reverso.proxy.profile_routing import CURRENT_PROFILE_WORKSPACE
+
+    captured = {}
+
+    def fake_run_turn_stream(prompt, model_flag, workspace, timeout):
+        captured["workspace"] = workspace
+        return iter(["O", "K"])
+
+    monkeypatch.setattr(
+        anthropic_cli_provider, "_run_turn_stream", fake_run_turn_stream
+    )
+    token = CURRENT_PROFILE_WORKSPACE.set("/workspaces/example-repo")
+    try:
+        stream = anthropic_cli_provider.anthropic_cli.astreaming(
+            model="custom/claude-opus-4-8",
+            messages=[{"role": "user", "content": "hello"}],
+        )
+        chunks = [chunk async for chunk in stream]
+    finally:
+        CURRENT_PROFILE_WORKSPACE.reset(token)
+
+    assert [chunk["text"] for chunk in chunks[:-1]] == ["O", "K"]
+    assert captured["workspace"] == "/workspaces/example-repo"
+
+
+@pytest.mark.asyncio
 async def test_openai_astreaming_is_async_iterator(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -45,6 +74,33 @@ async def test_openai_astreaming_is_async_iterator(
     chunks = [chunk async for chunk in stream]
     assert [chunk["text"] for chunk in chunks[:-1]] == ["O", "K"]
     assert chunks[-1]["is_finished"] is True
+
+
+@pytest.mark.asyncio
+async def test_openai_astreaming_preserves_profile_workspace_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from reverso.proxy.profile_routing import CURRENT_PROFILE_WORKSPACE
+
+    captured = {}
+
+    def fake_run_turn_stream(prompt, model_flag, workspace, timeout):
+        captured["workspace"] = workspace
+        return iter(["O", "K"])
+
+    monkeypatch.setattr(openai_cli_provider, "_run_turn_stream", fake_run_turn_stream)
+    token = CURRENT_PROFILE_WORKSPACE.set("/workspaces/example-repo")
+    try:
+        stream = openai_cli_provider.openai_cli.astreaming(
+            model="custom/gpt-5.5",
+            messages=[{"role": "user", "content": "hello"}],
+        )
+        chunks = [chunk async for chunk in stream]
+    finally:
+        CURRENT_PROFILE_WORKSPACE.reset(token)
+
+    assert [chunk["text"] for chunk in chunks[:-1]] == ["O", "K"]
+    assert captured["workspace"] == "/workspaces/example-repo"
 
 
 def test_anthropic_streaming_uses_daemon_deltas_and_strips_think(
@@ -207,11 +263,49 @@ def test_anthropic_completion_reads_profile_workspace_context(
     finally:
         CURRENT_PROFILE_WORKSPACE.reset(token)
 
-    assert response.choices[0]["message"]["content"] == "OK"
+    assert response.choices[0].message.content == "OK"
     assert captured == {
         "prompt": "hello",
         "model_flag": "claude-opus-4-8",
         "workspace": "/Users/andreburgstahler/Ws/Rib",
+        "timeout": 5,
+    }
+
+
+def test_openai_completion_reads_profile_workspace_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from reverso.proxy.profile_routing import CURRENT_PROFILE_WORKSPACE
+
+    captured = {}
+
+    def fake_run_turn(prompt, model_flag, workspace, timeout):
+        captured.update(
+            {
+                "prompt": prompt,
+                "model_flag": model_flag,
+                "workspace": workspace,
+                "timeout": timeout,
+            }
+        )
+        return "OK", "sid", [], []
+
+    monkeypatch.setattr(openai_cli_provider, "_run_turn", fake_run_turn)
+    token = CURRENT_PROFILE_WORKSPACE.set("/workspaces/example-repo")
+    try:
+        response = openai_cli_provider.openai_cli.completion(
+            model="custom/gpt-5.5",
+            messages=[{"role": "user", "content": "hello"}],
+            timeout=5,
+        )
+    finally:
+        CURRENT_PROFILE_WORKSPACE.reset(token)
+
+    assert response.choices[0].message.content == "OK"
+    assert captured == {
+        "prompt": "hello",
+        "model_flag": "gpt-5.5",
+        "workspace": "/workspaces/example-repo",
         "timeout": 5,
     }
 

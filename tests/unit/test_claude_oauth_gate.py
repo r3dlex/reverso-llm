@@ -612,3 +612,99 @@ def test_stream_runner_never_consumes_env_oauth_token(
 
     with pytest.raises(ClaudeAuthError):
         asyncio.run(_drain())
+
+
+def test_default_claude_runner_honors_profile_workspace_context(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    from reverso.protocols.adapters import claude as claude_module
+    from reverso.protocols.adapters.claude import ClaudeAdapter
+    from reverso.proxy.profile_routing import CURRENT_PROFILE_WORKSPACE
+
+    cred_file = tmp_path / ".credentials.json"
+    cred_file.write_text(_artifact(expires_at=_future_ms()), encoding="utf-8")
+    auth = ClaudeOAuthAuth(credentials_path=cred_file, keychain_reader=lambda: None)
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+    seen: dict[str, object] = {}
+
+    def fake_run_bounded_cli(argv, **kwargs):
+        seen["argv"] = list(argv)
+        seen["cwd"] = kwargs.get("cwd")
+        return "ok\n"
+
+    monkeypatch.setattr(claude_module, "run_bounded_cli", fake_run_bounded_cli)
+    adapter = ClaudeAdapter(auth=auth)
+
+    token = CURRENT_PROFILE_WORKSPACE.set(str(workspace))
+    try:
+        assert adapter._run_claude_cli("prompt", "claude-opus-4-8") == "ok"
+    finally:
+        CURRENT_PROFILE_WORKSPACE.reset(token)
+
+    assert seen["cwd"] == str(workspace)
+    assert seen["argv"] == [
+        "claude",
+        "--print",
+        "--model",
+        "claude-opus-4-8",
+        "--",
+        "prompt",
+    ]
+
+
+def test_default_claude_stream_runner_honors_profile_workspace_context(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    import asyncio
+
+    from reverso.protocols.adapters import claude as claude_module
+    from reverso.protocols.adapters.claude import ClaudeAdapter
+    from reverso.proxy.profile_routing import CURRENT_PROFILE_WORKSPACE
+
+    cred_file = tmp_path / ".credentials.json"
+    cred_file.write_text(_artifact(expires_at=_future_ms()), encoding="utf-8")
+    auth = ClaudeOAuthAuth(credentials_path=cred_file, keychain_reader=lambda: None)
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+    seen: dict[str, object] = {}
+
+    async def fake_stream_bounded_cli(argv, **kwargs):
+        seen["argv"] = list(argv)
+        seen["cwd"] = kwargs.get("cwd")
+        yield json.dumps(
+            {
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": "ok"}]},
+            }
+        )
+
+    monkeypatch.setattr(claude_module, "stream_bounded_cli", fake_stream_bounded_cli)
+    adapter = ClaudeAdapter(auth=auth)
+
+    async def _drain() -> list[str]:
+        token = CURRENT_PROFILE_WORKSPACE.set(str(workspace))
+        try:
+            return [
+                chunk
+                async for chunk in adapter._default_stream_cli_runner(
+                    "prompt", "claude-opus-4-8"
+                )
+            ]
+        finally:
+            CURRENT_PROFILE_WORKSPACE.reset(token)
+
+    assert asyncio.run(_drain()) == ["ok"]
+    assert seen["cwd"] == str(workspace)
+    assert seen["argv"] == [
+        "claude",
+        "--print",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--include-partial-messages",
+        "--model",
+        "claude-opus-4-8",
+        "--",
+        "prompt",
+    ]
