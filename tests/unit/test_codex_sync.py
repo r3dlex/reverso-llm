@@ -102,6 +102,104 @@ def test_fetch_all_keeps_only_upstream_accepted_copilot_responses_models() -> No
     ]
 
 
+def test_fetch_all_can_skip_unavailable_provider() -> None:
+    def _fetch(prefix: str) -> list[str]:
+        if prefix == "copilot":
+            raise RuntimeError("copilot unavailable")
+        return [f"{prefix}-model"]
+
+    result = codex_sync.fetch_all(
+        ["claude", "copilot", "deepseek"],
+        _fetch,
+        skip_errors=True,
+    )
+
+    assert result == [
+        codex_sync.ProviderModels("claude", ("claude-model",)),
+        codex_sync.ProviderModels("deepseek", ("deepseek-model",)),
+    ]
+
+
+def test_sync_fails_closed_when_all_default_provider_fetches_fail(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = tmp_path / "config.toml"
+    baseline = _baseline_config_text()
+    target.write_text(baseline, encoding="utf-8")
+
+    def _default_fetcher(_base_url: str) -> codex_sync.ModelFetcher:
+        def _fetch(_prefix: str) -> list[str]:
+            raise RuntimeError("gateway unavailable")
+
+        return _fetch
+
+    monkeypatch.setattr(codex_sync, "_default_fetcher", _default_fetcher)
+
+    with pytest.raises(RuntimeError, match="no reverso provider model listings"):
+        codex_sync.sync(target=target)
+
+    assert target.read_text(encoding="utf-8") == baseline
+
+
+def test_catalog_json_includes_static_metadata_aliases() -> None:
+    catalog = json.loads(
+        codex_sync._generate_catalog_json(
+            [codex_sync.ProviderModels("claude", ("claude-opus-4-8",))]
+        )
+    )
+
+    slugs = {model["slug"] for model in catalog["models"]}
+
+    assert "claude-opus-4-8" in slugs
+    assert "MiniMax-M3" in slugs
+    assert "gemini-2.5-pro" in slugs
+    assert "gemini-2.5-flash" in slugs
+
+
+def test_catalog_json_dedupes_static_metadata_aliases() -> None:
+    catalog = json.loads(
+        codex_sync._generate_catalog_json(
+            [
+                codex_sync.ProviderModels(
+                    "copilot", ("gemini-2.5-pro", "gemini-2.5-flash")
+                )
+            ]
+        )
+    )
+
+    slugs = [model["slug"] for model in catalog["models"]]
+
+    assert slugs.count("gemini-2.5-pro") == 1
+    assert slugs.count("gemini-2.5-flash") == 1
+    assert "MiniMax-M3" in slugs
+
+
+def test_sync_catalog_aliases_do_not_create_routing_entries(tmp_path: Path) -> None:
+    target = tmp_path / "config.toml"
+    catalog = tmp_path / "catalog.json"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+
+    codex_sync.sync(
+        target=target,
+        fetcher=_make_fetcher({"claude": ["claude-opus-4-8"]}),
+        catalog_target=catalog,
+    )
+
+    text = target.read_text(encoding="utf-8")
+    catalog_slugs = {
+        model["slug"]
+        for model in json.loads(catalog.read_text(encoding="utf-8"))["models"]
+    }
+
+    assert "MiniMax-M3" in catalog_slugs
+    assert "gemini-2.5-pro" in catalog_slugs
+    assert "gemini-2.5-flash" in catalog_slugs
+    assert "MiniMax-M3" not in text
+    assert "gemini-2.5-pro" not in text
+    assert "gemini-2.5-flash" not in text
+
+
 def test_sync_writes_block_and_creates_backup(tmp_path: Path) -> None:
     target = tmp_path / "config.toml"
     target.write_text(_baseline_config_text(), encoding="utf-8")
@@ -726,7 +824,10 @@ def test_generate_catalog_json_shape_dedup_and_context_window() -> None:
 
     assert set(payload.keys()) == {"models"}
     slugs = [m["slug"] for m in payload["models"]]
-    assert slugs == ["shared-model", "big-500k-model", "gpt-4o"]
+    assert slugs[:3] == ["shared-model", "big-500k-model", "gpt-4o"]
+    assert "MiniMax-M3" in slugs
+    assert "gemini-2.5-pro" in slugs
+    assert "gemini-2.5-flash" in slugs
 
     by_slug = {m["slug"]: m for m in payload["models"]}
     # First prefix carrying the id owns the display name.

@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import json
+import logging
 import os
 import re
 import shutil
@@ -35,8 +36,21 @@ import httpx
 
 from reverso.protocols.copilot_models import is_copilot_responses_model_id
 
+logger = logging.getLogger(__name__)
+
 GATEWAY_BASE_URL = "http://127.0.0.1:64946"
 GATEWAY_PREFIXES: tuple[str, ...] = ("claude", "copilot", "auggie", "deepseek")
+
+# Metadata-only aliases that Codex should understand even when the backing
+# provider listing is unavailable. These are deliberately added only to the
+# model catalog JSON, not to generated provider profile tables. A local OAuth
+# outage or unauthenticated CLI must not make live routing look healthy. Codex
+# model metadata is slug-global, so each alias appears once even when multiple
+# Reverso profiles may use the same upstream model family.
+STATIC_CATALOG_MODELS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("minimax", ("MiniMax-M3",)),
+    ("oauth", ("gemini-2.5-pro", "gemini-2.5-flash")),
+)
 
 
 def _codex_responses_compatible_models(prefix: str, model_ids: list[str]) -> list[str]:
@@ -113,11 +127,24 @@ def _extract_model_ids(payload: t.Any) -> list[str]:
 def fetch_all(
     prefixes: t.Iterable[str],
     fetcher: ModelFetcher,
+    *,
+    skip_errors: bool = False,
 ) -> list[ProviderModels]:
     """Fetch model ids for every prefix; preserve order, drop empty results."""
     out: list[ProviderModels] = []
     for prefix in prefixes:
-        ids = _codex_responses_compatible_models(prefix, fetcher(prefix))
+        try:
+            fetched_ids = fetcher(prefix)
+        except Exception as exc:
+            if not skip_errors:
+                raise
+            logger.warning(
+                "Skipping reverso model sync for %s: %s",
+                prefix,
+                type(exc).__name__,
+            )
+            continue
+        ids = _codex_responses_compatible_models(prefix, fetched_ids)
         deduped: list[str] = []
         seen: set[str] = set()
         for model_id in ids:
@@ -186,12 +213,27 @@ def _render_nux_block(provider_models: list[ProviderModels]) -> str:
     return "\n".join(lines)
 
 
+def _catalog_provider_models(
+    provider_models: list[ProviderModels],
+) -> list[ProviderModels]:
+    """Return live models plus metadata-only static aliases for catalog JSON."""
+    merged = list(provider_models)
+    seen = {model_id for entry in provider_models for model_id in entry.models}
+    for prefix, model_ids in STATIC_CATALOG_MODELS:
+        missing = tuple(model_id for model_id in model_ids if model_id not in seen)
+        if not missing:
+            continue
+        seen.update(missing)
+        merged.append(ProviderModels(prefix=prefix, models=missing))
+    return merged
+
+
 def _generate_catalog_json(provider_models: list[ProviderModels]) -> str:
     """Generate Codex-compatible model catalog JSON for synced models."""
     models: list[dict[str, t.Any]] = []
     seen: set[str] = set()
 
-    for entry in provider_models:
+    for entry in _catalog_provider_models(provider_models):
         for model_id in entry.models:
             if model_id in seen:
                 continue
@@ -587,7 +629,13 @@ def sync(
     produces no diff and creates no backup.
     """
     fetch = fetcher if fetcher is not None else _default_fetcher(base_url)
-    provider_models = fetch_all(prefixes, fetch)
+    provider_models = fetch_all(
+        prefixes,
+        fetch,
+        skip_errors=fetcher is None,
+    )
+    if not provider_models:
+        raise RuntimeError("no reverso provider model listings were available")
 
     old_text = target.read_text(encoding="utf-8") if target.exists() else ""
 
@@ -720,7 +768,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.dry_run:
         fetcher = _default_fetcher(base_url)
-        provider_models = fetch_all(GATEWAY_PREFIXES, fetcher)
+        provider_models = fetch_all(GATEWAY_PREFIXES, fetcher, skip_errors=True)
         report = {
             "target": str(target),
             "catalog_target": str(catalog_target) if catalog_target else None,
