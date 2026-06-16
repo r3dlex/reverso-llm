@@ -60,6 +60,11 @@ def test_resolve_claude_profile_models_by_tier() -> None:
     assert resolve_profile_model("claude", "gpt-5.4") == "claude-opus-4-8"
     assert resolve_profile_model("claude", "custom/gpt-5.5") == "claude-opus-4-8"
     assert resolve_profile_model("claude", "custom/gpt-5.4") == "claude-opus-4-8"
+    assert resolve_profile_model("claude", "claude-opus-4.8") == "claude-opus-4-8"
+    assert (
+        resolve_profile_model("claude", "custom/claude-sonnet-4.6")
+        == "claude-sonnet-4-6"
+    )
     assert resolve_profile_model("claude", "gpt-5.4-mini") == "claude-sonnet-4-6"
     assert resolve_profile_model("claude", "gpt-5.3-codex-spark") == "claude-sonnet-4-6"
     assert resolve_profile_model("claude", "gpt-5.3-codex-spark") != "claude-haiku-4-6"
@@ -215,6 +220,114 @@ def test_claude_profile_injects_single_codex_workspace_metadata() -> None:
         "x_gateway": {"workspace": "/Users/andreburgstahler/Ws/Rib"},
     }
     assert captured["context_workspace"] == "/Users/andreburgstahler/Ws/Rib"
+    assert CURRENT_PROFILE_WORKSPACE.get() is None
+
+
+def test_claude_profile_reads_codex_workspace_from_client_metadata_body() -> None:
+    captured = {}
+    metadata = {
+        "workspaces": {
+            "/workspaces/example-repo": {
+                "latest_git_commit_hash": "abc123",
+            },
+        },
+    }
+    payload = {
+        "model": "gpt-5.5",
+        "input": "hello",
+        "client_metadata": {
+            "x-codex-turn-metadata": json.dumps(metadata),
+        },
+    }
+
+    async def app(scope, receive, send):
+        message = await receive()
+        captured["body"] = json.loads(message["body"])
+        captured["context_workspace"] = CURRENT_PROFILE_WORKSPACE.get()
+
+    middleware = ProfileRoutingMiddleware(app)
+
+    async def receive():
+        return {
+            "type": "http.request",
+            "body": json.dumps(payload).encode("utf-8"),
+            "more_body": False,
+        }
+
+    async def send(_message):
+        return None
+
+    asyncio.run(
+        middleware(
+            {"type": "http", "method": "POST", "path": "/claude/v1/responses"},
+            receive,
+            send,
+        )
+    )
+
+    assert captured["body"] == {
+        "model": "claude-opus-4-8",
+        "input": "hello",
+        "client_metadata": {
+            "x-codex-turn-metadata": json.dumps(metadata),
+        },
+        "x_gateway": {"workspace": "/workspaces/example-repo"},
+    }
+    assert captured["context_workspace"] == "/workspaces/example-repo"
+    assert CURRENT_PROFILE_WORKSPACE.get() is None
+
+
+def test_claude_profile_prefers_git_workspace_from_multi_workspace_metadata() -> None:
+    captured = {}
+    metadata = {
+        "workspaces": {
+            "/tmp/reverso-omx-runs/run-x": {},
+            "/workspaces/example-repo": {
+                "associated_remote_urls": {
+                    "origin": "git@example.com:org/example-repo.git",
+                },
+            },
+        },
+    }
+
+    async def app(scope, receive, send):
+        message = await receive()
+        captured["body"] = json.loads(message["body"])
+        captured["context_workspace"] = CURRENT_PROFILE_WORKSPACE.get()
+
+    middleware = ProfileRoutingMiddleware(app)
+
+    async def receive():
+        return {
+            "type": "http.request",
+            "body": b'{"model":"gpt-5.5","input":"hello"}',
+            "more_body": False,
+        }
+
+    async def send(_message):
+        return None
+
+    asyncio.run(
+        middleware(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/claude/v1/responses",
+                "headers": [
+                    (b"x-codex-turn-metadata", json.dumps(metadata).encode("utf-8"))
+                ],
+            },
+            receive,
+            send,
+        )
+    )
+
+    assert captured["body"] == {
+        "model": "claude-opus-4-8",
+        "input": "hello",
+        "x_gateway": {"workspace": "/workspaces/example-repo"},
+    }
+    assert captured["context_workspace"] == "/workspaces/example-repo"
     assert CURRENT_PROFILE_WORKSPACE.get() is None
 
 
@@ -560,3 +673,56 @@ def test_direct_codex_route_keeps_gpt_model_names() -> None:
         "path": "/v1/responses",
         "body": {"model": "gpt-5.5", "input": "hello"},
     }
+
+
+def test_direct_codex_route_sets_workspace_context_without_rewriting_body() -> None:
+    captured = {}
+    metadata = {
+        "workspaces": {
+            "/workspaces/example-repo": {
+                "associated_remote_urls": {
+                    "origin": "git@example.com:org/example-repo.git",
+                },
+            },
+        },
+    }
+    payload = {
+        "model": "gpt-5.5",
+        "input": "hello",
+        "client_metadata": {
+            "x-codex-turn-metadata": json.dumps(metadata),
+        },
+    }
+
+    async def app(scope, receive, send):
+        captured["path"] = scope["path"]
+        message = await receive()
+        captured["body"] = json.loads(message["body"])
+        captured["context_workspace"] = CURRENT_PROFILE_WORKSPACE.get()
+
+    middleware = ProfileRoutingMiddleware(app)
+
+    async def receive():
+        return {
+            "type": "http.request",
+            "body": json.dumps(payload).encode("utf-8"),
+            "more_body": False,
+        }
+
+    async def send(_message):
+        return None
+
+    asyncio.run(
+        middleware(
+            {"type": "http", "method": "POST", "path": "/v1/responses"},
+            receive,
+            send,
+        )
+    )
+
+    assert captured == {
+        "path": "/v1/responses",
+        "body": payload,
+        "context_workspace": "/workspaces/example-repo",
+    }
+    assert CURRENT_PROFILE_WORKSPACE.get() is None

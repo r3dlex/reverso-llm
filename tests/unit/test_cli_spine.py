@@ -213,3 +213,47 @@ async def test_stream_abandon_kills_child() -> None:
     pid = int(first)
     await agen.aclose()
     _assert_pid_gone(pid)
+
+
+def test_run_bounded_cli_honors_cwd(tmp_path) -> None:
+    stdout = run_bounded_cli(
+        [sys.executable, "-c", "import os; print(os.getcwd())"],
+        error=_SpineError,
+        cli_label="fake CLI",
+        cwd=str(tmp_path),
+    )
+    assert stdout.strip() == str(tmp_path.resolve())
+
+
+def test_run_bounded_cli_reports_missing_cwd(tmp_path) -> None:
+    with pytest.raises(_SpineError) as excinfo:
+        run_bounded_cli(
+            [sys.executable, "-c", "print('must not run')"],
+            error=_SpineError,
+            cli_label="fake CLI",
+            cwd=str(tmp_path / "missing"),
+        )
+    assert str(excinfo.value) == "fake CLI workspace cwd not found"
+
+
+async def test_stream_bounded_cli_honors_cwd(tmp_path) -> None:
+    lines = [
+        line
+        async for line in stream_bounded_cli(
+            [sys.executable, "-c", "import os; print(os.getcwd())"],
+            cli_label="fake CLI",
+            cwd=str(tmp_path),
+        )
+    ]
+    assert lines == [f"{tmp_path.resolve()}\n"]
+
+
+async def test_stream_bounded_cli_reports_missing_cwd(tmp_path) -> None:
+    with pytest.raises(BoundedCliStreamFailure) as excinfo:
+        async for _ in stream_bounded_cli(
+            [sys.executable, "-c", "print('must not run')"],
+            cli_label="fake CLI",
+            cwd=str(tmp_path / "missing"),
+        ):
+            raise AssertionError("missing cwd must not yield")
+    assert str(excinfo.value) == "fake CLI workspace cwd not found"

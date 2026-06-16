@@ -228,3 +228,71 @@ async def test_deepseek_streaming_401_post_emission_renders_response_failed_done
     # _json is only used to make sure the module is referenced; the assertion
     # above already covers the wire format.
     _ = _json
+
+
+class WorkspaceCaptureAdapter(FailingAdapter):
+    """Capture the current workspace context seen by the adapter."""
+
+    def __init__(self) -> None:
+        self.create_workspace: str | None = None
+        self.stream_workspace: str | None = None
+
+    async def create_response(self, request: ResponsesRequest) -> ResponseEnvelope:
+        from reverso.proxy.profile_routing import CURRENT_PROFILE_WORKSPACE
+
+        self.create_workspace = CURRENT_PROFILE_WORKSPACE.get()
+        return ResponseEnvelope(id="resp_workspace", model=request.model, output=[])
+
+    def stream_response(self, request: ResponsesRequest) -> AsyncIterator[SSEEvent]:
+        return self._stream(request)
+
+    async def _stream(self, request: ResponsesRequest) -> AsyncIterator[SSEEvent]:
+        from reverso.proxy.profile_routing import CURRENT_PROFILE_WORKSPACE
+
+        self.stream_workspace = CURRENT_PROFILE_WORKSPACE.get()
+        yield SSEEvent(
+            event="response.created",
+            data={"type": "response.created", "response": {"status": "in_progress"}},
+        )
+
+
+_CODEX_WORKSPACE_METADATA = {
+    "workspaces": {
+        "/workspaces/example-repo": {
+            "associated_remote_urls": ["git@example.com:org/example-repo.git"],
+            "latest_git_commit_hash": "abc123",
+            "has_changes": True,
+        }
+    }
+}
+
+
+@pytest.mark.asyncio
+async def test_first_party_response_sets_workspace_context_from_client_metadata():
+    adapter = WorkspaceCaptureAdapter()
+    async with _client(adapter) as client:
+        resp = await client.post(
+            "/claude/v1/responses",
+            json={
+                "model": "gpt-5.5",
+                "input": "hi",
+                "client_metadata": {
+                    "x-codex-turn-metadata": _json.dumps(_CODEX_WORKSPACE_METADATA)
+                },
+            },
+        )
+    assert resp.status_code == 200
+    assert adapter.create_workspace == "/workspaces/example-repo"
+
+
+@pytest.mark.asyncio
+async def test_first_party_stream_sets_workspace_context_from_header_metadata():
+    adapter = WorkspaceCaptureAdapter()
+    async with _client(adapter) as client:
+        resp = await client.post(
+            "/claude/v1/responses",
+            headers={"x-codex-turn-metadata": _json.dumps(_CODEX_WORKSPACE_METADATA)},
+            json={"model": "gpt-5.5", "input": "hi", "stream": True},
+        )
+    assert resp.status_code == 200
+    assert adapter.stream_workspace == "/workspaces/example-repo"

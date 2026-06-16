@@ -216,8 +216,7 @@ async def _run_codex_turn(
             "workspace-write",
             "--model",
             model,
-            "-c",
-            "skip_git_repo_check=true",
+            "--skip-git-repo-check",
         ]
     else:
         cmd = [
@@ -229,8 +228,7 @@ async def _run_codex_turn(
             "workspace-write",
             "--model",
             model,
-            "-c",
-            "skip_git_repo_check=true",
+            "--skip-git-repo-check",
         ]
 
     logger.debug("Codex turn cmd: %s cwd=%s", cmd, resolved)

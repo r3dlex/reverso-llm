@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import subprocess
+from pathlib import Path
 from typing import AsyncIterator, Callable, Mapping, Sequence
 
 from reverso.protocols.auth import redact_secret
@@ -37,6 +38,16 @@ logger = logging.getLogger(__name__)
 # Shared wall-clock bound for one-shot CLI turns. A timeout surfaces as the
 # provider-typed error, never as an unbounded hang.
 DEFAULT_CLI_TIMEOUT_SECONDS = 300.0
+
+
+def _resolve_cwd(cwd: str | None) -> str | None:
+    if not cwd:
+        return None
+    return str(Path(cwd).expanduser().resolve(strict=False))
+
+
+def _cwd_exists(cwd: str | None) -> bool:
+    return cwd is None or Path(cwd).is_dir()
 
 
 class BoundedCliStreamFailure(RuntimeError):
@@ -61,6 +72,7 @@ def run_bounded_cli(
     failure_message: str | None = None,
     timeout: float = DEFAULT_CLI_TIMEOUT_SECONDS,
     env: Mapping[str, str] | None = None,
+    cwd: str | None = None,
 ) -> str:
     """Run ``argv`` once, bounded, and return its stdout.
 
@@ -75,10 +87,13 @@ def run_bounded_cli(
       stderr and argv.
 
     ``env``, when given, replaces the child environment entirely; callers
-    that need inheritance must merge ``os.environ`` themselves. The value is
-    never logged.
+    that need inheritance must merge ``os.environ`` themselves. ``cwd`` is
+    resolved without requiring the directory to exist yet and is never logged.
     """
     message = failure_message or f"{cli_label} invocation failed"
+    resolved_cwd = _resolve_cwd(cwd)
+    if not _cwd_exists(resolved_cwd):
+        raise error(f"{cli_label} workspace cwd not found")
     try:
         result = subprocess.run(
             list(argv),
@@ -87,6 +102,7 @@ def run_bounded_cli(
             check=True,
             timeout=timeout,
             env=dict(env) if env is not None else None,
+            cwd=resolved_cwd,
         )
     except FileNotFoundError as exc:
         raise error(f"{cli_label} not found on PATH") from exc
@@ -111,6 +127,7 @@ async def stream_bounded_cli(
     cli_label: str,
     timeout: float = DEFAULT_CLI_TIMEOUT_SECONDS,
     env: Mapping[str, str] | None = None,
+    cwd: str | None = None,
 ) -> AsyncIterator[str]:
     """Run ``argv`` once and yield its stdout line by line, bounded.
 
@@ -132,14 +149,19 @@ async def stream_bounded_cli(
     If the consumer abandons the iterator (client disconnect mid-stream),
     the child is killed rather than left running its turn to completion.
     ``env``, when given, replaces the child environment entirely and is
-    never logged.
+    never logged. ``cwd`` is resolved without requiring the directory to exist
+    yet and is never logged.
     """
+    resolved_cwd = _resolve_cwd(cwd)
+    if not _cwd_exists(resolved_cwd):
+        raise BoundedCliStreamFailure(f"{cli_label} workspace cwd not found")
     try:
         process = await asyncio.create_subprocess_exec(
             *argv,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=dict(env) if env is not None else None,
+            cwd=resolved_cwd,
         )
     except FileNotFoundError as exc:
         raise BoundedCliStreamFailure(f"{cli_label} not found on PATH") from exc
