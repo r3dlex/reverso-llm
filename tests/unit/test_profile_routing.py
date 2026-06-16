@@ -281,7 +281,7 @@ def test_claude_profile_prefers_git_workspace_from_multi_workspace_metadata() ->
     captured = {}
     metadata = {
         "workspaces": {
-            "/Users/redlexgilgamesh/.omx-runs/run-x": {},
+            "/tmp/reverso-omx-runs/run-x": {},
             "/workspaces/example-repo": {
                 "associated_remote_urls": {
                     "origin": "git@example.com:org/example-repo.git",

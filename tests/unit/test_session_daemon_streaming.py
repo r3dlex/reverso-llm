@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import asyncio
 from datetime import datetime, timezone
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
 import pytest
 
@@ -35,9 +35,9 @@ class _Proc:
 async def test_codex_turn_uses_explicit_skip_git_repo_check(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    captured: dict[str, object] = {}
+    captured: dict[str, Any] = {}
 
-    async def fake_create_subprocess_exec(*args, **kwargs):
+    async def fake_create_subprocess_exec(*args: str, **kwargs: Any):
         captured["args"] = args
         captured["cwd"] = kwargs.get("cwd")
         return _Proc()
