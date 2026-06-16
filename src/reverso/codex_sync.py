@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import json
+import logging
 import os
 import re
 import shutil
@@ -34,6 +35,8 @@ from pathlib import Path
 import httpx
 
 from reverso.protocols.copilot_models import is_copilot_responses_model_id
+
+logger = logging.getLogger(__name__)
 
 GATEWAY_BASE_URL = "http://127.0.0.1:64946"
 GATEWAY_PREFIXES: tuple[str, ...] = ("claude", "copilot", "auggie", "deepseek")
@@ -113,11 +116,24 @@ def _extract_model_ids(payload: t.Any) -> list[str]:
 def fetch_all(
     prefixes: t.Iterable[str],
     fetcher: ModelFetcher,
+    *,
+    skip_errors: bool = False,
 ) -> list[ProviderModels]:
     """Fetch model ids for every prefix; preserve order, drop empty results."""
     out: list[ProviderModels] = []
     for prefix in prefixes:
-        ids = _codex_responses_compatible_models(prefix, fetcher(prefix))
+        try:
+            fetched_ids = fetcher(prefix)
+        except Exception as exc:
+            if not skip_errors:
+                raise
+            logger.warning(
+                "Skipping reverso model sync for %s: %s",
+                prefix,
+                type(exc).__name__,
+            )
+            continue
+        ids = _codex_responses_compatible_models(prefix, fetched_ids)
         deduped: list[str] = []
         seen: set[str] = set()
         for model_id in ids:
@@ -587,7 +603,13 @@ def sync(
     produces no diff and creates no backup.
     """
     fetch = fetcher if fetcher is not None else _default_fetcher(base_url)
-    provider_models = fetch_all(prefixes, fetch)
+    provider_models = fetch_all(
+        prefixes,
+        fetch,
+        skip_errors=fetcher is None,
+    )
+    if not provider_models:
+        raise RuntimeError("no reverso provider model listings were available")
 
     old_text = target.read_text(encoding="utf-8") if target.exists() else ""
 
@@ -720,7 +742,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.dry_run:
         fetcher = _default_fetcher(base_url)
-        provider_models = fetch_all(GATEWAY_PREFIXES, fetcher)
+        provider_models = fetch_all(GATEWAY_PREFIXES, fetcher, skip_errors=True)
         report = {
             "target": str(target),
             "catalog_target": str(catalog_target) if catalog_target else None,

@@ -102,6 +102,46 @@ def test_fetch_all_keeps_only_upstream_accepted_copilot_responses_models() -> No
     ]
 
 
+def test_fetch_all_can_skip_unavailable_provider() -> None:
+    def _fetch(prefix: str) -> list[str]:
+        if prefix == "copilot":
+            raise RuntimeError("copilot unavailable")
+        return [f"{prefix}-model"]
+
+    result = codex_sync.fetch_all(
+        ["claude", "copilot", "deepseek"],
+        _fetch,
+        skip_errors=True,
+    )
+
+    assert result == [
+        codex_sync.ProviderModels("claude", ("claude-model",)),
+        codex_sync.ProviderModels("deepseek", ("deepseek-model",)),
+    ]
+
+
+def test_sync_fails_closed_when_all_default_provider_fetches_fail(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = tmp_path / "config.toml"
+    baseline = _baseline_config_text()
+    target.write_text(baseline, encoding="utf-8")
+
+    def _default_fetcher(_base_url: str) -> codex_sync.ModelFetcher:
+        def _fetch(_prefix: str) -> list[str]:
+            raise RuntimeError("gateway unavailable")
+
+        return _fetch
+
+    monkeypatch.setattr(codex_sync, "_default_fetcher", _default_fetcher)
+
+    with pytest.raises(RuntimeError, match="no reverso provider model listings"):
+        codex_sync.sync(target=target)
+
+    assert target.read_text(encoding="utf-8") == baseline
+
+
 def test_sync_writes_block_and_creates_backup(tmp_path: Path) -> None:
     target = tmp_path / "config.toml"
     target.write_text(_baseline_config_text(), encoding="utf-8")
