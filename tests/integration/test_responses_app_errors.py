@@ -229,6 +229,7 @@ async def test_deepseek_streaming_401_post_emission_renders_response_failed_done
     # above already covers the wire format.
     _ = _json
 
+
 class WorkspaceCaptureAdapter(FailingAdapter):
     """Capture the current workspace context seen by the adapter."""
 

@@ -95,7 +95,9 @@ class ProfileRoutingMiddleware:
 
         path_info = split_profile_path(scope.get("path", ""))
         method = str(scope.get("method", "GET")).upper()
-        metadata_workspace = _workspace_from_codex_turn_metadata(scope.get("headers", []))
+        metadata_workspace = _workspace_from_codex_turn_metadata(
+            scope.get("headers", [])
+        )
         if path_info is None:
             direct_workspace = metadata_workspace
             if method in {"POST", "PUT", "PATCH"}:

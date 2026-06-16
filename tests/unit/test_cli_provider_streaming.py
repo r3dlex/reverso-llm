@@ -39,7 +39,9 @@ async def test_anthropic_astreaming_preserves_profile_workspace_context(
         captured["workspace"] = workspace
         return iter(["O", "K"])
 
-    monkeypatch.setattr(anthropic_cli_provider, "_run_turn_stream", fake_run_turn_stream)
+    monkeypatch.setattr(
+        anthropic_cli_provider, "_run_turn_stream", fake_run_turn_stream
+    )
     token = CURRENT_PROFILE_WORKSPACE.set("/workspaces/example-repo")
     try:
         stream = anthropic_cli_provider.anthropic_cli.astreaming(

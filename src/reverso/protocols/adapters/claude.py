@@ -59,7 +59,10 @@ from reverso.protocols.replay import (
     replay_turn,
 )
 from reverso.protocols.store import ResponseStore
-from reverso.proxy.profile_routing import CURRENT_PROFILE_WORKSPACE, resolve_profile_model
+from reverso.proxy.profile_routing import (
+    CURRENT_PROFILE_WORKSPACE,
+    resolve_profile_model,
+)
 
 logger = logging.getLogger(__name__)
 
