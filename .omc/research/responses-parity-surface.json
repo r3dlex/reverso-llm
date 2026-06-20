@@ -205,6 +205,18 @@
       "copilot": "native",
       "auggie": "unsupported",
       "deepseek": "unsupported"
+    },
+    "thinking": {
+      "claude": "unsupported",
+      "copilot": "unsupported",
+      "auggie": "unsupported",
+      "deepseek": "unsupported"
+    },
+    "caching.cache_control": {
+      "claude": "unsupported",
+      "copilot": "unsupported",
+      "auggie": "unsupported",
+      "deepseek": "unsupported"
     }
   },
   "endpoints": {
