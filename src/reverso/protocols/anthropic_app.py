@@ -5,10 +5,13 @@ the OpenAI Responses surface. This module mirrors responses_app.py: it is pure
 ASGI (no FastAPI) and does NOT import the legacy LiteLLM app or any ``litellm``
 module; the LiteLLM quarantine guard test asserts that invariant.
 
-G002 scope: routing and dispatch are FULLY implemented; the actual Messages
-translation is a clearly-marked stub (see _create_stub) deferred to G003.
-Streaming (G004), capability gating (G005), and count_tokens/models (G006) are
-NOT implemented here.
+G003 scope: routing/dispatch (G002) plus the NON-STREAMING Messages translation
+are implemented. A resolved /v1/messages POST is translated to a ResponsesRequest
+(anthropic_translate), dispatched to the resolved adapter's create_response, and
+the ResponseEnvelope is mapped back to an Anthropic message body (HTTP 200). A
+backend failure becomes a secret-free 502 Anthropic error envelope. SSE streaming
+(stream=true, G004), capability gating / feature rejection (G005), and
+count_tokens / /v1/models (G006) remain clearly-marked stubs here.
 
 Routing (ADR 0006 D3):
   - POST /v1/messages: resolve the requested model to a backend through the
@@ -28,14 +31,21 @@ Routing (ADR 0006 D3):
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
 from reverso.protocols.adapter import ProviderAdapter
+from reverso.protocols.anthropic_translate import (
+    anthropic_request_to_responses,
+    responses_envelope_to_anthropic,
+)
 from reverso.protocols.surface_registry import (
     SURFACE_BACKENDS,
     resolve_anthropic_backend,
 )
+
+logger = logging.getLogger(__name__)
 
 Receive = Callable[[], Awaitable[dict[str, Any]]]
 Scope = dict[str, Any]
@@ -124,11 +134,11 @@ def _anthropic_version_from_headers(headers: list[tuple[bytes, bytes]]) -> str:
     return DEFAULT_ANTHROPIC_VERSION
 
 
-def _model_from_body(body: bytes) -> str | None:
-    """Extract the requested ``model`` from a Messages body, or None.
+def _parse_body(body: bytes) -> dict[str, Any] | None:
+    """Decode a Messages JSON body into a dict, or None when malformed.
 
-    G002 parses only the model id (for auto-routing); G003 maps the full request.
-    A malformed body or a missing model yields None, which drives a 404.
+    A missing or malformed body, or a non-object JSON value, yields None, which
+    drives the not_found_error 404 on the auto-routing path (no model to resolve).
     """
     if not body:
         return None
@@ -136,7 +146,12 @@ def _model_from_body(body: bytes) -> str | None:
         payload = json.loads(body)
     except json.JSONDecodeError:
         return None
-    if not isinstance(payload, dict):
+    return payload if isinstance(payload, dict) else None
+
+
+def _model_from_payload(payload: dict[str, Any] | None) -> str | None:
+    """Extract the requested ``model`` from a parsed Messages body, or None."""
+    if payload is None:
         return None
     model = payload.get("model")
     return model if isinstance(model, str) else None
@@ -193,22 +208,15 @@ async def _send_error(
     )
 
 
-def _create_stub(backend: str, anthropic_version: str) -> dict[str, Any]:
-    """Clearly-marked G002 placeholder for a resolved Messages create request.
+def _safe_backend_error_message(exc: Exception) -> str:
+    """Return a secret-free backend-failure string for the 502 envelope.
 
-    TODO(G003): replace with the real Anthropic Messages translation that maps the
-    request to a ResponsesRequest, calls the resolved adapter's create_response,
-    and maps the ResponseEnvelope back to a Messages response. Until then a
-    resolved backend returns a structured Anthropic not_implemented error so no
-    request is silently accepted with no effect.
+    Only the exception class name is surfaced: a backend adapter's exception may
+    carry an upstream URL, status echo, or other internal detail, so the message
+    text never includes the exception's own payload (mirrors
+    responses_app._safe_error_message).
     """
-    return build_anthropic_error(
-        "not_implemented",
-        # The backend is named so the stub is observably routed, not generic.
-        f"Anthropic Messages create is not implemented yet for backend "
-        f"{backend!r} (G003); request routed on anthropic-version "
-        f"{anthropic_version}.",
-    )
+    return f"upstream backend error ({type(exc).__name__})"
 
 
 class AnthropicMessagesApp:
@@ -260,10 +268,11 @@ class AnthropicMessagesApp:
             )
             return
 
-        # Read the body so the auto-routing path can resolve the requested model.
-        # G002 parses only the model id for routing; G003 translates the rest.
+        # Read and decode the body: the auto-routing path resolves the requested
+        # model, and the full payload is translated into a ResponsesRequest.
         body = await _read_body(receive)
-        model = _model_from_body(body)
+        payload = _parse_body(body)
+        model = _model_from_payload(payload)
 
         backend = self._resolve_backend(route, model)
         if backend is None:
@@ -278,10 +287,72 @@ class AnthropicMessagesApp:
             )
             return
 
+        # payload is non-None here: an auto-routed request without a parseable
+        # body cannot resolve a model (backend would be None), and a pinned
+        # prefix request still needs a body to translate. Guard defensively.
+        if payload is None:
+            await _send_error(
+                send,
+                400,
+                "invalid_request_error",
+                "request body must be a JSON object",
+                anthropic_version=anthropic_version,
+            )
+            return
+
+        if payload.get("stream") is True:
+            # TODO(G004): SSE streaming is not implemented in G003. The Anthropic
+            # streaming grammar is mapped from the Responses SSEEvent replay in a
+            # later goal; until then a stream request is honestly rejected.
+            await _send_error(
+                send,
+                501,
+                "not_implemented",
+                "streaming is not implemented yet on the Anthropic surface "
+                "(TODO(G004)); set stream=false",
+                anthropic_version=anthropic_version,
+            )
+            return
+
+        await self._handle_nonstreaming(
+            backend, payload, send, anthropic_version=anthropic_version
+        )
+
+    async def _handle_nonstreaming(
+        self,
+        backend: str,
+        payload: dict[str, Any],
+        send: Send,
+        *,
+        anthropic_version: str,
+    ) -> None:
+        """Translate, dispatch, and map back a non-streaming Messages request.
+
+        The payload is mapped to a ResponsesRequest, dispatched to the resolved
+        adapter's create_response, and the ResponseEnvelope is mapped back to an
+        Anthropic message body (HTTP 200). A backend failure becomes a secret-free
+        502 Anthropic error envelope; the request is never silently dropped.
+        """
+        adapter = self._adapters[backend]
+        request = anthropic_request_to_responses(payload)
+        try:
+            envelope = await adapter.create_response(request)
+        except Exception as exc:  # noqa: BLE001 - any backend failure -> 502
+            logger.warning(
+                "anthropic backend %s create failed: %s", backend, type(exc).__name__
+            )
+            await _send_error(
+                send,
+                502,
+                "api_error",
+                _safe_backend_error_message(exc),
+                anthropic_version=anthropic_version,
+            )
+            return
         await _send_json(
             send,
             200,
-            _create_stub(backend, anthropic_version),
+            responses_envelope_to_anthropic(envelope),
             anthropic_version=anthropic_version,
         )
 

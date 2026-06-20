@@ -158,14 +158,17 @@ async def test_mixed_case_claude_model_returns_404() -> None:
 
 
 @pytest.mark.asyncio
-async def test_deepseek_model_auto_routes_to_stub() -> None:
+async def test_deepseek_model_auto_routes_to_backend() -> None:
     app = build_anthropic_app(_stub_adapters())
     status, _headers, body = await _drive(
         app, "POST", "/v1/messages", b'{"model":"deepseek-v4-pro"}'
     )
-    # Resolved backend reaches the G003 stub (not_implemented), not a 404.
+    # Resolved backend reaches the real G003 translation, not a 404: the stub
+    # adapter returns a valid (empty-content) Anthropic message body.
     assert status == 200
-    assert body is not None and body["error"]["type"] == "not_implemented"
+    assert body is not None
+    assert body["type"] == "message"
+    assert body["role"] == "assistant"
 
 
 @pytest.mark.asyncio
@@ -173,11 +176,12 @@ async def test_deepseek_model_auto_routes_to_stub() -> None:
 async def test_profile_prefix_reaches_named_backend(profile: str) -> None:
     app = build_anthropic_app(_stub_adapters())
     status, _headers, body = await _drive(app, "POST", f"/{profile}/v1/messages", b"{}")
-    # Per-profile prefixes pin the backend and bypass model resolution; the stub
-    # is reached (status 200, not_implemented) and names the pinned backend.
+    # Per-profile prefixes pin the backend and bypass model resolution; the real
+    # G003 translation runs and yields a valid Anthropic message body.
     assert status == 200
-    assert body is not None and body["error"]["type"] == "not_implemented"
-    assert profile in body["error"]["message"]
+    assert body is not None
+    assert body["type"] == "message"
+    assert body["role"] == "assistant"
 
 
 @pytest.mark.asyncio
