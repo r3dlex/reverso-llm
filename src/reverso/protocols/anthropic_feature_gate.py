@@ -132,6 +132,8 @@ def _scan_tools(tools: Any, found: set[str]) -> None:
         if _has_cache_control(tool):
             found.add(FEATURE_CACHE_CONTROL)
     if has_tool:
+        # Extracted for symmetry and future rows; no M1 backend classifies
+        # tools.function as unsupported, so this never triggers the gate today.
         found.add(FEATURE_TOOLS)
 
 

@@ -350,11 +350,14 @@ class AnthropicMessagesApp:
         try:
             gate_anthropic_features(payload, backend)
         except AnthropicFeatureRejected as rejected:
+            # Use str(rejected) so the 400 message is rendered by the single
+            # source in AnthropicFeatureRejected.__init__; the app never
+            # re-formats it independently.
             await _send_error(
                 send,
                 400,
                 "invalid_request_error",
-                f"{rejected.feature} is not supported on the {backend} backend",
+                str(rejected),
                 anthropic_version=anthropic_version,
             )
             return

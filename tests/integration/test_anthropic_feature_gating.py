@@ -323,7 +323,43 @@ async def test_tools_on_auggie_degrade_to_text_only_200() -> None:
     assert any(b["type"] == "text" and b["text"] for b in body["content"])
 
 
+# --- auto-route path (bare /v1/messages, MINOR-1) ---------------------------
+
+
+@pytest.mark.asyncio
+async def test_image_rejected_on_auto_routed_deepseek() -> None:
+    """Gate covers the bare /v1/messages auto-resolution path, not only prefixes."""
+    async with _build_client() as client:
+        resp = await client.post(
+            "/v1/messages",
+            json={
+                "model": _BACKEND_MODEL["deepseek"],
+                "max_tokens": 64,
+                "messages": [{"role": "user", "content": [_image_block()]}],
+            },
+        )
+    assert resp.status_code == 400
+    _assert_invalid_request(resp.json(), "deepseek", "input.image")
+
+
 # --- streaming gate (reject before the stream opens) ------------------------
+
+
+async def _assert_streaming_gate_400(
+    client: httpx.AsyncClient,
+    path: str,
+    payload: dict[str, Any],
+    backend: str,
+    feature: str,
+) -> None:
+    """Assert a streaming request is gated with 400 JSON, never a 200 event-stream."""
+    async with client.stream("POST", path, json=payload) as resp:
+        assert resp.status_code == 400
+        assert "text/event-stream" not in resp.headers.get("content-type", "")
+        assert "application/json" in resp.headers["content-type"]
+        await resp.aread()
+        body = resp.json()
+    _assert_invalid_request(body, backend, feature)
 
 
 @pytest.mark.asyncio
@@ -331,10 +367,10 @@ async def test_streaming_cache_control_rejected_with_json_400_not_event_stream()
     None
 ):
     async with _build_client() as client:
-        async with client.stream(
-            "POST",
+        await _assert_streaming_gate_400(
+            client,
             _prefix("deepseek"),
-            json={
+            {
                 "model": _BACKEND_MODEL["deepseek"],
                 "max_tokens": 64,
                 "stream": True,
@@ -351,10 +387,67 @@ async def test_streaming_cache_control_rejected_with_json_400_not_event_stream()
                     }
                 ],
             },
+            "deepseek",
+            "caching.cache_control",
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend", ["deepseek", "auggie"])
+async def test_streaming_image_rejected_json_400_not_event_stream(
+    backend: str,
+) -> None:
+    async with _build_client() as client:
+        await _assert_streaming_gate_400(
+            client,
+            _prefix(backend),
+            {
+                "model": _BACKEND_MODEL[backend],
+                "max_tokens": 64,
+                "stream": True,
+                "messages": [{"role": "user", "content": [_image_block()]}],
+            },
+            backend,
+            "input.image",
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend", ANTHROPIC_BACKENDS)
+async def test_streaming_thinking_rejected_json_400_not_event_stream(
+    backend: str,
+) -> None:
+    async with _build_client() as client:
+        await _assert_streaming_gate_400(
+            client,
+            _prefix(backend),
+            {
+                "model": _BACKEND_MODEL[backend],
+                "max_tokens": 64,
+                "stream": True,
+                "thinking": {"type": "enabled", "budget_tokens": 1024},
+                "messages": [{"role": "user", "content": "think hard"}],
+            },
+            backend,
+            "thinking",
+        )
+
+
+@pytest.mark.asyncio
+async def test_streaming_image_on_copilot_not_rejected() -> None:
+    """Positive streaming case: image on copilot must NOT be gated (no false rejection)."""
+    async with _build_client() as client:
+        async with client.stream(
+            "POST",
+            _prefix("copilot"),
+            json={
+                "model": _BACKEND_MODEL["copilot"],
+                "max_tokens": 64,
+                "stream": True,
+                "messages": [{"role": "user", "content": [_image_block()]}],
+            },
         ) as resp:
-            assert resp.status_code == 400
-            assert "text/event-stream" not in resp.headers.get("content-type", "")
-            assert "application/json" in resp.headers["content-type"]
-            await resp.aread()
-            body = resp.json()
-    _assert_invalid_request(body, "deepseek", "caching.cache_control")
+            assert resp.status_code == 200
+            assert "text/event-stream" in resp.headers["content-type"]
+            async for _ in resp.aiter_text():
+                pass
