@@ -135,15 +135,19 @@ the SDK at runtime.
 ## Capability ceiling
 
 The Anthropic Messages surface does not promise full Messages fidelity on every backend. Each
-(feature x backend) cell falls into one of five buckets:
+(feature x backend) cell falls into one of six buckets:
 
 - **native**: the backend serves the feature directly through its Responses adapter.
 - **translated**: the feature is mapped onto an equivalent Responses construct without loss that
-  Claude Code observes.
+  Claude Code observes. A `(approx)` qualifier marks a translation that is a documented
+  approximation rather than exact (count_tokens).
+- **partial-accepted**: a subset of the feature is accepted and translated while the rest is
+  gated-error; the accepted and rejected subsets are named in the matrix footnote.
 - **gated-error**: the feature is rejected with a structured Anthropic `invalid_request_error`
   naming the feature and backend; no silent acceptance.
 - **accepted-ignored-stub**: the field is accepted to keep the request well-formed but has no
-  effect; documented as a stub.
+  effect; documented as a stub. No Milestone 1 feature falls in this bucket; it is retained for
+  future fields.
 - **structurally-impossible-M1**: the Responses contract cannot carry the feature in Milestone 1,
   so the surface raises a hard `invalid_request_error` to the client rather than pretend.
 
