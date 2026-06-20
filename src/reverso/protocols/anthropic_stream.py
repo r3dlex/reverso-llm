@@ -34,13 +34,25 @@ streamed thinking deltas as structurally-impossible-M1 (the Responses replay sea
 discards reasoning deltas), so the mapper does not invent a thinking block.
 
 Self-protection (principled contract guarantees, not ad-hoc shims):
-  - Mid-stream failure (response.failed, or an exception raised by the upstream
-    iterator) closes any open block, emits a terminal Anthropic ``error`` event,
-    and stops cleanly. A client never sees a half-open block.
-  - Empty or truncated upstream (zero events, or the iterator ends before
-    response.completed) still yields a minimal well-formed terminal sequence
-    (message_start -> ping -> message_delta(end_turn) -> message_stop) so a client
-    can always interpret the stream.
+
+Peek-first protocol: message_start and ping are NOT yielded until the first
+upstream event is in hand. This preserves the ASGI caller's ability to return a
+non-streaming 502 error envelope when the upstream raises on the very first
+``__anext__`` (connect/auth/setup failure), because the 200 text/event-stream
+header must not be committed before that exception surfaces to the caller.
+
+  - Pre-stream failure (exception on the first __anext__): NOT caught here;
+    propagates to the ASGI caller, which can still return a 502 JSON body.
+  - Empty upstream (StopAsyncIteration on the first peek, zero events): treated
+    as success, NOT a failure; yields the minimal well-formed 200 stream
+    (message_start -> ping -> message_delta(end_turn) -> message_stop).
+  - Mid-stream failure (exception after the first event): caught here, closes any
+    open block, emits a terminal Anthropic ``error`` event, stops cleanly. At this
+    point the 200 header is already committed, so an in-band error is the only
+    safe channel.
+  - Truncated upstream (ends before response.completed, at least one event seen):
+    synthesizes the same minimal terminal sequence as the empty case (end_turn,
+    zero output tokens) so the stream is always client-interpretable.
 """
 
 from __future__ import annotations
@@ -68,27 +80,56 @@ async def responses_sse_to_anthropic(
     the caller. Yields Anthropic event dicts each carrying their own ``type``; the
     caller encodes them onto the wire as ``event: <type>\\ndata: <json>\\n\\n``.
 
+    Peek-first: the first upstream ``__anext__`` is awaited BEFORE yielding
+    message_start, so a pre-stream exception (connect/auth/setup failure) escapes
+    to the ASGI caller rather than being swallowed after a 200 header is sent. An
+    empty upstream (StopAsyncIteration on the peek) is NOT an error; it still
+    produces the minimal well-formed terminal sequence. Mid-stream failures (after
+    the first event is in hand) are caught and converted to a terminal Anthropic
+    error event; at that point the 200 header is committed and in-band is the only
+    safe channel.
+
     The sequence is always well-formed: message_start, exactly one ping, zero or
-    more paired content blocks, a single message_delta, and message_stop, or a
-    terminal error event on mid-stream failure.
+    more paired content blocks, a single message_delta and message_stop on success,
+    or a terminal error event on mid-stream failure.
     """
     state = _StreamState(model=model, message_id=message_id)
+    it = events.__aiter__()
 
-    # message_start + exactly one ping, emitted up front so a truncated or empty
-    # upstream still produces a client-interpretable stream (self-protection).
+    # Peek the first upstream event. This call is NOT inside a try/except so that
+    # a pre-stream exception (e.g. auth failure, connection error) propagates to
+    # the ASGI caller before we yield anything. The caller can then return a 502
+    # JSON body because the 200 text/event-stream header has not been sent yet.
+    try:
+        first_event = await it.__anext__()
+    except StopAsyncIteration:
+        # Empty upstream: not an error. Synthesize the minimal well-formed stream
+        # so a client always receives an interpretable response.
+        yield state.message_start_event()
+        yield _ping_event()
+        yield state.message_delta_event()
+        yield _message_stop_event()
+        return
+
+    # First event is in hand: commit message_start and the single ping, then
+    # process it and continue the loop. Mid-stream failures from this point are
+    # caught below and converted to in-band terminal error events.
     yield state.message_start_event()
     yield _ping_event()
 
     try:
-        async for event in events:
-            for out in state.consume(event):
-                yield out
-            if state.completed:
-                break
-    except Exception as exc:  # noqa: BLE001 - any upstream failure -> terminal error
-        # Mid-stream failure: close any open block, emit a terminal Anthropic
-        # error event, stop cleanly. The class name only (no payload) keeps the
-        # message secret-free, mirroring the non-streaming 502 envelope.
+        for out in state.consume(first_event):
+            yield out
+        if not state.completed:
+            async for event in it:
+                for out in state.consume(event):
+                    yield out
+                if state.completed:
+                    break
+    except Exception as exc:  # noqa: BLE001 - mid-stream failure -> in-band error
+        # Mid-stream: 200 header already committed. Close any open block and emit
+        # a terminal Anthropic error event. Class name only (no payload) to keep
+        # the message secret-free, mirroring the non-streaming 502 envelope.
         logger.warning("anthropic stream upstream failed: %s", type(exc).__name__)
         for out in state.close_open_block():
             yield out
@@ -103,9 +144,9 @@ async def responses_sse_to_anthropic(
         yield _error_event(state.failure_message)
         return
 
-    # Normal completion OR truncated/empty upstream (no response.completed): the
+    # Normal completion OR truncated upstream (no response.completed seen): the
     # terminal sequence is synthesized either way so the stream is always
-    # well-formed. A truncated stream falls back to end_turn.
+    # well-formed. A truncated stream falls back to end_turn with zero tokens.
     for out in state.close_open_block():
         yield out
     yield state.message_delta_event()
@@ -226,14 +267,18 @@ class _StreamState:
         self._block_index += 1
         if item_type == "function_call":
             self._open_kind = "tool_use"
+            # Coerce missing call_id/name to "" rather than None: a null id or
+            # name in content_block_start is malformed for Anthropic clients.
+            call_id = item.get("call_id") or ""
+            name = item.get("name") or ""
             out.append(
                 {
                     "type": "content_block_start",
                     "index": self._block_index,
                     "content_block": {
                         "type": "tool_use",
-                        "id": item.get("call_id"),
-                        "name": item.get("name"),
+                        "id": call_id,
+                        "name": name,
                         "input": {},
                     },
                 }

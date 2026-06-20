@@ -15,12 +15,19 @@ across backends without changing the frozen adapters or the parity harness.
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, AsyncIterator
 
 import httpx
 import pytest
 
 from conftest import FixtureAdapter
+from reverso.protocols.adapter import (
+    InputItemList,
+    ModelList,
+    ResponseEnvelope,
+    ResponsesRequest,
+    SSEEvent,
+)
 from reverso.protocols.anthropic_app import AnthropicMessagesApp
 
 ANTHROPIC_BACKENDS = ["copilot", "deepseek", "auggie"]
@@ -155,3 +162,67 @@ async def test_streaming_anthropic_version_echoed_from_header() -> None:
             assert resp.headers["anthropic-version"] == "2099-01-01"
             async for _ in resp.aiter_text():
                 pass
+
+
+# --- pre-stream failure -> 502 JSON (not a 200 event-stream) ----------------
+
+
+class _StreamFailsImmediatelyAdapter:
+    """Adapter whose stream_response raises on the first __anext__.
+
+    The exception message embeds a fake secret to verify it never leaks into
+    the Anthropic error envelope.
+    """
+
+    async def create_response(self, request: ResponsesRequest) -> ResponseEnvelope:
+        return ResponseEnvelope(id="resp_x", model=request.model)
+
+    async def stream_response(
+        self, request: ResponsesRequest
+    ) -> AsyncIterator[SSEEvent]:
+        raise RuntimeError("api_key=sk-SECRET-do-not-leak connect failed")
+        # unreachable; satisfies the async generator protocol
+        yield SSEEvent(event="x", data={})  # noqa: unreachable
+
+    async def list_models(self) -> ModelList:
+        return ModelList(data=[])
+
+    async def get_response(self, response_id: str) -> ResponseEnvelope:
+        return ResponseEnvelope(id=response_id, model="x")
+
+    async def list_input_items(self, response_id: str) -> InputItemList:
+        return InputItemList(response_id=response_id)
+
+
+@pytest.mark.asyncio
+async def test_stream_pre_first_event_failure_returns_502_not_200_stream() -> None:
+    """An adapter whose stream_response raises on the first __anext__ must yield
+    a non-streaming 502 Anthropic error envelope, NOT a 200 text/event-stream.
+
+    This pins the peek-first contract: the mapper propagates the exception before
+    yielding message_start, so _handle_streaming's pre-commit branch handles it.
+    """
+    adapters = {b: FixtureAdapter(b) for b in ANTHROPIC_BACKENDS}
+    adapters["copilot"] = _StreamFailsImmediatelyAdapter()
+    app = AnthropicMessagesApp(adapters)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://127.0.0.1:64946"
+    ) as client:
+        resp = await client.post(
+            _prefix("copilot"),
+            json={
+                "model": _BACKEND_MODEL["copilot"],
+                "max_tokens": 64,
+                "stream": True,
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+        )
+    assert resp.status_code == 502
+    assert "application/json" in resp.headers["content-type"]
+    body = resp.json()
+    assert body["type"] == "error"
+    assert body["error"]["type"] == "api_error"
+    # Secret-free: only the exception class name, never the payload text.
+    assert "sk-SECRET-do-not-leak" not in body["error"]["message"]
+    assert "RuntimeError" in body["error"]["message"]

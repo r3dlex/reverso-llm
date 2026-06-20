@@ -11,11 +11,13 @@ resolved /v1/messages POST is translated to a ResponsesRequest
 (anthropic_translate), dispatched to the resolved adapter, and mapped back to
 Anthropic shapes. Non-streaming returns the message body (HTTP 200); streaming
 pipes adapter.stream_response through the pure anthropic_stream mapper and writes
-each Anthropic event as ``event: <type>\ndata: <json>\n\n``. A backend failure
-before the first stream event becomes a secret-free 502 Anthropic error envelope;
-a failure after becomes an in-band terminal Anthropic ``error`` event. Capability
-gating / feature rejection (G005) and count_tokens / /v1/models (G006) remain
-clearly-marked stubs here.
+each Anthropic event as ``event: <type>\ndata: <json>\n\n``. The mapper uses a
+peek-first protocol: the 200 text/event-stream header is held until the first
+upstream event is in hand, so a connect/auth/setup failure returns a secret-free
+502 JSON error envelope. A mid-stream failure (after the 200 is committed) becomes
+an in-band terminal Anthropic ``error`` event. Capability gating / feature
+rejection (G005) and count_tokens / /v1/models (G006) remain clearly-marked stubs
+here.
 
 Routing (ADR 0006 D3):
   - POST /v1/messages: resolve the requested model to a backend through the
@@ -398,13 +400,18 @@ class AnthropicMessagesApp:
         stream_response is piped through responses_sse_to_anthropic, and each
         Anthropic event is written as ``event: <type>\\ndata: <json>\\n\\n``.
 
-        The 200 text/event-stream header is held until the FIRST Anthropic event:
-        a failure before that event (auth, connect, upstream non-2xx) still
-        returns a secret-free non-streaming 502 envelope; a failure AFTER the
-        header is committed surfaces as the mapper's in-band terminal Anthropic
-        error event, since the response line can no longer be changed. The mapper
-        itself guarantees a well-formed terminal sequence on empty/truncated
-        upstream, so the stream is always client-interpretable.
+        The mapper uses a peek-first protocol: it awaits the first upstream event
+        before yielding message_start, so a connect/auth/setup failure on the
+        first __anext__ propagates out of the mapper without any event having been
+        yielded. The 200 text/event-stream header is held until the mapper yields
+        its first event, so:
+          - Pre-stream failure (exception before the first yield): the header is
+            still uncommitted; this method returns a secret-free 502 JSON envelope.
+          - Empty upstream (zero Responses events): the mapper yields message_start
+            etc. without error; a 200 stream with the minimal terminal sequence.
+          - Mid-stream failure (exception after the first yield): the 200 header is
+            already committed; an in-band terminal Anthropic error event is the
+            only safe channel (emitted by the mapper itself).
         """
         adapter = self._adapters[backend]
         request = anthropic_request_to_responses(payload)

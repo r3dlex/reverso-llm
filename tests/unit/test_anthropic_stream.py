@@ -9,10 +9,15 @@ streaming grammar at the event level:
   - multi-block text(idx0) + tool_use(idx1): exact order with PAIRED stops;
   - Copilot verbatim superset: refusal.delta -> text_delta,
     reasoning_summary_text.delta + unknown event both DROPPED, NEVER raise;
-  - mid-stream failure (response.failed or upstream exception) -> terminal error;
+  - mid-stream failure (response.failed or upstream exception after first event)
+    -> terminal in-band error event;
+  - pre-stream failure (exception on the FIRST __anext__) -> propagates out of
+    the mapper, NO events yielded before the exception;
   - truncated upstream (no response.completed) -> still ends with message_delta +
     message_stop;
-  - empty upstream -> minimal terminal sequence.
+  - empty upstream -> minimal terminal sequence;
+  - orphan delta before any output_item.added -> safely dropped, well-formed;
+  - MINOR-1: missing call_id/name in function_call item -> coerced to "".
 """
 
 from __future__ import annotations
@@ -483,3 +488,127 @@ async def test_empty_upstream_minimal_terminal_sequence() -> None:
     out = await _collect([])
     assert _types(out) == ["message_start", "ping", "message_delta", "message_stop"]
     assert out[2]["delta"]["stop_reason"] == "end_turn"
+
+
+# --- peek-first: pre-stream exception propagates ----------------------------
+
+
+@pytest.mark.asyncio
+async def test_pre_stream_exception_propagates_before_any_yield() -> None:
+    """A failure on the very first __anext__ must escape the mapper unhandled.
+
+    The ASGI caller awaits the first yield from the mapper before committing the
+    200 header; if the first __anext__ raises, the mapper yields nothing, and the
+    caller returns a 502 JSON body instead.
+    """
+
+    async def _fail_immediately() -> AsyncIterator[SSEEvent]:
+        raise RuntimeError("auth failure sk-SECRET")
+        # unreachable; satisfies the type checker
+        yield SSEEvent(event="x", data={})  # noqa: unreachable
+
+    collected: list[dict[str, Any]] = []
+    with pytest.raises(RuntimeError, match="auth failure sk-SECRET"):
+        async for event in responses_sse_to_anthropic(
+            _fail_immediately(), model=MODEL, message_id=MESSAGE_ID
+        ):
+            collected.append(event)
+
+    # No events must have been yielded before the exception.
+    assert collected == []
+
+
+# --- MINOR-2: orphan delta before any output_item.added ---------------------
+
+
+@pytest.mark.asyncio
+async def test_orphan_text_delta_before_output_item_added_is_dropped() -> None:
+    """An output_text.delta arriving before any output_item.added is dropped.
+
+    No open block exists at that point (_open_kind is None), so the delta cannot
+    be attributed to a block. The stream must not crash and must remain well-formed.
+    """
+    message_output = [
+        {
+            "id": "msg_item",
+            "type": "message",
+            "role": "assistant",
+            "status": "completed",
+            "content": [{"type": "output_text", "text": "hello", "annotations": []}],
+        }
+    ]
+    events = [
+        *_prelude(),
+        # orphan delta: no output_item.added has been seen yet
+        _evt(
+            "response.output_text.delta",
+            item_id="msg_item",
+            output_index=0,
+            content_index=0,
+            delta="orphan text",
+        ),
+        # normal item sequence follows
+        *_text_item_events("hello"),
+        _completed(message_output, usage={"input_tokens": 1, "output_tokens": 1}),
+    ]
+    out = await _collect(events)
+
+    # Stream must be well-formed and must not contain the orphan text.
+    assert _types(out)[-2:] == ["message_delta", "message_stop"]
+    all_text = "".join(
+        e["delta"]["text"]
+        for e in out
+        if e["type"] == "content_block_delta" and e["delta"]["type"] == "text_delta"
+    )
+    assert "orphan text" not in all_text
+    assert "hello" in all_text
+
+
+# --- MINOR-1: missing call_id/name coerced to "" ----------------------------
+
+
+@pytest.mark.asyncio
+async def test_tool_use_missing_call_id_and_name_coerced_to_empty_string() -> None:
+    """A function_call item lacking call_id/name must not emit null in the block.
+
+    A null id or name in content_block_start is malformed for Anthropic clients;
+    missing values are coerced to "" so the block is at least structurally valid.
+    """
+    item_id = "fc_degraded"
+    events = [
+        *_prelude(),
+        _evt(
+            "response.output_item.added",
+            output_index=0,
+            item={
+                "id": item_id,
+                "type": "function_call",
+                "status": "in_progress",
+                # call_id and name intentionally absent
+                "arguments": "",
+            },
+        ),
+        _evt(
+            "response.function_call_arguments.delta",
+            item_id=item_id,
+            output_index=0,
+            delta="{}",
+        ),
+        _evt(
+            "response.output_item.done",
+            output_index=0,
+            item={"id": item_id, "type": "function_call", "status": "completed"},
+        ),
+        _completed(
+            [{"id": item_id, "type": "function_call", "call_id": None, "name": None}],
+            usage={"input_tokens": 1, "output_tokens": 1},
+        ),
+    ]
+    out = await _collect(events)
+
+    block_start = next(e for e in out if e["type"] == "content_block_start")
+    assert block_start["content_block"]["type"] == "tool_use"
+    assert block_start["content_block"]["id"] == ""
+    assert block_start["content_block"]["name"] == ""
+    # Stream must still be well-formed.
+    assert _types(out)[-2:] == ["message_delta", "message_stop"]
