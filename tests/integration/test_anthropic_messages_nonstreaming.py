@@ -133,9 +133,14 @@ async def test_auggie_text_only() -> None:
 
 
 @pytest.mark.asyncio
-async def test_stream_true_returns_501_not_implemented() -> None:
+async def test_stream_true_returns_event_stream_not_501() -> None:
+    # G004 replaced the G003 501 stub: stream=true now returns a real Anthropic
+    # SSE response. The detailed streaming contract lives in
+    # test_anthropic_messages_streaming.py; here we only pin that the stub is
+    # gone (200 text/event-stream, never the old 501 not_implemented).
     async with _build_client() as client:
-        resp = await client.post(
+        async with client.stream(
+            "POST",
             _prefix("deepseek"),
             json={
                 "model": _BACKEND_MODEL["deepseek"],
@@ -143,11 +148,11 @@ async def test_stream_true_returns_501_not_implemented() -> None:
                 "stream": True,
                 "messages": [{"role": "user", "content": "hello"}],
             },
-        )
-    assert resp.status_code == 501
-    body = resp.json()
-    assert body["type"] == "error"
-    assert body["error"]["type"] == "not_implemented"
+        ) as resp:
+            assert resp.status_code == 200
+            assert "text/event-stream" in resp.headers["content-type"]
+            async for _ in resp.aiter_text():
+                pass
 
 
 class _FailingAdapter:
