@@ -62,8 +62,13 @@ async def test_count_tokens_returns_positive_input_tokens() -> None:
 
 
 @pytest.mark.asyncio
-async def test_count_tokens_monotonic_in_word_length() -> None:
-    """A longer prompt yields an input_tokens count that never decreases."""
+async def test_count_tokens_increases_with_content_words() -> None:
+    """More content words yield a strictly larger input_tokens approximation.
+
+    The estimator word-counts the flattened prompt, so a prompt with strictly more
+    words sizes strictly larger; this pins the word-count behavior (not a real
+    tokenizer), per the G006 review nit.
+    """
     short = _messages_body(KNOWN_MODEL, "one two three")
     longer = _messages_body(
         KNOWN_MODEL, "one two three four five six seven eight nine ten"
