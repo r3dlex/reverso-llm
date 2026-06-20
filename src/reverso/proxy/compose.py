@@ -25,6 +25,10 @@ from __future__ import annotations
 from typing import Any, Awaitable, Callable
 
 from reverso.protocols.adapter import ProviderAdapter
+from reverso.protocols.anthropic_app import (
+    build_anthropic_app,
+    route_is_anthropic_surface,
+)
 from reverso.protocols.responses_app import build_app, split_provider_path
 
 Receive = Callable[[], Awaitable[dict[str, Any]]]
@@ -64,9 +68,13 @@ class CompositionRoot:
         self,
         *,
         gateway: Callable[[Scope, Receive, Send], Awaitable[None]] | None = None,
+        anthropic_app: Callable[[Scope, Receive, Send], Awaitable[None]] | None = None,
         legacy_app: Callable[[Scope, Receive, Send], Awaitable[None]] | None = None,
     ) -> None:
         self._gateway = gateway if gateway is not None else build_app(build_adapters())
+        self._anthropic_app = (
+            anthropic_app if anthropic_app is not None else build_anthropic_app()
+        )
         self._legacy_app = legacy_app
 
     def _resolve_legacy(self) -> Callable[[Scope, Receive, Send], Awaitable[None]]:
@@ -78,7 +86,17 @@ class CompositionRoot:
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope.get("type") == "http":
-            routed = split_provider_path(str(scope.get("path", "")))
+            path = str(scope.get("path", ""))
+            # The Anthropic Messages surface is checked BEFORE the Responses
+            # split so /v1/messages and /<profile>/v1/messages (including the
+            # claimed /claude/v1/messages, which the Anthropic app answers with
+            # its own not_found_error 404) route to the Anthropic app and never
+            # reach the legacy LiteLLM app. Responses (/v1/responses, /v1/models)
+            # routing is left byte-unchanged.
+            if route_is_anthropic_surface(path):
+                await self._anthropic_app(scope, receive, send)
+                return
+            routed = split_provider_path(path)
             if routed is not None:
                 await self._gateway(scope, receive, send)
                 return
