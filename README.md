@@ -124,6 +124,8 @@ DeepSeek first-party modes: because `/deepseek/v1` no longer inherits the legacy
 
 Reverso profile routing keeps Codex metadata stable for DeepSeek and Claude by letting Codex see GPT model names while Reverso rewrites requests after they enter a provider profile path. Do not put provider model ids in Reverso profile files. Use `model = "gpt-5.5"`, `model = "gpt-5.4"`, `model = "gpt-5.4-mini"`, or `model = "gpt-5.3-codex-spark"` in Reverso profile files and select the provider with `model_provider`. MiniMax is the exception because it is direct Codex-only and should use `model = "MiniMax-M3"`.
 
+`reverso-codex-sync` also feeds Codex's static `/model` picker. It always keeps built-in GPT (Codex) defaults selectable as bare model ids and inserts top-level `model = "gpt-5.5"` only when the user has not already selected another model. Reverso provider models are additive: possible collisions are selector/catalog-qualified as `copilot/<model>`, `auggie/<model>`, or `agy/<model>`, while MiniMax, DeepSeek, GPT (Codex), and Claude (Claude Code) remain bare. This prevents Reverso-discovered models from superseding the built-in Codex provider names.
+
 | Codex profile model | DeepSeek Reverso profile | Claude Reverso profile | MiniMax direct Codex | Direct Codex /v1 |
 |---|---|---|---|---|
 | `gpt-5.5` | `deepseek-v4-pro` | `claude-opus-4-8` | `MiniMax-M3` | `gpt-5.5` |
