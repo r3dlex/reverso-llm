@@ -141,21 +141,27 @@ def resolve_anthropic_backend(model: str | None) -> str | None:
     return backend
 
 
-def cross_check_anthropic_models() -> None:
-    """Build-time lint: every indexed Anthropic-routed model exists in the config.
+def cross_check_anthropic_models(path: Path | None = None) -> None:
+    """Build-time lint: every Anthropic-routed model exists in the config.
 
-    Asserts the model->backend index was built from the litellm_config data (no
-    runtime legacy import) and that every indexed model resolves to a backend that
-    is exposed on the Anthropic surface. Raises RuntimeError on drift so an
-    inconsistency is caught at import rather than at request time.
+    Rebuilds the model->backend index from the SAME config path it reads, so the
+    check is self-consistent even when REVERSO_CONFIG changes between import-time
+    and a later re-invocation (MINOR-2 robust rebuild). Asserts that every model
+    in the freshly-built index exists in that same config's model_list, and that
+    each resolved backend is exposed on the Anthropic surface. Raises RuntimeError
+    on drift so an inconsistency is caught early rather than at request time.
+
+    ``path`` is forwarded to ``_build_model_index`` and ``_load_model_list`` so
+    tests can inject a temporary config without touching the environment.
     """
+    fresh_index = _build_model_index(path)
     config_names = {
         _normalize_model(row["model_name"])
-        for row in _load_model_list()
+        for row in _load_model_list(path)
         if isinstance(row.get("model_name"), str)
     }
     anthropic_backends = SURFACE_BACKENDS["anthropic"]
-    for model_name, backend in _MODEL_INDEX.items():
+    for model_name, backend in fresh_index.items():
         if model_name not in config_names:
             raise RuntimeError(
                 "surface_registry drift: indexed Anthropic model "

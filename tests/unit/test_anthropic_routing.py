@@ -106,6 +106,10 @@ def test_route_is_anthropic_surface() -> None:
     assert route_is_anthropic_surface("/copilot/v1/messages")
     assert route_is_anthropic_surface("/auggie/v1/messages")
     assert route_is_anthropic_surface("/claude/v1/messages")
+    # Mixed-case profile segments are normalized and claimed (MINOR-1).
+    assert route_is_anthropic_surface("/CLAUDE/v1/messages")
+    assert route_is_anthropic_surface("/Claude/v1/messages")
+    assert route_is_anthropic_surface("/DEEPSEEK/v1/messages")
     # Responses paths are NOT claimed by the Anthropic surface.
     assert not route_is_anthropic_surface("/v1/responses")
     assert not route_is_anthropic_surface("/v1/models")
@@ -168,9 +172,7 @@ async def test_deepseek_model_auto_routes_to_stub() -> None:
 @pytest.mark.parametrize("profile", ["deepseek", "copilot"])
 async def test_profile_prefix_reaches_named_backend(profile: str) -> None:
     app = build_anthropic_app(_stub_adapters())
-    status, _headers, body = await _drive(
-        app, "POST", f"/{profile}/v1/messages", b"{}"
-    )
+    status, _headers, body = await _drive(app, "POST", f"/{profile}/v1/messages", b"{}")
     # Per-profile prefixes pin the backend and bypass model resolution; the stub
     # is reached (status 200, not_implemented) and names the pinned backend.
     assert status == 200
@@ -216,15 +218,45 @@ def test_build_rejects_unknown_backend() -> None:
 
 
 @pytest.mark.asyncio
+async def test_uppercase_claude_prefix_claimed_and_returns_anthropic_404() -> None:
+    """/CLAUDE/v1/messages is claimed by the Anthropic surface, never legacy (MINOR-1).
+
+    Profile segments are normalized to lowercase before the prefix membership
+    check, so /CLAUDE and /Claude are treated identically to /claude.
+    """
+    legacy_calls: list[str] = []
+
+    async def _legacy_tripwire(scope: Any, receive: Any, send: Any) -> None:
+        legacy_calls.append(str(scope.get("path", "")))
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"{}", "more_body": False})
+
+    root = CompositionRoot(
+        anthropic_app=build_anthropic_app(_stub_adapters()),
+        legacy_app=_legacy_tripwire,
+    )
+    for path in ("/CLAUDE/v1/messages", "/Claude/v1/messages"):
+        status, _headers, body = await _drive(
+            root, "POST", path, b'{"model":"claude-opus"}'
+        )
+        assert status == 404, f"{path} must return 404"
+        assert body is not None
+        assert body["type"] == "error"
+        assert body["error"]["type"] == "not_found_error"
+    assert legacy_calls == [], (
+        "mixed-case /CLAUDE/v1/messages must not reach the legacy app; "
+        f"observed {legacy_calls!r}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_claude_prefix_returns_anthropic_404_not_delegated_to_legacy() -> None:
     """POST /claude/v1/messages -> Anthropic not_found_error 404, never legacy."""
     legacy_calls: list[str] = []
 
     async def _legacy_tripwire(scope: Any, receive: Any, send: Any) -> None:
         legacy_calls.append(str(scope.get("path", "")))
-        await send(
-            {"type": "http.response.start", "status": 200, "headers": []}
-        )
+        await send({"type": "http.response.start", "status": 200, "headers": []})
         await send({"type": "http.response.body", "body": b"{}", "more_body": False})
 
     root = CompositionRoot(

@@ -14,7 +14,6 @@ from pathlib import Path
 
 import pytest
 
-from reverso.protocols import surface_registry
 from reverso.protocols.surface_registry import (
     SURFACE_BACKENDS,
     _build_model_index,
@@ -75,16 +74,12 @@ def test_cross_check_passes_against_real_config() -> None:
     cross_check_anthropic_models()
 
 
-def test_cross_check_detects_drift(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A model indexed but absent from the config must raise (drift detection)."""
-    # Point the registry at a config that has NO deepseek rows, then inject a
-    # stale index entry; the cross-check must catch the missing model.
+def test_cross_check_passes_on_minimal_config(tmp_path: Path) -> None:
+    """cross_check passes when config contains only valid deepseek rows."""
     config = tmp_path / "litellm_config.yaml"
     config.write_text(
         textwrap.dedent(
-            """
+            """\
             model_list:
               - model_name: deepseek-v4-pro
                 litellm_params:
@@ -92,24 +87,43 @@ def test_cross_check_detects_drift(
             """
         )
     )
-    monkeypatch.setenv("REVERSO_CONFIG", str(config))
-    # Index claims a model that is not in this config -> drift.
-    monkeypatch.setattr(
-        surface_registry, "_MODEL_INDEX", {"deepseek-ghost": "deepseek"}
-    )
-    with pytest.raises(RuntimeError, match="drift"):
-        cross_check_anthropic_models()
+    cross_check_anthropic_models(config)
 
 
 def test_cross_check_detects_non_surface_backend(
-    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A model mapping to a backend not on the Anthropic surface must raise."""
-    monkeypatch.setattr(
-        surface_registry, "_MODEL_INDEX", {"deepseek-v4-pro": "claude"}
+    """A model that resolves to a backend not in SURFACE_BACKENDS raises RuntimeError.
+
+    cross_check rebuilds the index from the config path (MINOR-2 robust rebuild).
+    The registry derives backends from model-name prefixes, so we inject a bad
+    derivation by monkeypatching _backend_for_model_name to return 'claude' for
+    deepseek rows. The freshly-built index will contain {deepseek-v4-pro: 'claude'},
+    and the backend check must catch that 'claude' is not an Anthropic surface backend.
+    """
+    import reverso.protocols.surface_registry as _reg
+
+    config = tmp_path / "litellm_config.yaml"
+    config.write_text(
+        textwrap.dedent(
+            """\
+            model_list:
+              - model_name: deepseek-v4-pro
+                litellm_params:
+                  model: custom_openai/deepseek-v4-pro
+            """
+        )
     )
+    original = _reg._backend_for_model_name
+
+    def _bad_backend(model_name: str) -> str | None:
+        if "deepseek" in model_name.lower():
+            return "claude"
+        return original(model_name)
+
+    monkeypatch.setattr(_reg, "_backend_for_model_name", _bad_backend)
     with pytest.raises(RuntimeError, match="drift"):
-        cross_check_anthropic_models()
+        cross_check_anthropic_models(config)
 
 
 def test_build_index_skips_claude_rows() -> None:

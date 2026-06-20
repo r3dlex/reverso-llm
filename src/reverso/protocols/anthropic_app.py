@@ -82,6 +82,10 @@ def split_anthropic_path(path: str) -> AnthropicRoute | None:
     if len(parts) < 4:
         return None
     _, profile, version, rest = parts
+    # Normalize profile to lowercase so /CLAUDE/v1/messages and /Claude/v1/messages
+    # are claimed by this surface and receive the Anthropic not_found_error 404,
+    # mirroring surface_registry model normalization (MINOR-1).
+    profile = profile.lower()
     if profile not in _PROFILE_PREFIXES or version != "v1":
         return None
     if f"/{rest}" != _MESSAGES_PATH[len("/v1") :]:
@@ -281,9 +285,7 @@ class AnthropicMessagesApp:
             anthropic_version=anthropic_version,
         )
 
-    def _resolve_backend(
-        self, route: AnthropicRoute, model: str | None
-    ) -> str | None:
+    def _resolve_backend(self, route: AnthropicRoute, model: str | None) -> str | None:
         """Resolve the backend for a route, or None to yield a 404.
 
         Per-profile prefixes pin the named backend and bypass model resolution,
