@@ -10,6 +10,8 @@ A subscription-backed local LLM gateway. Runs on `127.0.0.1:64946`. Serves four 
 
 The composition root (`reverso.proxy.compose`) owns port 64946: it routes the four first-party prefixes to the Responses gateway and delegates every other path to the legacy LiteLLM stack as a fallthrough. See `docs/architecture/adr/0003-single-port-composition-auggie-deepseek.md`.
 
+Reverso also serves an inbound Anthropic Messages API surface (`/v1/messages`) on the same port for clients like Claude Code and the Claude Agent SDK pointed at Reverso via `ANTHROPIC_BASE_URL`. It is inbound only: Reverso does not call `api.anthropic.com`. Messages requests are model-routed by default to the copilot, deepseek, and auggie backends through a single first-party authority (with optional per-profile prefixes such as `/deepseek/v1/messages`); the claude backend is excluded because Claude Code talking to its own backend is circular. See `docs/architecture/adr/0006-anthropic-messages-api-surface.md`.
+
 **Personal use only.** Single user, single machine. Not for sharing or resale.
 
 See `docs/01-brd.md` for the full rationale.

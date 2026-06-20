@@ -332,3 +332,60 @@ DeepSeek JSON output and thinking mode start `unverified` and promote to `pass` 
 their survival tests are green: `response_format` survives end-to-end to the DeepSeek call
 (JSON), and a two-turn fixture carries turn-1 `reasoning_content` into the turn-2 request or
 rejects clearly (thinking).
+
+## Inbound Anthropic Messages Surface Increment (ADR 0006)
+
+This section augments, and does not replace, the increments above. It defines the Milestone 1
+addition of an inbound Anthropic Messages API surface that coexists with the OpenAI Responses
+surface on the same loopback port. The authoritative decision record is
+`docs/architecture/adr/0006-anthropic-messages-api-surface.md`; the working spec and plan are
+`.omc/specs/deep-interview-anthropic-api-surface.md` and
+`.omc/plans/ralplan-anthropic-api-surface.md`.
+
+### Increment goal
+
+Claude Code and the Claude Agent SDK target Reverso via `ANTHROPIC_BASE_URL` over the Anthropic
+Messages surface (`/v1/messages`, `/v1/messages/count_tokens`, `/v1/models`) on
+`127.0.0.1:64946`, with Claude-Code-observed parity. The surface is inbound only (Reverso never
+calls `api.anthropic.com`); Messages traffic is model-routed by default to the copilot, deepseek,
+and auggie backends through a single first-party authority, with optional per-profile prefixes.
+The claude backend is excluded (circular).
+
+### First deliverable (current increment): docs first
+
+The only in-scope deliverable for the current increment is documentation: ADR 0006 plus these
+companion doc sections (this section, `docs/03-architecture.md` Section 13, the README paragraph,
+and the AGENTS.md line). No source implementation, translation layer, registry, or tests are
+written until the docs and ADR are reviewed. Implementation then proceeds via per-goal PRs.
+
+### Increment boundary (in scope)
+
+- Update canonical docs before code (done by this increment).
+- A pure-ASGI `AnthropicMessagesApp` plus a stateless `anthropic_translate` module mounted in
+  `reverso.proxy.compose`, translating Anthropic Messages to and from the FROZEN
+  `ProviderAdapter` Responses contract and reusing `protocols/replay.py`. The Protocol is not
+  changed.
+- A `surface_registry` that is the single first-party model-to-backend authority, reading
+  `config/litellm_config.yaml` via `yaml.safe_load` as data and never importing the legacy app,
+  with a data-driven `SURFACE_BACKENDS` exposure table (Anthropic surface = copilot, deepseek,
+  auggie; claude excluded).
+- Default auto-routing plus optional per-profile prefixes; unknown OR claude model -> 404
+  `not_found_error`; missing `anthropic-version` -> default `"2023-06-01"` and echo; Anthropic
+  error envelope.
+- A per-(feature x backend) capability ceiling enforced as structured errors, with streamed
+  thinking deltas and honored `cache_control` as hard `invalid_request_error` cases, and
+  count_tokens as a documented word-count approximation.
+
+### Increment non-goals
+
+- No reverso-as-Anthropic-client (no `api.anthropic.com` upstream).
+- No Responses-surface regression.
+- No Batches or Files API in Milestone 1.
+- The claude backend is not exposed on the Anthropic surface.
+- codex-cli is Milestone 2 (Anthropic-surface-only, a one-row `SURFACE_BACKENDS` add).
+
+### Relationship to the increments above
+
+This increment is orthogonal to the Responses providers and Auggie/DeepSeek increments. It adds a
+second inbound dialect over the same frozen backends and the same loopback port; it does not
+change the frozen `ProviderAdapter` Protocol or the existing Responses behavior.
