@@ -16,20 +16,30 @@ peek-first protocol: the 200 text/event-stream header is held until the first
 upstream event is in hand, so a connect/auth/setup failure returns a secret-free
 502 JSON error envelope. A mid-stream failure (after the 200 is committed) becomes
 an in-band terminal Anthropic ``error`` event. Capability gating / feature
-rejection (G005) and count_tokens / /v1/models (G006) remain clearly-marked stubs
-here.
+rejection (G005) is enforced before dispatch. The two auxiliary endpoints (G006)
+are implemented: POST /v1/messages/count_tokens returns a documented word-count
+APPROXIMATION of input_tokens (not a real tokenizer), and the bare GET /v1/models
+returns the Anthropic-shaped listing of the surface_registry Anthropic-surface
+model set (never a claude model).
 
 Routing (ADR 0006 D3):
   - POST /v1/messages: resolve the requested model to a backend through the
     single authority (surface_registry). An unknown model OR any claude model
     returns HTTP 404 with the Anthropic not_found_error envelope (claude is
-    excluded for the D2 circularity reason). A resolved backend reaches the
-    create stub.
-  - Per-profile prefixes /copilot/v1/messages, /deepseek/v1/messages, and
-    /auggie/v1/messages pin the named backend and bypass model auto-resolution.
-  - /claude/v1/messages is claimed by this surface so a claude-pointed client
-    gets an Anthropic-shaped 404, but resolution still yields None and the
-    request is served the not_found_error 404 here, never delegated to legacy.
+    excluded for the D2 circularity reason).
+  - POST /v1/messages/count_tokens: resolve the backend the same way (unknown OR
+    claude model -> 404), then return {"input_tokens": N} as a documented
+    word-count approximation. No capability gating is applied (it is a pre-flight
+    sizing call, not a served feature).
+  - GET /v1/models: the BARE path only. Returns the Anthropic-shaped listing of
+    the Anthropic-surface model set; no per-profile /<provider>/v1/models is
+    claimed here (that listing belongs to the Responses gateway).
+  - Per-profile prefixes /copilot, /deepseek, /auggie pin the named backend on the
+    Messages family and bypass model auto-resolution.
+  - /claude/v1/messages[/count_tokens] is claimed by this surface so a
+    claude-pointed client gets an Anthropic-shaped 404, but resolution still
+    yields None and the request is served the not_found_error 404 here, never
+    delegated to legacy.
   - A missing anthropic-version header defaults to "2023-06-01" and is echoed on
     the response; it is never a 400.
 """
@@ -51,9 +61,10 @@ from reverso.protocols.anthropic_translate import (
     anthropic_request_to_responses,
     responses_envelope_to_anthropic,
 )
-from reverso.protocols.replay import new_message_id
+from reverso.protocols.replay import build_prompt, estimate_usage, new_message_id
 from reverso.protocols.surface_registry import (
     SURFACE_BACKENDS,
+    list_anthropic_surface_models,
     resolve_anthropic_backend,
 )
 
@@ -66,6 +77,12 @@ Send = Callable[[dict[str, Any]], Awaitable[None]]
 # Default Anthropic API version echoed when the client omits anthropic-version.
 DEFAULT_ANTHROPIC_VERSION = "2023-06-01"
 
+# Fixed surface epoch for GET /v1/models created_at. The Anthropic-surface models
+# are first-party CLI-backed and carry no provider creation timestamp, so the
+# listing reports a stable ISO 8601 value (the ADR 0006 acceptance date) rather
+# than a per-request now(), keeping the listing deterministic and cache-friendly.
+_MODELS_CREATED_AT = "2026-06-20T00:00:00Z"
+
 # The Anthropic-surface backends with optional per-profile path prefixes. claude
 # is intentionally a prefix this surface CLAIMS (route_is_anthropic_surface) but
 # never a backend it serves: a /claude/v1/messages request is routed here and
@@ -73,19 +90,37 @@ DEFAULT_ANTHROPIC_VERSION = "2023-06-01"
 _ANTHROPIC_SURFACE_BACKENDS = SURFACE_BACKENDS["anthropic"]
 _PROFILE_PREFIXES = frozenset(_ANTHROPIC_SURFACE_BACKENDS | {"claude"})
 
-# The Messages local path this surface serves (G002 routes only /v1/messages;
-# count_tokens and models are G006).
+# The Anthropic local paths this surface serves. G002 routed only /v1/messages;
+# G006 adds /v1/messages/count_tokens (a pre-flight sizing POST) and the bare
+# GET /v1/models listing.
 _MESSAGES_PATH = "/v1/messages"
+_COUNT_TOKENS_PATH = "/v1/messages/count_tokens"
+_MODELS_PATH = "/v1/models"
+
+# Route kinds: which Anthropic endpoint a request targets.
+_KIND_MESSAGES = "messages"
+_KIND_COUNT_TOKENS = "count_tokens"
+_KIND_MODELS = "models"
+
+# The Messages-family local paths (everything but /v1/models) that support an
+# optional per-profile prefix and require a POST.
+_MESSAGES_KIND_BY_REST = {
+    "messages": _KIND_MESSAGES,
+    "messages/count_tokens": _KIND_COUNT_TOKENS,
+}
 
 
 @dataclass(frozen=True)
 class AnthropicRoute:
-    """A request split into an optional profile prefix and the Messages path.
+    """A request split into a route kind and an optional profile prefix.
 
-    ``profile`` is None for the bare /v1/messages auto-routing path, or the named
-    backend (copilot/deepseek/auggie/claude) for a /<profile>/v1/messages path.
+    ``kind`` is one of messages / count_tokens / models. ``profile`` is None for
+    the bare auto-routing paths, or the named backend
+    (copilot/deepseek/auggie/claude) for a /<profile>/v1/... path. /v1/models is
+    a bare-only listing (no profile, GET).
     """
 
+    kind: str
     profile: str | None
     path: str
 
@@ -93,34 +128,50 @@ class AnthropicRoute:
 def split_anthropic_path(path: str) -> AnthropicRoute | None:
     """Return an AnthropicRoute for an Anthropic-surface path, else None.
 
-    Matches the bare /v1/messages auto-routing path and the per-profile
-    /<profile>/v1/messages paths for this surface's prefixes (copilot, deepseek,
-    auggie, and the claimed-but-never-served claude).
+    Matches the bare /v1/messages and /v1/messages/count_tokens auto-routing
+    paths, the per-profile /<profile>/v1/messages[/count_tokens] paths for this
+    surface's prefixes (copilot, deepseek, auggie, and the claimed-but-never-served
+    claude), and the bare GET listing /v1/models. /v1/models is bare-only: the
+    per-profile /<provider>/v1/models listing belongs to the Responses gateway and
+    is intentionally NOT claimed here.
     """
     stripped = path.rstrip("/") or "/"
     if stripped == _MESSAGES_PATH:
-        return AnthropicRoute(profile=None, path=_MESSAGES_PATH)
-    parts = stripped.split("/", 3)
-    if len(parts) < 4:
-        return None
-    _, profile, version, rest = parts
-    # Normalize profile to lowercase so /CLAUDE/v1/messages and /Claude/v1/messages
-    # are claimed by this surface and receive the Anthropic not_found_error 404,
-    # mirroring surface_registry model normalization (MINOR-1).
-    profile = profile.lower()
-    if profile not in _PROFILE_PREFIXES or version != "v1":
-        return None
-    if f"/{rest}" != _MESSAGES_PATH[len("/v1") :]:
-        # Only /v1/messages (not count_tokens/models) is served in G002.
-        return None
-    return AnthropicRoute(profile=profile, path=_MESSAGES_PATH)
+        return AnthropicRoute(kind=_KIND_MESSAGES, profile=None, path=_MESSAGES_PATH)
+    if stripped == _COUNT_TOKENS_PATH:
+        return AnthropicRoute(
+            kind=_KIND_COUNT_TOKENS, profile=None, path=_COUNT_TOKENS_PATH
+        )
+    if stripped == _MODELS_PATH:
+        return AnthropicRoute(kind=_KIND_MODELS, profile=None, path=_MODELS_PATH)
+    # Try a per-profile Messages-family path: /<profile>/v1/messages[/count_tokens].
+    profile_parts = stripped.split("/", 3)
+    if len(profile_parts) == 4:
+        _, profile, profile_version, profile_rest = profile_parts
+        # Normalize profile to lowercase so /CLAUDE/... is claimed by this surface
+        # and receives the Anthropic not_found_error 404, mirroring
+        # surface_registry model normalization (MINOR-1).
+        profile = profile.lower()
+        kind = _MESSAGES_KIND_BY_REST.get(profile_rest)
+        if (
+            profile in _PROFILE_PREFIXES
+            and profile_version == "v1"
+            and kind is not None
+        ):
+            target = _MESSAGES_PATH if kind == _KIND_MESSAGES else _COUNT_TOKENS_PATH
+            return AnthropicRoute(kind=kind, profile=profile, path=target)
+    return None
 
 
 def route_is_anthropic_surface(path: str) -> bool:
     """Whether ``path`` belongs to the Anthropic Messages surface.
 
-    The composition root calls this BEFORE the Responses split so /v1/messages
-    and /<profile>/v1/messages (including /claude/v1/messages) route here.
+    The composition root calls this BEFORE the Responses split so /v1/messages,
+    /v1/messages/count_tokens, the bare /v1/models, and the per-profile
+    /<profile>/v1/messages[/count_tokens] paths (including the claimed claude
+    prefix) route here. The bare /v1/models is claimed here, so it no longer falls
+    through to the legacy app; the per-profile /<provider>/v1/models stays with the
+    Responses gateway (split_anthropic_path does not match it).
     """
     return split_anthropic_path(path) is not None
 
@@ -300,6 +351,24 @@ class AnthropicMessagesApp:
             )
             return
         method = str(scope.get("method", "GET")).upper()
+
+        # GET /v1/models is the only GET route this surface serves; it takes no
+        # body and resolves no per-request backend (it is a static listing of the
+        # Anthropic-surface model set). The Messages family (/v1/messages and
+        # /v1/messages/count_tokens) is POST-only.
+        if route.kind == _KIND_MODELS:
+            if method != "GET":
+                await _send_error(
+                    send,
+                    404,
+                    "not_found_error",
+                    "not found",
+                    anthropic_version=anthropic_version,
+                )
+                return
+            await self._handle_models(send, anthropic_version=anthropic_version)
+            return
+
         if method != "POST":
             await _send_error(
                 send,
@@ -319,13 +388,35 @@ class AnthropicMessagesApp:
         backend = self._resolve_backend(route, model)
         if backend is None:
             # Unknown model OR a claude model (auto path), or the claimed
-            # /claude/v1/messages prefix: Anthropic not_found_error 404 envelope.
+            # /claude/v1/messages[/count_tokens] prefix: not_found_error 404. This
+            # is consistent across /v1/messages and /v1/messages/count_tokens so a
+            # pre-flight sizing call fails the same way the real call would.
             await _send_error(
                 send,
                 404,
                 "not_found_error",
                 "model not found on the Anthropic surface",
                 anthropic_version=anthropic_version,
+            )
+            return
+
+        # count_tokens is a pre-flight SIZING call: it resolves the backend (so an
+        # unknown/claude model 404s exactly as /v1/messages would) but does NOT
+        # apply per-backend capability gating. Gating rejects feature x backend
+        # cells that cannot be SERVED; sizing a prompt does not serve anything, so
+        # a client may legitimately size a request before deciding to send it.
+        if route.kind == _KIND_COUNT_TOKENS:
+            if payload is None:
+                await _send_error(
+                    send,
+                    400,
+                    "invalid_request_error",
+                    "request body must be a JSON object",
+                    anthropic_version=anthropic_version,
+                )
+                return
+            await self._handle_count_tokens(
+                payload, send, anthropic_version=anthropic_version
             )
             return
 
@@ -492,6 +583,71 @@ class AnthropicMessagesApp:
             # defensive; commit the header so the client sees a valid stream.
             await _start_anthropic_stream(send, anthropic_version=anthropic_version)
         await send({"type": "http.response.body", "body": b"", "more_body": False})
+
+    async def _handle_count_tokens(
+        self,
+        payload: dict[str, Any],
+        send: Send,
+        *,
+        anthropic_version: str,
+    ) -> None:
+        """Return a documented word-count APPROXIMATION of input_tokens (AC7).
+
+        This is NOT a real tokenizer. The Messages body is translated to a
+        ResponsesRequest with the same translator the real call uses, the prompt
+        is flattened via replay.build_prompt, and replay.estimate_usage counts
+        whitespace-delimited words (ADR 0006: count_tokens is translated (approx),
+        labeled an estimate in the docs, never represented as exact provider
+        tokenization). The response is the Anthropic shape {"input_tokens": N}.
+        """
+        request = anthropic_request_to_responses(payload)
+        prompt = build_prompt(request)
+        # estimate_usage word-counts both prompt and output; only the input side
+        # is meaningful for a pre-flight sizing call (there is no output yet).
+        input_tokens = estimate_usage(prompt, "")["input_tokens"]
+        await _send_json(
+            send,
+            200,
+            {"input_tokens": input_tokens},
+            anthropic_version=anthropic_version,
+        )
+
+    async def _handle_models(self, send: Send, *, anthropic_version: str) -> None:
+        """Return the Anthropic-shaped /v1/models listing (AC8).
+
+        Derived from the single surface_registry authority's Anthropic-surface
+        model set, so the listing and the router never disagree and no claude
+        model is ever present (the registry index excludes the claude family). The
+        shape mirrors the Anthropic Models API: a ``data`` array of
+        {"type":"model","id","display_name","created_at"} rows plus first_id /
+        last_id / has_more. ``created_at`` is a fixed surface epoch (the models are
+        first-party CLI-backed and have no provider creation timestamp); it is a
+        stable ISO 8601 value rather than a per-request now() so the listing is
+        deterministic and cache-friendly.
+        """
+        rows = list_anthropic_surface_models()
+        data = [
+            {
+                "type": "model",
+                "id": row["id"],
+                "display_name": row["display_name"],
+                "created_at": _MODELS_CREATED_AT,
+            }
+            for row in rows
+        ]
+        first_id = data[0]["id"] if data else None
+        last_id = data[-1]["id"] if data else None
+        await _send_json(
+            send,
+            200,
+            {
+                "data": data,
+                "first_id": first_id,
+                "last_id": last_id,
+                "has_more": False,
+            },
+            anthropic_version=anthropic_version,
+        )
 
     def _resolve_backend(self, route: AnthropicRoute, model: str | None) -> str | None:
         """Resolve the backend for a route, or None to yield a 404.

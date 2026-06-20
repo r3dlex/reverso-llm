@@ -265,9 +265,15 @@ async def test_composition_root_bypasses_legacy_for_first_party_prefixes() -> No
     )
 
     # Control: a non-first-party path must still fall through to the legacy app.
-    control_status = await _drive(root, "GET", "/v1/models")
+    # The bare /v1/models is now claimed by the Anthropic surface (ADR 0006 G006),
+    # so this control uses /v1/chat/completions instead: a genuinely non-first-party
+    # path that neither the Anthropic surface nor the Responses gateway claims, so
+    # it still proves the dispatcher delegates fallthrough rather than swallowing
+    # everything. The quarantine guarantee is unchanged: first-party prefixes never
+    # reach the legacy app (asserted above), only true fallthrough does.
+    control_status = await _drive(root, "POST", "/v1/chat/completions")
     assert control_status == 200
-    assert legacy_calls == ["/v1/models"], (
+    assert legacy_calls == ["/v1/chat/completions"], (
         "non-first-party paths must be delegated to the legacy app; "
         f"observed {legacy_calls!r}"
     )

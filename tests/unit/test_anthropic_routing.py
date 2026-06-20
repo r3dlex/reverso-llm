@@ -110,9 +110,16 @@ def test_route_is_anthropic_surface() -> None:
     assert route_is_anthropic_surface("/CLAUDE/v1/messages")
     assert route_is_anthropic_surface("/Claude/v1/messages")
     assert route_is_anthropic_surface("/DEEPSEEK/v1/messages")
-    # Responses paths are NOT claimed by the Anthropic surface.
+    # G006 auxiliary paths are claimed by the Anthropic surface.
+    assert route_is_anthropic_surface("/v1/messages/count_tokens")
+    assert route_is_anthropic_surface("/deepseek/v1/messages/count_tokens")
+    # The BARE /v1/models is claimed by the Anthropic surface (ADR 0006 G006).
+    assert route_is_anthropic_surface("/v1/models")
+    # Responses paths are NOT claimed by the Anthropic surface. The per-provider
+    # /<provider>/v1/models listing stays with the Responses gateway: only the
+    # bare /v1/models is claimed here.
     assert not route_is_anthropic_surface("/v1/responses")
-    assert not route_is_anthropic_surface("/v1/models")
+    assert not route_is_anthropic_surface("/deepseek/v1/models")
     assert not route_is_anthropic_surface("/deepseek/v1/responses")
 
 
