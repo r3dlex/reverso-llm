@@ -42,6 +42,10 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
 from reverso.protocols.adapter import ProviderAdapter
+from reverso.protocols.anthropic_feature_gate import (
+    AnthropicFeatureRejected,
+    gate_anthropic_features,
+)
 from reverso.protocols.anthropic_stream import responses_sse_to_anthropic
 from reverso.protocols.anthropic_translate import (
     anthropic_request_to_responses,
@@ -334,6 +338,26 @@ class AnthropicMessagesApp:
                 400,
                 "invalid_request_error",
                 "request body must be a JSON object",
+                anthropic_version=anthropic_version,
+            )
+            return
+
+        # Per-backend capability gating (ADR 0006 capability ceiling, G005). Runs
+        # AFTER backend resolution and BEFORE the adapter is dispatched, on BOTH
+        # the streaming and non-streaming paths: a streaming request that requests
+        # an unsupported feature is rejected here with a 400 JSON body, before any
+        # text/event-stream header is committed (never a 200 event-stream).
+        try:
+            gate_anthropic_features(payload, backend)
+        except AnthropicFeatureRejected as rejected:
+            # Use str(rejected) so the 400 message is rendered by the single
+            # source in AnthropicFeatureRejected.__init__; the app never
+            # re-formats it independently.
+            await _send_error(
+                send,
+                400,
+                "invalid_request_error",
+                str(rejected),
                 anthropic_version=anthropic_version,
             )
             return
