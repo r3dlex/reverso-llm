@@ -5,13 +5,19 @@ the OpenAI Responses surface. This module mirrors responses_app.py: it is pure
 ASGI (no FastAPI) and does NOT import the legacy LiteLLM app or any ``litellm``
 module; the LiteLLM quarantine guard test asserts that invariant.
 
-G003 scope: routing/dispatch (G002) plus the NON-STREAMING Messages translation
-are implemented. A resolved /v1/messages POST is translated to a ResponsesRequest
-(anthropic_translate), dispatched to the resolved adapter's create_response, and
-the ResponseEnvelope is mapped back to an Anthropic message body (HTTP 200). A
-backend failure becomes a secret-free 502 Anthropic error envelope. SSE streaming
-(stream=true, G004), capability gating / feature rejection (G005), and
-count_tokens / /v1/models (G006) remain clearly-marked stubs here.
+G004 scope: routing/dispatch (G002), the NON-STREAMING Messages translation
+(G003), and Anthropic-native SSE streaming (stream=true) are implemented. A
+resolved /v1/messages POST is translated to a ResponsesRequest
+(anthropic_translate), dispatched to the resolved adapter, and mapped back to
+Anthropic shapes. Non-streaming returns the message body (HTTP 200); streaming
+pipes adapter.stream_response through the pure anthropic_stream mapper and writes
+each Anthropic event as ``event: <type>\ndata: <json>\n\n``. The mapper uses a
+peek-first protocol: the 200 text/event-stream header is held until the first
+upstream event is in hand, so a connect/auth/setup failure returns a secret-free
+502 JSON error envelope. A mid-stream failure (after the 200 is committed) becomes
+an in-band terminal Anthropic ``error`` event. Capability gating / feature
+rejection (G005) and count_tokens / /v1/models (G006) remain clearly-marked stubs
+here.
 
 Routing (ADR 0006 D3):
   - POST /v1/messages: resolve the requested model to a backend through the
@@ -36,10 +42,12 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
 from reverso.protocols.adapter import ProviderAdapter
+from reverso.protocols.anthropic_stream import responses_sse_to_anthropic
 from reverso.protocols.anthropic_translate import (
     anthropic_request_to_responses,
     responses_envelope_to_anthropic,
 )
+from reverso.protocols.replay import new_message_id
 from reverso.protocols.surface_registry import (
     SURFACE_BACKENDS,
     resolve_anthropic_backend,
@@ -192,6 +200,36 @@ async def _send_json(
     await send({"type": "http.response.body", "body": body, "more_body": False})
 
 
+async def _start_anthropic_stream(send: Send, *, anthropic_version: str) -> None:
+    """Commit the 200 text/event-stream header for an Anthropic SSE response.
+
+    Echoes the resolved anthropic-version (default when omitted), mirroring the
+    JSON path; the header is sent only once, on the first Anthropic event.
+    """
+    await send(
+        {
+            "type": "http.response.start",
+            "status": 200,
+            "headers": [
+                (b"content-type", b"text/event-stream"),
+                (b"cache-control", b"no-cache"),
+                (b"anthropic-version", anthropic_version.encode("ascii")),
+            ],
+        }
+    )
+
+
+def _anthropic_sse_bytes(event: dict[str, Any]) -> bytes:
+    """Encode an Anthropic event dict as wire bytes (event + data + blank line).
+
+    The SSE event name is the event's own ``type`` field, matching the Anthropic
+    streaming grammar (``event: <type>\\ndata: <json>\\n\\n``).
+    """
+    event_type = str(event.get("type", "message"))
+    data = json.dumps(event, separators=(",", ":")).encode("utf-8")
+    return b"event: " + event_type.encode("utf-8") + b"\ndata: " + data + b"\n\n"
+
+
 async def _send_error(
     send: Send,
     status: int,
@@ -301,16 +339,8 @@ class AnthropicMessagesApp:
             return
 
         if payload.get("stream") is True:
-            # TODO(G004): SSE streaming is not implemented in G003. The Anthropic
-            # streaming grammar is mapped from the Responses SSEEvent replay in a
-            # later goal; until then a stream request is honestly rejected.
-            await _send_error(
-                send,
-                501,
-                "not_implemented",
-                "streaming is not implemented yet on the Anthropic surface "
-                "(TODO(G004)); set stream=false",
-                anthropic_version=anthropic_version,
+            await self._handle_streaming(
+                backend, payload, send, anthropic_version=anthropic_version
             )
             return
 
@@ -355,6 +385,89 @@ class AnthropicMessagesApp:
             responses_envelope_to_anthropic(envelope),
             anthropic_version=anthropic_version,
         )
+
+    async def _handle_streaming(
+        self,
+        backend: str,
+        payload: dict[str, Any],
+        send: Send,
+        *,
+        anthropic_version: str,
+    ) -> None:
+        """Stream an Anthropic SSE response over the pure anthropic_stream mapper.
+
+        The payload is translated to a ResponsesRequest, the resolved adapter's
+        stream_response is piped through responses_sse_to_anthropic, and each
+        Anthropic event is written as ``event: <type>\\ndata: <json>\\n\\n``.
+
+        The mapper uses a peek-first protocol: it awaits the first upstream event
+        before yielding message_start, so a connect/auth/setup failure on the
+        first __anext__ propagates out of the mapper without any event having been
+        yielded. The 200 text/event-stream header is held until the mapper yields
+        its first event, so:
+          - Pre-stream failure (exception before the first yield): the header is
+            still uncommitted; this method returns a secret-free 502 JSON envelope.
+          - Empty upstream (zero Responses events): the mapper yields message_start
+            etc. without error; a 200 stream with the minimal terminal sequence.
+          - Mid-stream failure (exception after the first yield): the 200 header is
+            already committed; an in-band terminal Anthropic error event is the
+            only safe channel (emitted by the mapper itself).
+        """
+        adapter = self._adapters[backend]
+        request = anthropic_request_to_responses(payload)
+        message_id = new_message_id()
+        anthropic_events = responses_sse_to_anthropic(
+            adapter.stream_response(request),
+            model=request.model,
+            message_id=message_id,
+        )
+        started = False
+        try:
+            async for event in anthropic_events:
+                if not started:
+                    await _start_anthropic_stream(
+                        send, anthropic_version=anthropic_version
+                    )
+                    started = True
+                await send(
+                    {
+                        "type": "http.response.body",
+                        "body": _anthropic_sse_bytes(event),
+                        "more_body": True,
+                    }
+                )
+        except Exception as exc:  # noqa: BLE001 - any failure must not crash the app
+            logger.warning(
+                "anthropic stream %s failed: %s", backend, type(exc).__name__
+            )
+            if not started:
+                # Pre-first-event failure: the response line is still uncommitted,
+                # so return a structured non-streaming 502 envelope.
+                await _send_error(
+                    send,
+                    502,
+                    "api_error",
+                    _safe_backend_error_message(exc),
+                    anthropic_version=anthropic_version,
+                )
+                return
+            # Post-commit failure: emit an in-band terminal Anthropic error event.
+            await send(
+                {
+                    "type": "http.response.body",
+                    "body": _anthropic_sse_bytes(
+                        build_anthropic_error(
+                            "api_error", _safe_backend_error_message(exc)
+                        )
+                    ),
+                    "more_body": True,
+                }
+            )
+        if not started:
+            # The mapper always yields at least message_start, so this is
+            # defensive; commit the header so the client sees a valid stream.
+            await _start_anthropic_stream(send, anthropic_version=anthropic_version)
+        await send({"type": "http.response.body", "body": b"", "more_body": False})
 
     def _resolve_backend(self, route: AnthropicRoute, model: str | None) -> str | None:
         """Resolve the backend for a route, or None to yield a 404.
