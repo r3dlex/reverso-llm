@@ -151,6 +151,8 @@ def test_catalog_json_includes_static_metadata_aliases() -> None:
 
     slugs = {model["slug"] for model in catalog["models"]}
 
+    assert "gpt-5.5" in slugs
+    assert "gpt-5.3-codex" in slugs
     assert "claude-opus-4-8" in slugs
     assert "MiniMax-M3" in slugs
     assert "gemini-2.5-pro" in slugs
@@ -172,6 +174,8 @@ def test_catalog_json_dedupes_static_metadata_aliases() -> None:
 
     assert slugs.count("gemini-2.5-pro") == 1
     assert slugs.count("gemini-2.5-flash") == 1
+    assert slugs.count("copilot/gemini-2.5-pro") == 1
+    assert slugs.count("copilot/gemini-2.5-flash") == 1
     assert "MiniMax-M3" in slugs
 
 
@@ -198,6 +202,34 @@ def test_sync_catalog_aliases_do_not_create_routing_entries(tmp_path: Path) -> N
     assert "MiniMax-M3" not in text
     assert "gemini-2.5-pro" not in text
     assert "gemini-2.5-flash" not in text
+    assert "gpt-5.3-codex" in text
+
+
+def test_sync_inserts_default_model_when_missing(tmp_path: Path) -> None:
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+
+    codex_sync.sync(target=target, fetcher=_make_fetcher())
+
+    text = target.read_text(encoding="utf-8")
+    assert text.index('model = "gpt-5.5"') < text.index("[model_providers.minimax]")
+    assert tomllib.loads(text)["model"] == "gpt-5.5"
+
+
+def test_sync_preserves_user_selected_model(tmp_path: Path) -> None:
+    target = tmp_path / "config.toml"
+    target.write_text(
+        'model = "custom-user-model"\n' + _baseline_config_text(),
+        encoding="utf-8",
+    )
+
+    codex_sync.sync(target=target, fetcher=_make_fetcher())
+
+    text = target.read_text(encoding="utf-8")
+    top_level = text[: text.index("[model_providers.minimax]")]
+    assert tomllib.loads(text)["model"] == "custom-user-model"
+    assert top_level.count('model = "custom-user-model"') == 1
+    assert 'model = "gpt-5.5"' not in top_level
 
 
 def test_sync_writes_block_and_creates_backup(tmp_path: Path) -> None:
@@ -216,7 +248,9 @@ def test_sync_writes_block_and_creates_backup(tmp_path: Path) -> None:
     assert codex_sync.NUX_BEGIN in new_text
     assert codex_sync.NUX_END in new_text
     assert "claude-fable-5" in new_text
-    assert "prism-a" in new_text
+    assert "copilot/gpt-5.5" in new_text
+    assert "auggie/prism-a" in new_text
+    assert 'model = "prism-a"' in new_text
 
 
 def test_sync_is_idempotent_no_diff_no_backup(tmp_path: Path) -> None:
@@ -370,7 +404,9 @@ def test_render_nux_block_dedupes_model_ids() -> None:
     ]
     block = codex_sync._render_nux_block(pm)
     assert block.count('"shared-id" = 4') == 1
+    assert '"copilot/shared-id" = 4' in block
     assert '"claude-fable-5" = 4' in block
+    assert '"gpt-5.5" = 4' in block
 
 
 def test_replace_managed_block_appends_when_absent() -> None:
@@ -541,7 +577,7 @@ def test_toml_table_key_replaces_invalid_characters() -> None:
     assert codex_sync._toml_table_key("") == "model"
 
 
-def test_sync_with_no_models_writes_empty_profiles_and_no_nux_block(
+def test_sync_with_no_models_writes_empty_profiles_and_codex_defaults_nux_block(
     tmp_path: Path,
 ) -> None:
     target = tmp_path / "config.toml"
@@ -552,11 +588,11 @@ def test_sync_with_no_models_writes_empty_profiles_and_no_nux_block(
     text = target.read_text(encoding="utf-8")
     assert codex_sync.PROFILES_BEGIN in text
     assert "[model_providers.reverso_claude__" not in text
-    # The user already owns [tui.model_availability_nux]; with nothing new to
-    # add, no managed NUX block may exist (an empty one earned its deletion).
-    assert codex_sync.NUX_BEGIN not in text
+    # Reverso may have no live models, but Codex defaults are still selectable.
+    assert codex_sync.NUX_BEGIN in text
     assert text.count("[tui.model_availability_nux]") == 1
     assert '"gpt-5.5" = 4' in text
+    assert '"gpt-5.3-codex" = 4' in text
 
 
 def test_atomic_write_round_trip(tmp_path: Path) -> None:
@@ -601,7 +637,10 @@ def test_sync_merges_into_existing_nux_table_single_header(tmp_path: Path) -> No
     parsed = tomllib.loads(text)
     nux = parsed["tui"]["model_availability_nux"]
     assert nux["gpt-5.5"] == 4
+    assert nux["gpt-5.3-codex"] == 4
     assert nux["claude-fable-5"] == 4
+    assert nux["copilot/gpt-5.5"] == 4
+    assert nux["auggie/prism-a"] == 4
     assert nux["deepseek-v3"] == 4
     # User-owned colliding key must appear exactly once, never re-emitted.
     assert text.count('"gpt-5.5" = 4') == 1
@@ -638,7 +677,16 @@ def test_sync_idempotent_with_existing_nux_table(tmp_path: Path) -> None:
 
 def test_sync_all_keys_already_present_writes_no_nux_block(tmp_path: Path) -> None:
     target = tmp_path / "config.toml"
-    target.write_text(_baseline_config_text(), encoding="utf-8")
+    existing = "".join(
+        f'"{model}" = 4\n'
+        for model in (*codex_sync.CODEX_DEFAULT_MODELS[1:], "copilot/gpt-5.5")
+    )
+    target.write_text(
+        _baseline_config_text().replace(
+            '"gpt-5.5" = 4\n', '"gpt-5.5" = 4\n' + existing
+        ),
+        encoding="utf-8",
+    )
     only_collision = _make_fetcher(
         {"claude": [], "copilot": ["gpt-5.5"], "auggie": [], "deepseek": []}
     )
@@ -648,7 +696,9 @@ def test_sync_all_keys_already_present_writes_no_nux_block(tmp_path: Path) -> No
 
     assert codex_sync.NUX_BEGIN not in text
     assert text.count('"gpt-5.5" = 4') == 1
-    assert tomllib.loads(text)["tui"]["model_availability_nux"]["gpt-5.5"] == 4
+    nux = tomllib.loads(text)["tui"]["model_availability_nux"]
+    assert nux["gpt-5.5"] == 4
+    assert nux["copilot/gpt-5.5"] == 4
 
 
 def test_sync_relocates_legacy_eof_nux_block_into_user_table(tmp_path: Path) -> None:
@@ -729,12 +779,13 @@ def test_render_nux_entries_excludes_existing_keys() -> None:
     ]
     block = codex_sync._render_nux_entries(pm, frozenset({"gpt-5.5"}))
     assert block is not None
+    assert '"gpt-5.5" = 4' not in block
+    assert '"copilot/gpt-5.5" = 4' in block
     assert '"claude-fable-5" = 4' in block
-    assert "gpt-5.5" not in block
     assert "[tui.model_availability_nux]" not in block
 
     nothing_new = codex_sync._render_nux_entries(
-        pm, frozenset({"gpt-5.5", "claude-fable-5"})
+        pm, frozenset(codex_sync._iter_selectable_model_ids(pm))
     )
     assert nothing_new is None
 
@@ -776,7 +827,8 @@ def test_renderers_escape_hostile_model_ids(tmp_path: Path) -> None:
     entries = codex_sync._render_nux_entries(pm, frozenset())
     assert entries is not None
     body = "\n".join(line for line in entries.splitlines() if not line.startswith("#"))
-    assert tomllib.loads("[t]\n" + body) == {"t": {hostile: 4}}
+    parsed = tomllib.loads("[t]\n" + body)["t"]
+    assert parsed[hostile] == 4
 
     target = tmp_path / "config.toml"
     target.write_text(_baseline_config_text(), encoding="utf-8")
@@ -793,10 +845,12 @@ def test_nux_entries_dedupe_on_coerced_key_matching_profiles() -> None:
     entries = codex_sync._render_nux_entries(pm, frozenset())
     assert entries is not None
     assert '"gpt-5.5" = 4' in entries
-    assert '"gpt-5_5"' not in entries
+    assert '"copilot/gpt-5.5" = 4' in entries
+    assert '"copilot/gpt-5_5"' not in entries
+    assert entries.count(" = 4") == len(codex_sync.CODEX_DEFAULT_MODELS) + 1
 
     block = codex_sync._render_nux_block(pm)
-    assert block.count(" = 4") == 1
+    assert block.count(" = 4") == len(codex_sync.CODEX_DEFAULT_MODELS) + 1
 
 
 def test_sentinel_mentioned_midline_in_comment_is_ignored(tmp_path: Path) -> None:
@@ -824,14 +878,24 @@ def test_generate_catalog_json_shape_dedup_and_context_window() -> None:
 
     assert set(payload.keys()) == {"models"}
     slugs = [m["slug"] for m in payload["models"]]
-    assert slugs[:3] == ["shared-model", "big-500k-model", "gpt-4o"]
+    assert slugs[: len(codex_sync.CODEX_DEFAULT_MODELS)] == list(
+        codex_sync.CODEX_DEFAULT_MODELS
+    )
+    assert "shared-model" in slugs
+    assert "copilot/shared-model" in slugs
+    assert "copilot/gpt-4o" in slugs
     assert "MiniMax-M3" in slugs
     assert "gemini-2.5-pro" in slugs
     assert "gemini-2.5-flash" in slugs
 
     by_slug = {m["slug"]: m for m in payload["models"]}
-    # First prefix carrying the id owns the display name.
-    assert by_slug["shared-model"]["display_name"] == "Reverso claude shared-model"
+    assert by_slug["gpt-5.5"]["display_name"] == "GPT (Codex) gpt-5.5"
+    assert (
+        by_slug["shared-model"]["display_name"] == "Claude (Claude Code) shared-model"
+    )
+    assert by_slug["copilot/shared-model"]["display_name"] == (
+        "Reverso copilot shared-model"
+    )
     assert by_slug["shared-model"]["context_window"] == 128000
     assert by_slug["big-500k-model"]["context_window"] == 500000
     required_keys = {
@@ -863,8 +927,8 @@ def test_generate_catalog_json_survives_hostile_model_ids() -> None:
 
     payload = json.loads(codex_sync._generate_catalog_json(pm))
 
-    assert payload["models"][0]["slug"] == hostile
-    assert payload["models"][0]["display_name"] == f"Reverso claude {hostile}"
+    by_slug = {model["slug"]: model for model in payload["models"]}
+    assert by_slug[hostile]["display_name"] == f"Claude (Claude Code) {hostile}"
 
 
 def test_resolve_catalog_path_prefers_explicit_then_env(
@@ -896,7 +960,15 @@ def test_sync_with_catalog_target_writes_catalog_and_references_it(
     assert result.catalog == catalog
     assert catalog.exists()
     payload = json.loads(catalog.read_text(encoding="utf-8"))
-    assert any(m["slug"] == "claude-fable-5" for m in payload["models"])
+    slugs = {m["slug"] for m in payload["models"]}
+    assert "gpt-5.5" in slugs
+    assert "gpt-5.3-codex" in slugs
+    assert "copilot/gpt-5.5" in slugs
+    assert "auggie/prism-a" in slugs
+    assert "claude-fable-5" in slugs
+    assert "MiniMax-M3" in slugs
+    assert "deepseek-v3" in slugs
+    assert not any(slug.startswith("deepseek/") for slug in slugs)
 
     text = target.read_text(encoding="utf-8")
     assert codex_sync.CATALOG_BEGIN in text
@@ -904,6 +976,48 @@ def test_sync_with_catalog_target_writes_catalog_and_references_it(
     assert f'model_catalog_json = "{catalog}"' in text
     assert text.index("model_catalog_json") < text.index("[model_providers.minimax]")
     assert "model_catalog_json" not in text[text.index(codex_sync.PROFILES_BEGIN) :]
+    tomllib.loads(text)
+
+
+def test_sync_replaces_existing_top_level_catalog_pointer(tmp_path: Path) -> None:
+    target = tmp_path / "config.toml"
+    catalog = tmp_path / "catalog.json"
+    target.write_text(
+        _baseline_config_text().replace(
+            'model_reasoning_effort = "medium"\n',
+            'model_reasoning_effort = "medium"\nmodel_catalog_json = "/old/catalog.json"\n',
+        ),
+        encoding="utf-8",
+    )
+
+    codex_sync.sync(target=target, fetcher=_make_fetcher(), catalog_target=catalog)
+
+    text = target.read_text(encoding="utf-8")
+    assert text.count("model_catalog_json") == 1
+    assert f'model_catalog_json = "{catalog}"' in text
+    assert "/old/catalog.json" not in text
+    tomllib.loads(text)
+
+
+def test_sync_strips_legacy_orphan_profiles_block(tmp_path: Path) -> None:
+    target = tmp_path / "config.toml"
+    legacy = (
+        _baseline_config_text()
+        + "\n[model_providers.reverso_copilot__gpt-5_5]\n"
+        + 'name = "old"\n'
+        + 'base_url = "http://127.0.0.1:64946/copilot/v1"\n'
+        + 'wire_api = "responses"\n'
+        + 'model = "gpt-5.5"\n'
+        + codex_sync.PROFILES_END
+        + "\n"
+    )
+    target.write_text(legacy, encoding="utf-8")
+
+    codex_sync.sync(target=target, fetcher=_make_fetcher())
+
+    text = target.read_text(encoding="utf-8")
+    assert 'name = "old"' not in text
+    assert text.count("[model_providers.reverso_copilot__gpt-5_5]") == 1
     tomllib.loads(text)
 
 

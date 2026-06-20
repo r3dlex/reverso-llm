@@ -41,6 +41,20 @@ logger = logging.getLogger(__name__)
 GATEWAY_BASE_URL = "http://127.0.0.1:64946"
 GATEWAY_PREFIXES: tuple[str, ...] = ("claude", "copilot", "auggie", "deepseek")
 
+# Built-in Codex model ids stay bare. Reverso-discovered providers that can
+# collide with those ids use provider-qualified selector/catalog slugs so they
+# augment the Codex provider instead of shadowing it.
+CODEX_DEFAULT_MODEL = "gpt-5.5"
+CODEX_DEFAULT_MODELS: tuple[str, ...] = (
+    "gpt-5.5",
+    "gpt-5.3-codex",
+    "gpt-5.3-codex-spark",
+    "gpt-5.4-mini",
+    "gpt-5.4",
+    "gpt-5-mini",
+)
+PREFIXED_SELECTOR_PREFIXES = frozenset({"copilot", "auggie", "agy"})
+
 # Metadata-only aliases that Codex should understand even when the backing
 # provider listing is unavailable. These are deliberately added only to the
 # model catalog JSON, not to generated provider profile tables. A local OAuth
@@ -48,6 +62,7 @@ GATEWAY_PREFIXES: tuple[str, ...] = ("claude", "copilot", "auggie", "deepseek")
 # model metadata is slug-global, so each alias appears once even when multiple
 # Reverso profiles may use the same upstream model family.
 STATIC_CATALOG_MODELS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("codex", CODEX_DEFAULT_MODELS),
     ("minimax", ("MiniMax-M3",)),
     ("oauth", ("gemini-2.5-pro", "gemini-2.5-flash")),
 )
@@ -82,6 +97,15 @@ _NUX_TABLE_HEADER_RE = re.compile(
     re.MULTILINE,
 )
 _TABLE_HEADER_LINE_RE = re.compile(r"^[ \t]*\[", re.MULTILINE)
+_TOP_LEVEL_MODEL_LINE_RE = re.compile(r"^[ \t]*model[ \t]*=", re.MULTILINE)
+_TOP_LEVEL_MODEL_CATALOG_LINE_RE = re.compile(
+    r"^[ \t]*model_catalog_json[ \t]*=.*(?:\n|$)",
+    re.MULTILINE,
+)
+_ORPHAN_PROFILE_TABLE_RE = re.compile(
+    r"^[ \t]*\[model_providers\.reverso_[^\]\n]+__[^\]\n]+\]" r"[ \t]*(?:#.*)?\r?$",
+    re.MULTILINE,
+)
 
 
 @dataclass(frozen=True)
@@ -90,6 +114,15 @@ class ProviderModels:
 
     prefix: str
     models: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class CatalogModelEntry:
+    """One selectable model entry in Codex's global model catalog."""
+
+    prefix: str
+    slug: str
+    model_id: str
 
 
 ModelFetcher = t.Callable[[str], list[str]]
@@ -189,6 +222,34 @@ def _render_profiles_block(
     return "\n".join(lines)
 
 
+def _selector_model_id(prefix: str, model_id: str) -> str:
+    """Return the Codex-visible selector id for a provider/model pair."""
+    if prefix in PREFIXED_SELECTOR_PREFIXES:
+        return f"{prefix}/{model_id}"
+    return model_id
+
+
+def _iter_selectable_model_ids(
+    provider_models: list[ProviderModels],
+) -> t.Iterator[str]:
+    """Yield Codex-visible model ids in picker/catalog priority order."""
+    seen: set[str] = set()
+    for model_id in CODEX_DEFAULT_MODELS:
+        key = _toml_table_key(model_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        yield model_id
+    for entry in provider_models:
+        for model_id in entry.models:
+            selector = _selector_model_id(entry.prefix, model_id)
+            key = _toml_table_key(selector)
+            if key in seen:
+                continue
+            seen.add(key)
+            yield selector
+
+
 def _render_nux_block(provider_models: list[ProviderModels]) -> str:
     """Render the managed NUX block including the table header.
 
@@ -198,99 +259,111 @@ def _render_nux_block(provider_models: list[ProviderModels]) -> str:
     """
     lines: list[str] = [NUX_BEGIN]
     lines.append("[tui.model_availability_nux]")
-    seen: set[str] = set()
-    for entry in provider_models:
-        for model_id in entry.models:
-            # Dedupe on the coerced key so ids that collide after coercion
-            # (gpt-5.5 vs gpt-5_5) surface the same single model the profiles
-            # block keeps, never a picker entry without a backing profile.
-            key = _toml_table_key(model_id)
-            if key in seen:
-                continue
-            seen.add(key)
-            lines.append(f"{_toml_string(model_id)} = 4")
+    for model_id in _iter_selectable_model_ids(provider_models):
+        lines.append(f"{_toml_string(model_id)} = 4")
     lines.append(NUX_END)
     return "\n".join(lines)
 
 
-def _catalog_provider_models(
+def _catalog_model_entries(
     provider_models: list[ProviderModels],
-) -> list[ProviderModels]:
-    """Return live models plus metadata-only static aliases for catalog JSON."""
-    merged = list(provider_models)
-    seen = {model_id for entry in provider_models for model_id in entry.models}
+) -> list[CatalogModelEntry]:
+    """Return selectable catalog entries without slug collisions."""
+    merged: list[CatalogModelEntry] = []
+    seen_slugs: set[str] = set()
     for prefix, model_ids in STATIC_CATALOG_MODELS:
-        missing = tuple(model_id for model_id in model_ids if model_id not in seen)
-        if not missing:
-            continue
-        seen.update(missing)
-        merged.append(ProviderModels(prefix=prefix, models=missing))
+        for model_id in model_ids:
+            slug = _selector_model_id(prefix, model_id)
+            if slug in seen_slugs:
+                continue
+            seen_slugs.add(slug)
+            merged.append(
+                CatalogModelEntry(prefix=prefix, slug=slug, model_id=model_id)
+            )
+    for entry in provider_models:
+        for model_id in entry.models:
+            slug = _selector_model_id(entry.prefix, model_id)
+            if slug in seen_slugs:
+                continue
+            seen_slugs.add(slug)
+            merged.append(
+                CatalogModelEntry(prefix=entry.prefix, slug=slug, model_id=model_id)
+            )
     return merged
+
+
+def _catalog_display_name(entry: CatalogModelEntry) -> str:
+    """Return a human display name that makes routing ownership explicit."""
+    if entry.prefix == "codex":
+        return f"GPT (Codex) {entry.model_id}"
+    if entry.prefix == "minimax":
+        return f"MiniMax {entry.model_id}"
+    if entry.prefix == "oauth":
+        return f"OAuth {entry.model_id}"
+    if entry.prefix == "claude":
+        return f"Claude (Claude Code) {entry.model_id}"
+    if entry.prefix == "deepseek":
+        return f"DeepSeek {entry.model_id}"
+    return f"Reverso {entry.prefix} {entry.model_id}"
 
 
 def _generate_catalog_json(provider_models: list[ProviderModels]) -> str:
     """Generate Codex-compatible model catalog JSON for synced models."""
     models: list[dict[str, t.Any]] = []
-    seen: set[str] = set()
 
-    for entry in _catalog_provider_models(provider_models):
-        for model_id in entry.models:
-            if model_id in seen:
-                continue
-            seen.add(model_id)
+    for entry in _catalog_model_entries(provider_models):
+        context_window = 128000
+        if "500k" in entry.model_id.lower():
+            context_window = 500000
 
-            context_window = 128000
-            if "500k" in model_id:
-                context_window = 500000
-
-            models.append(
-                {
-                    "slug": model_id,
-                    "display_name": f"Reverso {entry.prefix} {model_id}",
-                    "description": f"Reverso-synced {entry.prefix} model",
-                    "default_reasoning_level": "medium",
-                    "supported_reasoning_levels": [
-                        {
-                            "effort": "low",
-                            "description": "Fast responses with lighter reasoning",
-                        },
-                        {
-                            "effort": "medium",
-                            "description": "Balances speed and reasoning depth",
-                        },
-                        {
-                            "effort": "high",
-                            "description": "Greater reasoning depth for complex tasks",
-                        },
-                    ],
-                    "shell_type": "shell_command",
-                    "visibility": "list",
-                    "supported_in_api": True,
-                    "priority": 1,
-                    "additional_speed_tiers": [],
-                    "service_tiers": [],
-                    "availability_nux": None,
-                    "upgrade": None,
-                    "base_instructions": "",
-                    "model_messages": {},
-                    "supports_reasoning_summaries": False,
-                    "default_reasoning_summary": "none",
-                    "support_verbosity": True,
-                    "default_verbosity": "low",
-                    "apply_patch_tool_type": "freeform",
-                    "web_search_tool_type": "text_and_image",
-                    "truncation_policy": {"mode": "tokens", "limit": 10000},
-                    "supports_parallel_tool_calls": True,
-                    "supports_image_detail_original": False,
-                    "context_window": context_window,
-                    "max_context_window": context_window,
-                    "effective_context_window_percent": 95,
-                    "experimental_supported_tools": [],
-                    "input_modalities": ["text"],
-                    "supports_search_tool": False,
-                    "use_responses_lite": False,
-                }
-            )
+        models.append(
+            {
+                "slug": entry.slug,
+                "display_name": _catalog_display_name(entry),
+                "description": f"Reverso-synced {entry.prefix} model",
+                "default_reasoning_level": "medium",
+                "supported_reasoning_levels": [
+                    {
+                        "effort": "low",
+                        "description": "Fast responses with lighter reasoning",
+                    },
+                    {
+                        "effort": "medium",
+                        "description": "Balances speed and reasoning depth",
+                    },
+                    {
+                        "effort": "high",
+                        "description": "Greater reasoning depth for complex tasks",
+                    },
+                ],
+                "shell_type": "shell_command",
+                "visibility": "list",
+                "supported_in_api": True,
+                "priority": 1,
+                "additional_speed_tiers": [],
+                "service_tiers": [],
+                "availability_nux": None,
+                "upgrade": None,
+                "base_instructions": "",
+                "model_messages": {},
+                "supports_reasoning_summaries": False,
+                "default_reasoning_summary": "none",
+                "support_verbosity": True,
+                "default_verbosity": "low",
+                "apply_patch_tool_type": "freeform",
+                "web_search_tool_type": "text_and_image",
+                "truncation_policy": {"mode": "tokens", "limit": 10000},
+                "supports_parallel_tool_calls": True,
+                "supports_image_detail_original": False,
+                "context_window": context_window,
+                "max_context_window": context_window,
+                "effective_context_window_percent": 95,
+                "experimental_supported_tools": [],
+                "input_modalities": ["text"],
+                "supports_search_tool": False,
+                "use_responses_lite": False,
+            }
+        )
 
     return json.dumps({"models": models}, indent=2)
 
@@ -306,6 +379,16 @@ def _render_catalog_config_block(catalog_path: Path) -> str:
     )
 
 
+def _strip_top_level_catalog_line(text: str) -> str:
+    """Remove an existing root ``model_catalog_json`` line before managing it."""
+    first_table = _TABLE_HEADER_LINE_RE.search(text)
+    if first_table is None:
+        return _TOP_LEVEL_MODEL_CATALOG_LINE_RE.sub("", text)
+    prefix = text[: first_table.start()]
+    suffix = text[first_table.start() :]
+    return _TOP_LEVEL_MODEL_CATALOG_LINE_RE.sub("", prefix) + suffix
+
+
 def _merge_catalog_config_block(text: str, catalog_path: Path | None) -> str:
     """Manage the top-level Codex ``model_catalog_json`` pointer.
 
@@ -318,6 +401,7 @@ def _merge_catalog_config_block(text: str, catalog_path: Path | None) -> str:
     if catalog_path is None:
         return stripped
 
+    stripped = _strip_top_level_catalog_line(stripped)
     block = _render_catalog_config_block(catalog_path)
     if not stripped:
         return block + "\n"
@@ -340,6 +424,35 @@ def _merge_catalog_config_block(text: str, catalog_path: Path | None) -> str:
     return prefix + block + "\n\n" + suffix
 
 
+def _top_level_has_model_key(text: str) -> bool:
+    """Return whether the root TOML document already selects a model."""
+    search_end = len(text)
+    first_table = _TABLE_HEADER_LINE_RE.search(text)
+    if first_table is not None:
+        search_end = first_table.start()
+    return _TOP_LEVEL_MODEL_LINE_RE.search(text[:search_end]) is not None
+
+
+def _ensure_default_model(text: str) -> str:
+    """Insert Codex's default model unless the user already selected one."""
+    if _top_level_has_model_key(text):
+        return text
+    line = f"model = {_toml_string(CODEX_DEFAULT_MODEL)}\n"
+    if not text:
+        return line
+    first_table = _TABLE_HEADER_LINE_RE.search(text)
+    if first_table is None:
+        if text.endswith("\n"):
+            return text + line
+        return text + "\n" + line
+    insert_at = first_table.start()
+    prefix = text[:insert_at]
+    suffix = text[insert_at:]
+    if prefix and not prefix.endswith("\n"):
+        prefix += "\n"
+    return prefix + line + suffix
+
+
 def _render_nux_entries(
     provider_models: list[ProviderModels],
     existing_keys: frozenset[str],
@@ -352,22 +465,38 @@ def _render_nux_entries(
     """
     lines: list[str] = []
     seen: set[str] = set()
-    for entry in provider_models:
-        for model_id in entry.models:
-            key = _toml_table_key(model_id)
-            if key in seen or model_id in existing_keys:
-                continue
-            seen.add(key)
-            lines.append(f"{_toml_string(model_id)} = 4")
+    normalized_existing_keys = {_toml_table_key(key) for key in existing_keys}
+    for model_id in _iter_selectable_model_ids(provider_models):
+        key = _toml_table_key(model_id)
+        if key in seen or key in normalized_existing_keys:
+            continue
+        seen.add(key)
+        lines.append(f"{_toml_string(model_id)} = 4")
     if not lines:
         return None
     return "\n".join([NUX_BEGIN, *lines, NUX_END])
+
+
+def _strip_orphan_profiles_block(text: str, end_idx: int) -> str:
+    """Remove legacy profile overlays whose begin sentinel was lost."""
+    for match in _ORPHAN_PROFILE_TABLE_RE.finditer(text):
+        if match.start() >= end_idx:
+            break
+        tail_start = end_idx + len(PROFILES_END)
+        if tail_start < len(text) and text[tail_start] == "\n":
+            tail_start += 1
+        return text[: match.start()] + text[tail_start:]
+    return text
 
 
 def _strip_managed_block(text: str, begin: str, end: str) -> str:
     """Remove a sentinel-delimited block (and its trailing newline) if present."""
     start_idx = _find_sentinel(text, begin)
     if start_idx == -1:
+        if begin == PROFILES_BEGIN:
+            end_idx = _find_sentinel(text, end)
+            if end_idx != -1:
+                return _strip_orphan_profiles_block(text, end_idx)
         return text
     end_idx = _find_sentinel(text, end, start_idx)
     if end_idx == -1:
@@ -498,6 +627,8 @@ def _replace_managed_block(
     """
     start_idx = _find_sentinel(text, begin)
     if start_idx == -1:
+        if begin == PROFILES_BEGIN:
+            text = _strip_managed_block(text, begin, end)
         if text and not text.endswith("\n"):
             text = text + "\n"
         if text:
@@ -641,7 +772,8 @@ def sync(
 
     profiles_block = _render_profiles_block(provider_models)
 
-    new_text = _merge_catalog_config_block(old_text, catalog_target)
+    new_text = _ensure_default_model(old_text)
+    new_text = _merge_catalog_config_block(new_text, catalog_target)
     new_text = _replace_managed_block(
         new_text, PROFILES_BEGIN, PROFILES_END, profiles_block
     )
