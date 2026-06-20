@@ -392,3 +392,59 @@ deprecated in place, not deleted. The first-party adapter must not inherit the l
 `drop_params` behavior at `config/litellm_config.yaml:23,90-116`: it must not strip
 `response_format` (gates JSON mode) or `reasoning_content` (gates thinking mode). Those two
 modes stay `unverified` until their survival tests pass.
+
+## 13. Inbound Anthropic Messages surface (ADR 0006)
+
+This section augments Sections 11 and 12 and records the Milestone 1 addition of a second
+inbound dialect: the Anthropic Messages API. The authoritative decision record is
+`docs/architecture/adr/0006-anthropic-messages-api-surface.md`.
+
+### 13.1 A second inbound surface on the same port
+
+Reverso adds the Anthropic Messages surface (`POST /v1/messages`, `POST /v1/messages/count_tokens`,
+`GET /v1/models`) alongside the existing OpenAI Responses surface, on the one loopback port
+`127.0.0.1:64946`. The primary client is Claude Code and the Claude Agent SDK pointed at Reverso
+via `ANTHROPIC_BASE_URL`. The fidelity target is Claude-Code-observed parity. The surface is
+inbound only: Reverso does NOT call `api.anthropic.com`; it translates Anthropic Messages traffic
+onto the existing Responses backends.
+
+### 13.2 Translation app over the frozen Responses contract
+
+A new pure-ASGI `AnthropicMessagesApp` plus a stateless `anthropic_translate` module are mounted
+in the composition root (`reverso.proxy.compose`). They translate Anthropic Messages requests and
+responses to and from the FROZEN `ProviderAdapter` Responses contract (`ResponsesRequest`,
+`ResponseEnvelope`, `SSEEvent`) and reuse `protocols/replay.py` for streaming. The
+`ProviderAdapter` Protocol is NOT changed; the Anthropic surface is a front-of-gateway translation
+seam, not a sixth adapter method. All conversation state continues to ride the in-memory
+`ResponseStore` through the Responses contract.
+
+### 13.3 surface_registry: the single model-to-backend authority
+
+A new `surface_registry` is the single first-party model-to-backend authority. The first-party
+stack routes by path prefix only and has no model map of its own; the only model map,
+`config/litellm_config.yaml`, belongs to the quarantined legacy LiteLLM app. `surface_registry`
+reads that file via `yaml.safe_load` as DATA only and never imports the legacy app, so the ADR
+0002 D2 quarantine is preserved. Surface-scoped exposure is data, held in a `SURFACE_BACKENDS`
+table. For Milestone 1 the Anthropic-surface backends are `copilot`, `deepseek`, and `auggie`;
+`claude` is excluded because Claude Code talking to a claude backend is circular. Milestone 2 adds
+`codex-cli` as a single one-row addition.
+
+### 13.4 Routing, version, and error behavior
+
+Default routing is automatic model-to-backend resolution through `surface_registry`, with optional
+per-profile path prefixes (`/deepseek/v1/messages`, `/copilot/v1/messages`, `/auggie/v1/messages`)
+for explicit pinning. An unknown model OR any `claude` model returns HTTP 404 `not_found_error`. A
+missing `anthropic-version` header defaults to `"2023-06-01"` and is echoed back; a missing version
+header is never a 400. The error envelope is the Anthropic shape
+`{"type": "error", "error": {"type": ..., "message": ...}}`.
+
+### 13.5 Capability ceiling
+
+The surface does not promise full Messages fidelity on every backend. Per the ADR 0006 matrix,
+image input is native on copilot and gated on deepseek and auggie; tool_use output is
+native/translated on copilot and deepseek and a text-only gated error on auggie. Streamed thinking
+deltas and honored `cache_control` are structurally impossible in Milestone 1 (the Responses
+replay discards reasoning deltas and nothing honors prompt caching) and both surface to the client
+as a hard `invalid_request_error`. `count_tokens` is a documented word-count approximation, not a
+real tokenizer. The `anthropic` SDK is a docs and contract reference only, not a runtime
+dependency.
