@@ -169,6 +169,95 @@ async def test_bearer_token_timeout_propagates(tmp_path):
         await auth.bearer_token()
 
 
+def test_resolve_uses_copilot_cli_keychain_when_legacy_config_missing(
+    tmp_path, monkeypatch
+):
+    home = tmp_path / "home"
+    config_dir = home / ".copilot"
+    config_dir.mkdir(parents=True)
+    (config_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "last_logged_in_user": {
+                    "host": "https://github.com",
+                    "login": "octo",
+                }
+            }
+        )
+    )
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append(args)
+
+        class Result:
+            stdout = FAKE_OAUTH_TOKEN + "\n"
+
+        return Result()
+
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(
+        "reverso.protocols.adapters.copilot.platform.system", lambda: "Darwin"
+    )
+    monkeypatch.setattr("reverso.protocols.adapters.copilot.subprocess.run", fake_run)
+
+    auth = CopilotAuth(config_dir=tmp_path / "github-copilot", enable_cli_keychain=True)
+
+    resolution = auth.resolve()
+
+    assert resolution.authenticated is True
+    assert resolution.method == "copilot_cli_keychain"
+    assert calls[0][:5] == [
+        "security",
+        "find-generic-password",
+        "-s",
+        "copilot-cli",
+        "-a",
+    ]
+    assert calls[0][5] == "https://github.com:octo"
+
+
+async def test_cli_keychain_token_discovers_matching_api_base(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    config_dir = home / ".copilot"
+    config_dir.mkdir(parents=True)
+    (config_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "last_logged_in_user": {
+                    "host": "https://github.com",
+                    "login": "octo",
+                }
+            }
+        )
+    )
+
+    def fake_run(args, **kwargs):
+        class Result:
+            stdout = FAKE_BEARER_TOKEN + "\n"
+
+        return Result()
+
+    async def fake_discover(self, bearer):
+        assert bearer == FAKE_BEARER_TOKEN
+        return "https://api.business.githubcopilot.com"
+
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(
+        "reverso.protocols.adapters.copilot.platform.system", lambda: "Darwin"
+    )
+    monkeypatch.setattr("reverso.protocols.adapters.copilot.subprocess.run", fake_run)
+    monkeypatch.setattr(CopilotAuth, "_discover_cli_api_base", fake_discover)
+    auth = CopilotAuth(config_dir=tmp_path / "github-copilot", enable_cli_keychain=True)
+
+    token = await auth.bearer_token()
+
+    assert token == FAKE_BEARER_TOKEN
+    assert await auth.api_base("https://api.githubcopilot.com") == (
+        "https://api.business.githubcopilot.com"
+    )
+
+
 def _fake_auth_adapter(handler, store=None) -> CopilotAdapter:
     class _FakeAuth:
         def resolve(self):  # pragma: no cover - not exercised here
@@ -219,7 +308,7 @@ async def test_create_response_forwards_and_stores():
     assert envelope.id == "resp_fake_1"
     assert captured["url"].endswith("/responses")
     assert captured["auth"] == f"Bearer {FAKE_BEARER_TOKEN}"
-    assert captured["integration"] == "vscode-chat"
+    assert captured["integration"] == "copilot-developer-cli"
 
     stored = await adapter.get_response("resp_fake_1")
     assert stored.id == "resp_fake_1"
