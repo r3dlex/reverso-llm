@@ -18,6 +18,7 @@ import asyncio
 import json
 import logging
 import platform
+import subprocess
 import time
 from pathlib import Path
 from typing import Any
@@ -53,6 +54,10 @@ class CopilotUpstreamError(RuntimeError):
 
 
 COPILOT_API_BASE = "https://api.githubcopilot.com"
+COPILOT_CLI_API_BASES = (
+    "https://api.business.githubcopilot.com",
+    "https://api.individual.githubcopilot.com",
+)
 GITHUB_TOKEN_URL = "https://api.github.com/copilot_internal/v2/token"
 _REFRESH_SKEW_SECONDS = 120
 _STALE_LOCK_SECONDS = 300
@@ -76,12 +81,21 @@ class CopilotAuth:
     concurrent processes do not race the refresh. No token is ever logged.
     """
 
-    def __init__(self, config_dir: Path | None = None) -> None:
+    def __init__(
+        self,
+        config_dir: Path | None = None,
+        *,
+        enable_cli_keychain: bool | None = None,
+    ) -> None:
         self._config_dir = config_dir or _github_copilot_config_dir()
+        self._enable_cli_keychain = (
+            config_dir is None if enable_cli_keychain is None else enable_cli_keychain
+        )
         self._token_file = self._config_dir / "token.json"
         self._lock_file = Path(str(self._token_file) + ".lock")
         self._oauth_token: str | None = None
         self._copilot_token: dict | None = None
+        self._api_base_override: str | None = None
         self._refresh_lock = asyncio.Lock()
 
     def _read_oauth_token(self) -> str:
@@ -96,6 +110,75 @@ class CopilotAuth:
                     if token:
                         return token
         raise RuntimeError("GitHub Copilot OAuth token not found")
+
+    def _copilot_cli_config_file(self) -> Path:
+        return Path("~/.copilot/config.json").expanduser()
+
+    def _copilot_cli_keychain_accounts(self) -> list[str]:
+        config_file = self._copilot_cli_config_file()
+        try:
+            config = json.loads(config_file.read_text())
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            return []
+        accounts: list[str] = []
+
+        def add_account(entry: object) -> None:
+            if not isinstance(entry, dict):
+                return
+            host = entry.get("host")
+            login = entry.get("login")
+            if isinstance(host, str) and isinstance(login, str) and host and login:
+                account = f"{host}:{login}"
+                if account not in accounts:
+                    accounts.append(account)
+
+        add_account(config.get("last_logged_in_user"))
+        users = config.get("logged_in_users")
+        if isinstance(users, list):
+            for user in users:
+                add_account(user)
+        return accounts
+
+    def _read_copilot_cli_token(self) -> str:
+        if not self._enable_cli_keychain:
+            raise RuntimeError("GitHub Copilot CLI Keychain lookup disabled")
+        if platform.system() != "Darwin":
+            raise RuntimeError("GitHub Copilot CLI Keychain token not available")
+        reasons: list[str] = []
+        for account in self._copilot_cli_keychain_accounts():
+            try:
+                result = subprocess.run(
+                    [
+                        "security",
+                        "find-generic-password",
+                        "-s",
+                        "copilot-cli",
+                        "-a",
+                        account,
+                        "-w",
+                    ],
+                    check=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    text=True,
+                )
+            except (FileNotFoundError, subprocess.CalledProcessError) as exc:
+                reasons.append(f"{account}: {type(exc).__name__}")
+                continue
+            token = result.stdout.strip()
+            if token:
+                return token
+        reason = "; ".join(reasons) if reasons else "no Copilot CLI users configured"
+        raise RuntimeError(f"GitHub Copilot CLI Keychain token not found ({reason})")
+
+    async def _discover_cli_api_base(self, bearer: str) -> str:
+        headers = _forward_headers(bearer)
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            for api_base in COPILOT_CLI_API_BASES:
+                response = await client.get(f"{api_base}/models", headers=headers)
+                if response.status_code == 200:
+                    return api_base
+        raise RuntimeError("Copilot CLI token did not authenticate to known API bases")
 
     def _load_cached_token(self) -> None:
         try:
@@ -145,7 +228,14 @@ class CopilotAuth:
 
     async def _exchange_token(self) -> None:
         if self._oauth_token is None:
-            self._oauth_token = self._read_oauth_token()
+            try:
+                self._oauth_token = self._read_oauth_token()
+            except RuntimeError:
+                token = self._read_copilot_cli_token()
+                self._api_base_override = await self._discover_cli_api_base(token)
+                self._copilot_token = {"token": token, "expires_at": time.time() + 3600}
+                logger.info("Copilot CLI Keychain token resolved")
+                return
         headers = {
             "Authorization": f"token {self._oauth_token}",
             "Accept": "application/json",
@@ -184,14 +274,25 @@ class CopilotAuth:
                 self._release_lock()
 
     def resolve(self) -> AuthResolution:
-        """Resolve the local Copilot OAuth credential (non-secret summary)."""
+        """Resolve the local Copilot credential (non-secret summary)."""
         try:
             self._oauth_token = self._read_oauth_token()
-        except (RuntimeError, json.JSONDecodeError, OSError) as exc:
+        except (RuntimeError, json.JSONDecodeError, OSError) as oauth_exc:
+            try:
+                self._read_copilot_cli_token()
+            except (RuntimeError, json.JSONDecodeError, OSError) as cli_exc:
+                return AuthResolution(
+                    authenticated=False,
+                    method="copilot_oauth",
+                    details={
+                        "oauth_reason": str(oauth_exc),
+                        "cli_reason": str(cli_exc),
+                    },
+                )
             return AuthResolution(
-                authenticated=False,
-                method="copilot_oauth",
-                details={"reason": str(exc)},
+                authenticated=True,
+                method="copilot_cli_keychain",
+                details={"config_file": str(self._copilot_cli_config_file())},
             )
         return AuthResolution(
             authenticated=True,
@@ -208,13 +309,18 @@ class CopilotAuth:
         logger.debug("Using Copilot bearer token %s", redact_secret(token))
         return token
 
+    async def api_base(self, default: str) -> str:
+        """Return the Copilot API base that matches the resolved credential."""
+        await self._ensure_token()
+        return self._api_base_override or default
+
 
 def _forward_headers(bearer: str) -> dict[str, str]:
     return {
         "Authorization": f"Bearer {bearer}",
         "Content-Type": "application/json",
-        "Copilot-Integration-Id": "vscode-chat",
-        "Editor-Version": "Neovim/0.9.0",
+        "Copilot-Integration-Id": "copilot-developer-cli",
+        "Editor-Version": "copilot-cli/1.0.21",
     }
 
 
@@ -313,10 +419,11 @@ class CopilotAdapter:
         self._check_model(request)
         model = canonical_copilot_responses_model(request.model) or request.model
         bearer = await self._auth.bearer_token()
+        api_base = await self._api_base_for_auth()
         body = self._request_body(request, stream=False)
         async with self._client_factory() as client:
             response = await client.post(
-                f"{self._api_base}/responses",
+                f"{api_base}/responses",
                 headers=_forward_headers(bearer),
                 content=body,
             )
@@ -339,11 +446,12 @@ class CopilotAdapter:
     async def stream_response(self, request: ResponsesRequest):
         self._check_model(request)
         bearer = await self._auth.bearer_token()
+        api_base = await self._api_base_for_auth()
         body = self._request_body(request, stream=True)
         async with self._client_factory() as client:
             async with client.stream(
                 "POST",
-                f"{self._api_base}/responses",
+                f"{api_base}/responses",
                 headers=_forward_headers(bearer),
                 content=body,
             ) as response:
@@ -388,13 +496,20 @@ class CopilotAdapter:
                 parsed = {}
         return SSEEvent(event=event_name, data=parsed, raw=block.strip() + b"\n\n")
 
+    async def _api_base_for_auth(self) -> str:
+        api_base = getattr(self._auth, "api_base", None)
+        if callable(api_base):
+            return await api_base(self._api_base)
+        return self._api_base
+
     async def list_models(self) -> ModelList:
         bearer = await self._auth.bearer_token()
+        api_base = await self._api_base_for_auth()
         async with self._client_factory() as client:
             response = await client.get(
-                f"{self._api_base}/models", headers=_forward_headers(bearer)
+                f"{api_base}/models", headers=_forward_headers(bearer)
             )
-        response.raise_for_status()
+        _raise_for_upstream_status(response)
         payload = response.json()
         return _normalize_models(payload if isinstance(payload, dict) else {})
 
