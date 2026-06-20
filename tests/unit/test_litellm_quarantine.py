@@ -171,6 +171,52 @@ def test_responses_app_import_graph_excludes_legacy_proxy_app() -> None:
     )
 
 
+def test_anthropic_surface_import_graph_excludes_legacy_proxy_app() -> None:
+    """IMPORT GRAPH: surface_registry/anthropic_app must not pull in legacy app.
+
+    The Anthropic surface is a first-party translation seam (ADR 0006 D1/D2).
+    surface_registry reads litellm_config.yaml as DATA via yaml.safe_load and
+    anthropic_app is pure ASGI; neither may import reverso.proxy.app (the legacy
+    LiteLLM wrapper) or litellm.proxy.proxy_server. Checked in a fresh subprocess
+    so a prior in-process import by an unrelated test cannot mask a real edge.
+    """
+    code = (
+        "import sys, importlib;"
+        "importlib.import_module('reverso.protocols.surface_registry');"
+        "importlib.import_module('reverso.protocols.anthropic_app');"
+        "leaked_app = 'reverso.proxy.app' in sys.modules;"
+        "leaked_litellm = any("
+        "m == 'litellm.proxy.proxy_server' "
+        "or m.startswith('litellm.proxy.proxy_server.') for m in sys.modules);"
+        "leaked_any_litellm = any("
+        "m == 'litellm' or m.startswith('litellm.') for m in sys.modules);"
+        "print('proxy_app=' + ('LEAKED' if leaked_app else 'CLEAN'));"
+        "print('litellm_proxy_server=' + ('LEAKED' if leaked_litellm else 'CLEAN'));"
+        "print('any_litellm=' + ('LEAKED' if leaked_any_litellm else 'CLEAN'))"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+    )
+    assert (
+        result.returncode == 0
+    ), f"subprocess import failed: rc={result.returncode}\n{result.stderr}"
+    out = result.stdout.strip()
+    assert "proxy_app=CLEAN" in out, (
+        "surface_registry/anthropic_app must NOT import reverso.proxy.app "
+        f"(legacy LiteLLM wrapper); subprocess reported: {out!r}"
+    )
+    assert "litellm_proxy_server=CLEAN" in out, (
+        "surface_registry/anthropic_app must NOT statically import "
+        f"litellm.proxy.proxy_server; subprocess reported: {out!r}"
+    )
+    assert "any_litellm=CLEAN" in out, (
+        "surface_registry/anthropic_app must NOT import any litellm module; "
+        f"subprocess reported: {out!r}"
+    )
+
+
 @pytest.mark.asyncio
 async def test_composition_root_bypasses_legacy_for_first_party_prefixes() -> None:
     """WRAPPER BYPASS: first-party prefixes never reach the legacy LiteLLM app.
