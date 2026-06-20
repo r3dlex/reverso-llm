@@ -141,6 +141,50 @@ def resolve_anthropic_backend(model: str | None) -> str | None:
     return backend
 
 
+def _display_name_for_model(model_id: str) -> str:
+    """Derive a human-friendly display_name from a normalized model id.
+
+    The litellm_config rows carry no display name, so it is derived here (the one
+    place that owns the first-party model taxonomy): split on hyphens, drop a
+    leading backend-family token when it duplicates the backend prefix, and
+    title-case the remaining words. This is a simple DERIVED label (documented as
+    a convenience, not a provider-authoritative product name), e.g.
+    "deepseek-v4-pro" -> "Deepseek V4 Pro", "auggie-default" -> "Auggie Default".
+    """
+    words = [part for part in model_id.split("-") if part]
+    if not words:
+        return model_id
+    return " ".join(
+        word.upper()
+        if word.startswith("v") and word[1:].isdigit()
+        else word.capitalize()
+        for word in words
+    )
+
+
+def list_anthropic_surface_models() -> list[dict[str, str]]:
+    """List the Anthropic-surface models for GET /v1/models (ADR 0006 D2/AC8).
+
+    Returns one row per model exposed on the Anthropic surface, derived from the
+    SAME litellm_config-backed ``_MODEL_INDEX`` that ``resolve_anthropic_backend``
+    routes through, so the listing and the router never disagree. claude is never
+    present (the index already excludes the claude family, fail-closed). Each row
+    is ``{"id": <model>, "display_name": <derived label>, "backend": <backend>}``;
+    the result is sorted by id for a deterministic, stable listing.
+    """
+    rows = [
+        {
+            "id": model_id,
+            "display_name": _display_name_for_model(model_id),
+            "backend": backend,
+        }
+        for model_id, backend in _MODEL_INDEX.items()
+        if backend in SURFACE_BACKENDS["anthropic"]
+    ]
+    rows.sort(key=lambda row: row["id"])
+    return rows
+
+
 def cross_check_anthropic_models(path: Path | None = None) -> None:
     """Build-time lint: every Anthropic-routed model exists in the config.
 
