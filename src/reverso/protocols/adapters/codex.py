@@ -26,8 +26,8 @@ G002.0 spike findings (recorded inline per the plan; verified on this machine
     ``--with-access-token`` flag belongs to ``codex login`` (it writes the stored
     session from stdin), and ``--remote-auth-token-env`` belongs to the remote-app
     login subcommand, NOT to ``codex exec``. The legacy provider corroborates this:
-    ``openai_cli_provider._invoke_codex`` spawns ``codex exec`` with NO ``env=``
-    argument (``src/reverso/proxy/openai_cli_provider.py``), relying on the CLI's
+    The legacy CLI provider spawned ``codex exec`` with NO ``env=``
+    argument, relying on the CLI's
     own stored session.
   - Conclusion: A3 validate-only is the DEFAULT (and the only buildable option on
     this machine). ``CodexOAuthAuth`` reads and VALIDATES the subscription artifact

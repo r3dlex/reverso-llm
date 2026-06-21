@@ -60,32 +60,6 @@ model_list:
       model: custom/claude-haiku-4-6
       custom_llm_provider: anthropic_cli
 
-  # OpenAI / Codex CLI (cli-wrapped)
-  - model_name: gpt-5.5
-    litellm_params:
-      model: custom/gpt-5.5
-      custom_llm_provider: openai_cli
-
-  - model_name: gpt-5.4
-    litellm_params:
-      model: custom/gpt-5.4
-      custom_llm_provider: openai_cli
-
-  - model_name: gpt-5.4-mini
-    litellm_params:
-      model: custom/gpt-5.4-mini
-      custom_llm_provider: openai_cli
-
-  - model_name: gpt-5.3-codex-spark
-    litellm_params:
-      model: custom/gpt-5.3-codex-spark
-      custom_llm_provider: openai_cli
-
-  - model_name: gpt-4.1
-    litellm_params:
-      model: custom/gpt-4.1
-      custom_llm_provider: openai_cli
-
   # DeepSeek (http-forwarded)
   # DEPRECATED (ADR 0003): these LiteLLM DeepSeek entries are superseded by the
   # first-party DeepSeekAdapter (src/reverso/protocols/adapters/deepseek.py),

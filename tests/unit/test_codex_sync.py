@@ -152,7 +152,7 @@ def test_catalog_json_includes_static_metadata_aliases() -> None:
     slugs = {model["slug"] for model in catalog["models"]}
 
     assert "gpt-5.5" in slugs
-    assert "gpt-5.3-codex" in slugs
+    assert "gpt-4.1" in slugs
     assert "claude-opus-4-8" in slugs
     assert "MiniMax-M3" in slugs
     assert "gemini-2.5-pro" in slugs
@@ -202,7 +202,7 @@ def test_sync_catalog_aliases_do_not_create_routing_entries(tmp_path: Path) -> N
     assert "MiniMax-M3" not in text
     assert "gemini-2.5-pro" not in text
     assert "gemini-2.5-flash" not in text
-    assert "gpt-5.3-codex" in text
+    assert "gpt-4.1" in text
 
 
 def test_sync_inserts_default_model_when_missing(tmp_path: Path) -> None:
@@ -592,7 +592,7 @@ def test_sync_with_no_models_writes_empty_profiles_and_codex_defaults_nux_block(
     assert codex_sync.NUX_BEGIN in text
     assert text.count("[tui.model_availability_nux]") == 1
     assert '"gpt-5.5" = 4' in text
-    assert '"gpt-5.3-codex" = 4' in text
+    assert '"gpt-4.1" = 4' in text
 
 
 def test_atomic_write_round_trip(tmp_path: Path) -> None:
@@ -637,7 +637,7 @@ def test_sync_merges_into_existing_nux_table_single_header(tmp_path: Path) -> No
     parsed = tomllib.loads(text)
     nux = parsed["tui"]["model_availability_nux"]
     assert nux["gpt-5.5"] == 4
-    assert nux["gpt-5.3-codex"] == 4
+    assert nux["gpt-4.1"] == 4
     assert nux["claude-fable-5"] == 4
     assert nux["copilot/gpt-5.5"] == 4
     assert nux["auggie/prism-a"] == 4
@@ -962,7 +962,7 @@ def test_sync_with_catalog_target_writes_catalog_and_references_it(
     payload = json.loads(catalog.read_text(encoding="utf-8"))
     slugs = {m["slug"] for m in payload["models"]}
     assert "gpt-5.5" in slugs
-    assert "gpt-5.3-codex" in slugs
+    assert "gpt-4.1" in slugs
     assert "copilot/gpt-5.5" in slugs
     assert "auggie/prism-a" in slugs
     assert "claude-fable-5" in slugs

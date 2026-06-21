@@ -47,11 +47,10 @@ GATEWAY_PREFIXES: tuple[str, ...] = ("claude", "copilot", "auggie", "deepseek")
 CODEX_DEFAULT_MODEL = "gpt-5.5"
 CODEX_DEFAULT_MODELS: tuple[str, ...] = (
     "gpt-5.5",
-    "gpt-5.3-codex",
-    "gpt-5.3-codex-spark",
-    "gpt-5.4-mini",
     "gpt-5.4",
-    "gpt-5-mini",
+    "gpt-5.4-mini",
+    "gpt-5.3-codex-spark",
+    "gpt-4.1",
 )
 PREFIXED_SELECTOR_PREFIXES = frozenset({"copilot", "auggie", "agy"})
 

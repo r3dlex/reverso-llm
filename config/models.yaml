@@ -78,52 +78,6 @@ model_list:
       provider_kind: cli-wrapped
       cli: claude
 
-  # OpenAI / Codex CLI (cli-wrapped)
-  - model_name: gpt-5.5
-    litellm_params:
-      model: custom/gpt-5.5
-      custom_llm_provider: openai_cli
-    model_info:
-      description: "GPT-5.5 via Codex CLI (subscription-backed)"
-      provider_kind: cli-wrapped
-      cli: codex
-
-  - model_name: gpt-5.4
-    litellm_params:
-      model: custom/gpt-5.4
-      custom_llm_provider: openai_cli
-    model_info:
-      description: "GPT-5.4 via Codex CLI (subscription-backed)"
-      provider_kind: cli-wrapped
-      cli: codex
-
-  - model_name: gpt-5.4-mini
-    litellm_params:
-      model: custom/gpt-5.4-mini
-      custom_llm_provider: openai_cli
-    model_info:
-      description: "GPT-5.4 mini via Codex CLI (subscription-backed)"
-      provider_kind: cli-wrapped
-      cli: codex
-
-  - model_name: gpt-5.3-codex-spark
-    litellm_params:
-      model: custom/gpt-5.3-codex-spark
-      custom_llm_provider: openai_cli
-    model_info:
-      description: "GPT-5.3 Codex Spark via Codex CLI (subscription-backed)"
-      provider_kind: cli-wrapped
-      cli: codex
-
-  - model_name: gpt-4.1
-    litellm_params:
-      model: custom/gpt-4.1
-      custom_llm_provider: openai_cli
-    model_info:
-      description: "GPT-4.1 via Codex CLI (subscription-backed)"
-      provider_kind: cli-wrapped
-      cli: codex
-
   # DeepSeek (http-forwarded)
   - model_name: deepseek-v4-pro
     litellm_params:
