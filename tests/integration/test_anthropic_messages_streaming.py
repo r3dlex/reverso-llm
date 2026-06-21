@@ -331,7 +331,7 @@ async def test_oversized_body_returns_structured_error() -> None:
             content=oversized_body,
             headers={"content-type": "application/json"},
         )
-    assert resp.status_code in (400, 413)
+    assert resp.status_code == 413
     assert "application/json" in resp.headers["content-type"]
     body = resp.json()
     assert body["type"] == "error"

@@ -478,11 +478,12 @@ class AnthropicMessagesApp:
             )
             return
         except RecursionError:
-            # A crafted payload with extreme block nesting can drive the feature
-            # scanner into a RecursionError despite the _MAX_BLOCK_DEPTH cap on
-            # _scan_block_list (belt-and-suspenders: the depth cap is the primary
-            # defence; this catch is the last-resort so the structured Anthropic
-            # error contract is never broken by a framework 500).
+            # Last-resort guard: the _MAX_BLOCK_DEPTH cap in _scan_block_list is
+            # the primary defence against unbounded recursion in the feature scan,
+            # making this branch unreachable under normal conditions. This catch
+            # defends against unforeseen deep-call paths elsewhere in gate or
+            # translation logic so the structured Anthropic error contract is
+            # never broken by a framework 500 regardless of the call source.
             await _send_error(
                 send,
                 400,

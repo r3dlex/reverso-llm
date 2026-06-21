@@ -353,3 +353,45 @@ def test_gate_deeply_nested_tool_result_does_not_raise() -> None:
     payload = _deeply_nested_tool_result(_MAX_BLOCK_DEPTH + 1)
     # No gated features in a plain text payload: gate passes without raising.
     gate_anthropic_features(payload, "deepseek")
+
+
+def _tool_result_with_feature_at_depth(depth: int, feature_block: dict) -> dict:
+    """Wrap ``feature_block`` inside ``depth`` layers of tool_result nesting.
+
+    The innermost content list contains ``feature_block``; each outer layer
+    is a tool_result whose content list wraps the previous.  The resulting
+    payload has the feature at tool_result nesting depth ``depth`` as seen by
+    ``_scan_block_list``.
+    """
+    inner: list = [feature_block]
+    for _ in range(depth):
+        inner = [{"type": "tool_result", "tool_use_id": "toolu_x", "content": inner}]
+    return {"messages": [{"role": "user", "content": inner}]}
+
+
+def test_cap_feature_at_depth_within_cap_is_detected() -> None:
+    """A gated feature placed at exactly _MAX_BLOCK_DEPTH MUST be detected.
+
+    This pins the lower boundary of the cap: the scanner must reach depth
+    _MAX_BLOCK_DEPTH and find the feature there.
+    """
+    from reverso.protocols.anthropic_feature_gate import _MAX_BLOCK_DEPTH  # noqa: PLC0415
+
+    image_block = {"type": "image", "source": {"type": "base64", "data": "x"}}
+    payload = _tool_result_with_feature_at_depth(_MAX_BLOCK_DEPTH, image_block)
+    assert FEATURE_IMAGE in extract_anthropic_features(payload)
+
+
+def test_cap_feature_at_depth_beyond_cap_is_not_detected() -> None:
+    """A gated feature placed at _MAX_BLOCK_DEPTH + 1 must NOT be detected.
+
+    This pins the upper boundary of the cap independently of the RecursionError
+    belt-and-suspenders catch: the depth guard in _scan_block_list must stop the
+    scan before reaching depth _MAX_BLOCK_DEPTH + 1.  Removing or raising the cap
+    would cause this test to fail (the feature would be found).
+    """
+    from reverso.protocols.anthropic_feature_gate import _MAX_BLOCK_DEPTH  # noqa: PLC0415
+
+    image_block = {"type": "image", "source": {"type": "base64", "data": "x"}}
+    payload = _tool_result_with_feature_at_depth(_MAX_BLOCK_DEPTH + 1, image_block)
+    assert FEATURE_IMAGE not in extract_anthropic_features(payload)
