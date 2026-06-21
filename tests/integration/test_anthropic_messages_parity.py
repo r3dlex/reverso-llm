@@ -2,19 +2,28 @@
 
 The Anthropic Messages surface is exercised over the SAME deterministic
 FixtureAdapter seam the Responses parity suite uses (tests/integration/conftest),
-across the THREE Anthropic-surface backends (copilot, deepseek, auggie). claude is
-intentionally ABSENT from this matrix: it is excluded from the Anthropic surface
-(ADR 0006 D2) and its exclusion is asserted as a separate negative conformance
-suite (test_anthropic_claude_exclusion). No real Copilot, DeepSeek, or Auggie
-endpoint, process, or credential is touched; FixtureAdapter replays fixture
-bodies/events and authenticates through the fake-auth seam, UNCHANGED.
+across the FOUR Anthropic-surface backends (copilot, deepseek, auggie, codex).
+claude is intentionally ABSENT from this matrix: it is excluded from the Anthropic
+surface (ADR 0006 D2) and its exclusion is asserted as a separate negative
+conformance suite (test_anthropic_claude_exclusion). No real Copilot, DeepSeek,
+Auggie, or Codex endpoint, process, or credential is touched; FixtureAdapter
+replays fixture bodies/events and authenticates through the fake-auth seam,
+UNCHANGED.
 
 Backend reach (ADR 0006 D3): the bare /v1/messages auto-resolves the requested
 model through the single surface_registry authority, but litellm_config only
 carries deepseek model rows, so copilot and auggie are reached through their
 per-profile prefixes (/copilot/v1/messages, /auggie/v1/messages) which pin the
 named backend and bypass model auto-resolution. deepseek uses both the bare path
-(with a real deepseek model id) and is consistent with the pinned path.
+(with a real deepseek model id) and is consistent with the pinned path. codex is
+reached through the BARE path with a gpt-* model id, which auto-resolves to the
+codex backend through the static _CODEX_MODELS seed in surface_registry (codex
+has no per-profile prefix on the Anthropic surface and, after G005, no config
+rows). The real CodexAdapter spawns `codex exec` and cannot run in CI, so codex
+is exercised through the SAME fixture seam G004 uses: a FixtureAdapter whose
+internal provider is "auggie" is registered under the codex backend key, giving
+codex auggie's text-only tool ceiling while routing and gating key on the
+resolved codex backend name.
 
 Each scenario is parametrized per backend with explicit ids, so a failure
 isolates the exact backend + scenario cell. The feature subset per backend is the
@@ -23,7 +32,11 @@ capability ceiling fixed by responses_parity_surface.json:
   - deepseek: tools.function translated (tool_use OUTPUT), input.image unsupported.
   - auggie:  tools.function partial (text-only ceiling, NO tool_use OUTPUT),
              input.image unsupported.
-  - thinking and caching.cache_control are unsupported on ALL three backends.
+  - codex:   tools.function partial (text-only ceiling, NO tool_use OUTPUT, the
+             mirror of auggie: `codex exec` emits no structured function-call
+             output, only command_execution observations), input.image
+             unsupported, thinking/caching unsupported.
+  - thinking and caching.cache_control are unsupported on ALL four backends.
 """
 
 from __future__ import annotations
@@ -38,34 +51,71 @@ from conftest import FixtureAdapter
 from reverso.protocols.anthropic_app import build_anthropic_app
 
 # claude is NOT in the matrix: it is excluded from the Anthropic surface (D2).
-PROVIDERS = ["copilot", "deepseek", "auggie"]
+PROVIDERS = ["copilot", "deepseek", "auggie", "codex"]
 
 # A real deepseek model id from litellm_config so the bare /v1/messages path can
 # auto-resolve a backend; copilot/auggie have no config rows and are reached via
 # their pinned per-profile prefix instead.
 _DEEPSEEK_MODEL = "deepseek-v4-pro"
 
+# A gpt-* model id that auto-resolves to the codex backend through the static
+# _CODEX_MODELS seed in surface_registry (no config row, no per-profile prefix).
+_CODEX_MODEL = "gpt-5.5"
+
+# The five gpt ids the codex backend serves first-party on the Anthropic surface
+# (PRD / ADR 0007); GET /v1/models must advertise all five.
+_GPT_MODELS = {"gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex-spark", "gpt-4.1"}
+
 # Backends that emit a tool_use OUTPUT block for a tools request (native or
-# translated function calling). auggie is text-only (partial), so it degrades.
+# translated function calling). auggie and codex are text-only (partial), so
+# they degrade to a text reply and never appear here.
 _TOOL_OUTPUT_PROVIDERS = ["copilot", "deepseek"]
+
+# Backends whose tools.function ceiling is text-only (partial): the tools field
+# is accepted (200) but no tool_use OUTPUT block is emitted. codex mirrors auggie
+# because `codex exec` surfaces no structured function-call output.
+_TEXT_ONLY_TOOL_PROVIDERS = ["auggie", "codex"]
+
+
+def _fixture_provider(provider: str) -> str:
+    """The FixtureAdapter internal provider backing a backend key.
+
+    codex's real adapter spawns `codex exec` (cannot run in CI), so it reuses
+    auggie's text-only fixture under the codex backend key (the G004 seam);
+    routing and gating still key on the resolved codex backend name.
+    """
+    return "auggie" if provider == "codex" else provider
 
 
 def _build_client() -> httpx.AsyncClient:
     app = build_anthropic_app(
-        {provider: FixtureAdapter(provider) for provider in PROVIDERS}
+        {
+            provider: FixtureAdapter(_fixture_provider(provider))
+            for provider in PROVIDERS
+        }
     )
     transport = httpx.ASGITransport(app=app)
     return httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:64946")
 
 
 def _prefix(provider: str) -> str:
-    """Pin the backend through its per-profile prefix (bypasses model resolution)."""
+    """Pin the backend through its per-profile prefix (bypasses model resolution).
+
+    codex has no per-profile prefix on the Anthropic surface; it is reached on
+    the BARE /v1 path with a gpt-* model that auto-resolves to the codex backend.
+    """
+    if provider == "codex":
+        return "/v1"
     return f"/{provider}/v1"
 
 
 def _model_for(provider: str) -> str:
     """A model id that satisfies the gate; on a pinned prefix only the family matters."""
-    return _DEEPSEEK_MODEL if provider == "deepseek" else f"{provider}-default"
+    if provider == "deepseek":
+        return _DEEPSEEK_MODEL
+    if provider == "codex":
+        return _CODEX_MODEL
+    return f"{provider}-default"
 
 
 def _messages_body(provider: str, text: str, **extra: Any) -> dict[str, Any]:
@@ -231,13 +281,14 @@ async def test_tool_use_output_block(provider: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_auggie_tools_text_only_ceiling() -> None:
-    """auggie classifies tools.function as partial: NO tool_use OUTPUT, text instead."""
+@pytest.mark.parametrize("provider", _TEXT_ONLY_TOOL_PROVIDERS)
+async def test_tools_text_only_ceiling(provider: str) -> None:
+    """auggie/codex classify tools.function as partial: NO tool_use OUTPUT, text instead."""
     async with _build_client() as client:
         resp = await client.post(
-            f"{_prefix('auggie')}/messages",
+            f"{_prefix(provider)}/messages",
             json=_messages_body(
-                "auggie",
+                provider,
                 "What is the weather in Paris?",
                 tools=_TOOLS,
                 tool_choice={"type": "auto"},
@@ -247,9 +298,9 @@ async def test_auggie_tools_text_only_ceiling() -> None:
     body = resp.json()
     assert all(
         block["type"] != "tool_use" for block in body["content"]
-    ), "auggie text-only ceiling: no tool_use output block"
+    ), f"{provider} text-only ceiling: no tool_use output block"
     text = "".join(b["text"] for b in body["content"] if b["type"] == "text")
-    assert text, "auggie must degrade to a non-empty text message"
+    assert text, f"{provider} must degrade to a non-empty text message"
     assert body["stop_reason"] == "end_turn"
 
 
@@ -286,6 +337,13 @@ async def test_models_listing_shape() -> None:
         assert isinstance(row["display_name"], str) and row["display_name"]
     assert body["first_id"] == body["data"][0]["id"]
     assert body["last_id"] == body["data"][-1]["id"]
+    # The five codex gpt ids are advertised on the Anthropic surface listing
+    # (AC7), sourced from the static _CODEX_MODELS seed in surface_registry.
+    listed_ids = {row["id"] for row in body["data"]}
+    assert _GPT_MODELS <= listed_ids, (
+        f"the five codex gpt ids must appear on the Anthropic /v1/models listing; "
+        f"missing {_GPT_MODELS - listed_ids!r}"
+    )
 
 
 # --- unsupported feature x backend (gated -> 400 invalid_request_error) -----
@@ -340,9 +398,9 @@ async def _assert_unsupported(
     assert provider in body["error"]["message"]
 
 
-# image is unsupported on deepseek and auggie (native on copilot, so not gated).
+# image is unsupported on deepseek, auggie, and codex (native on copilot only).
 @pytest.mark.asyncio
-@pytest.mark.parametrize("provider", ["deepseek", "auggie"])
+@pytest.mark.parametrize("provider", ["deepseek", "auggie", "codex"])
 async def test_image_unsupported_on_non_copilot(provider: str) -> None:
     await _assert_unsupported(provider, _image_body(provider), "input.image")
 
