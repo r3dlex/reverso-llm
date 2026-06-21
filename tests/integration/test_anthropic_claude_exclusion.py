@@ -39,7 +39,7 @@ from reverso.protocols.responses_app import build_app
 from reverso.protocols.surface_registry import list_anthropic_surface_models
 from reverso.proxy.compose import CompositionRoot
 
-ANTHROPIC_BACKENDS = ["copilot", "deepseek", "auggie"]
+ANTHROPIC_BACKENDS = ["copilot", "deepseek", "auggie", "codex"]
 RESPONSES_PROVIDERS = ["claude", "copilot", "auggie", "deepseek"]
 
 # A claude model id; the family marker is what the fail-closed resolver detects.

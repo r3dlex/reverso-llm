@@ -18,6 +18,7 @@ from reverso.protocols.surface_registry import (
     SURFACE_BACKENDS,
     _build_model_index,
     cross_check_anthropic_models,
+    list_anthropic_surface_models,
     resolve_anthropic_backend,
 )
 
@@ -39,10 +40,34 @@ def test_mixed_case_deepseek_routes() -> None:
 
 
 def test_unknown_model_returns_none() -> None:
-    assert resolve_anthropic_backend("gpt-5.5") is None
     assert resolve_anthropic_backend("totally-unknown") is None
     assert resolve_anthropic_backend("") is None
     assert resolve_anthropic_backend(None) is None
+
+
+def test_codex_gpt_models_resolve_to_codex() -> None:
+    # The five gpt ids served first-party on the Anthropic surface (Milestone 2)
+    # resolve to the codex backend, independent of any litellm_config row.
+    for model in (
+        "gpt-5.5",
+        "gpt-5.4",
+        "gpt-5.4-mini",
+        "gpt-5.3-codex-spark",
+        "gpt-4.1",
+    ):
+        assert resolve_anthropic_backend(model) == "codex", model
+
+
+def test_codex_gpt_models_listed_with_backend_codex() -> None:
+    rows = list_anthropic_surface_models()
+    codex_ids = {row["id"] for row in rows if row["backend"] == "codex"}
+    assert codex_ids == {
+        "gpt-5.5",
+        "gpt-5.4",
+        "gpt-5.4-mini",
+        "gpt-5.3-codex-spark",
+        "gpt-4.1",
+    }
 
 
 def test_claude_models_fail_closed_to_none() -> None:
@@ -64,7 +89,7 @@ def test_claude_models_fail_closed_to_none() -> None:
 
 def test_surface_backends_excludes_claude() -> None:
     anthropic = SURFACE_BACKENDS["anthropic"]
-    assert anthropic == frozenset({"copilot", "deepseek", "auggie"})
+    assert anthropic == frozenset({"copilot", "deepseek", "auggie", "codex"})
     assert "claude" not in anthropic
 
 
@@ -131,3 +156,49 @@ def test_build_index_skips_claude_rows() -> None:
     index = _build_model_index()
     assert all("claude" not in name for name in index)
     assert all(backend in SURFACE_BACKENDS["anthropic"] for backend in index.values())
+
+
+def test_import_safe_without_gpt_config_rows(tmp_path: Path) -> None:
+    """cross_check must NOT raise when the gpt rows are absent from the config.
+
+    Simulates the post-G005 world: a config carrying only a deepseek row and NONE
+    of the five gpt rows. The static _CODEX_MODELS ids are seeded into the fresh
+    index but are EXEMPT from the config-existence assertion, so the lint passes
+    even though gpt-* are not in config_names. This is the C3 import-safety
+    guarantee that keeps ``import surface_registry`` from raising after G005.
+    """
+    config = tmp_path / "litellm_config.yaml"
+    config.write_text(
+        textwrap.dedent(
+            """\
+            model_list:
+              - model_name: deepseek-v4-pro
+                litellm_params:
+                  model: custom_openai/deepseek-v4-pro
+            """
+        )
+    )
+    # No RuntimeError: codex ids exempt from config-existence, deepseek present.
+    cross_check_anthropic_models(config)
+
+
+def test_lint_coverage_codex_routing_not_a_silent_no_op(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """G004.2(e): codex routing is lint-covered, not a silent no-op.
+
+    Removing ``codex`` from SURFACE_BACKENDS["anthropic"] while leaving it in
+    _CODEX_MODELS must make cross_check_anthropic_models raise: the codex ids are
+    exempt ONLY from the config-existence assertion, NOT from the
+    backend-membership assertion. If they were exempt from both, dropping codex
+    from the surface would silently pass and routing drift would go uncaught.
+    """
+    import reverso.protocols.surface_registry as _reg
+
+    monkeypatch.setitem(
+        _reg.SURFACE_BACKENDS,
+        "anthropic",
+        frozenset({"copilot", "deepseek", "auggie"}),
+    )
+    with pytest.raises(RuntimeError, match="drift"):
+        cross_check_anthropic_models()

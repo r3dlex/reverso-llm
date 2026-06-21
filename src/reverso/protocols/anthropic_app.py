@@ -719,11 +719,14 @@ def build_anthropic_adapters() -> dict[str, ProviderAdapter]:
     """Construct ONLY the Anthropic-surface backends (never a ClaudeAdapter).
 
     Mirrors reverso.proxy.compose.build_adapters but constructs only copilot,
-    deepseek, and auggie; claude is excluded from the Anthropic surface (ADR 0006
-    D2). Adapters are imported here (not at module top) so the registry can be
-    built without importing every provider's transitive dependencies until boot.
+    deepseek, auggie, and codex; claude is excluded from the Anthropic surface
+    (ADR 0006 D2). codex is Anthropic-surface-ONLY (it is deliberately absent from
+    compose.build_adapters, the mirror of claude being Responses-surface-only,
+    ADR 0007). Adapters are imported here (not at module top) so the registry can
+    be built without importing every provider's transitive dependencies until boot.
     """
     from reverso.protocols.adapters.auggie import AuggieAdapter
+    from reverso.protocols.adapters.codex import CodexAdapter
     from reverso.protocols.adapters.copilot import CopilotAdapter
     from reverso.protocols.adapters.deepseek import DeepSeekAdapter
 
@@ -731,6 +734,7 @@ def build_anthropic_adapters() -> dict[str, ProviderAdapter]:
         "copilot": CopilotAdapter(),
         "deepseek": DeepSeekAdapter(),
         "auggie": AuggieAdapter(),
+        "codex": CodexAdapter(),
     }
 
 
