@@ -60,7 +60,6 @@ The two processes communicate over a Unix-domain socket at `~/Library/applicatio
 | LiteLLM core | Inbound HTTP server, model_list routing, body translation, streaming bridge |
 | `models.yaml` loader | Parsed once at startup, expanded into LiteLLM's `model_list` |
 | `anthropic_cli_provider.py` | LiteLLM custom provider; forwards Anthropic-backend requests to the session daemon |
-| `openai_cli_provider.py` | LiteLLM custom provider; forwards OpenAI-backend requests to the session daemon |
 | HTTP-forwarded provider | Standard LiteLLM behavior for DeepSeek (no custom code) |
 | `x_gateway` injector | Middleware that wraps responses to add the `x_gateway` envelope |
 
@@ -221,8 +220,7 @@ loopback/
 │   │   │   └── api.py
 │   │   └── proxy/
 │   │       ├── __init__.py
-│   │       ├── anthropic_cli_provider.py
-│   │       └── openai_cli_provider.py
+│   │       └── anthropic_cli_provider.py
 ├── scripts/
 │   ├── install-launchagents.sh
 │   ├── uninstall-launchagents.sh
@@ -230,7 +228,6 @@ loopback/
 │   ├── start-fg-daemon.sh
 │   ├── start-fg-proxy.sh
 │   ├── smoke.sh
-│   ├── test-openai.sh
 │   └── test-anthropic.sh
 ├── launchd/
 │   ├── com.user.reverso-daemon.plist.tmpl
