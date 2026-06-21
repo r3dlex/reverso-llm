@@ -6,14 +6,12 @@ import litellm
 
 from reverso.middleware.x_gateway_callback import success_callback
 from reverso.proxy.anthropic_cli_provider import anthropic_cli
-from reverso.proxy.openai_cli_provider import openai_cli
 
 
 def register_litellm_extensions() -> None:
     """Register Reverso providers and callbacks with LiteLLM once."""
     providers = {
         "anthropic_cli": anthropic_cli,
-        "openai_cli": openai_cli,
     }
     existing = {
         item.get("provider"): item

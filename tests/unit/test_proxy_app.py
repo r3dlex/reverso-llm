@@ -20,7 +20,6 @@ def test_proxy_app_imports_with_config_file_path() -> None:
     assert module.app is not None
     assert success_callback in litellm.success_callback
     assert "anthropic_cli" in litellm.provider_list
-    assert "openai_cli" in litellm.provider_list
 
 
 @pytest.mark.asyncio
