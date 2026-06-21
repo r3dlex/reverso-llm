@@ -60,7 +60,9 @@ def _backup_settings(settings_path: Path) -> Path:
     return backup_path
 
 
-def _atomic_write_json(settings_path: Path, settings: dict[str, Any], indent: int) -> None:
+def _atomic_write_json(
+    settings_path: Path, settings: dict[str, Any], indent: int
+) -> None:
     settings_path.parent.mkdir(parents=True, exist_ok=True)
     fd, temp_name = tempfile.mkstemp(
         prefix=f".{settings_path.name}.",
@@ -107,7 +109,11 @@ def _remove_reverso_overrides(
         removed_settings_keys.append(REVERSO_MARKER_KEY)
 
     model = cleaned.get("model")
-    if had_reverso_marker and isinstance(model, str) and model in BROKEN_RESTORED_MODELS:
+    if (
+        had_reverso_marker
+        and isinstance(model, str)
+        and model in BROKEN_RESTORED_MODELS
+    ):
         removed_model = model
         cleaned.pop("model", None)
         removed_settings_keys.append("model")

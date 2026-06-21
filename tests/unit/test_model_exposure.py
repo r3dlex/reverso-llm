@@ -38,8 +38,7 @@ def test_claude_code_selector_uses_cli_safe_prefixes_for_conflicts() -> None:
     assert claude_code_selector_model_id("agy", "nova") == "agy-nova"
     assert claude_code_selector_model_id("claude", "sonnet") == "sonnet"
     assert (
-        claude_code_selector_model_id("claude", "claude-opus-4-5")
-        == "claude-opus-4-5"
+        claude_code_selector_model_id("claude", "claude-opus-4-5") == "claude-opus-4-5"
     )
     assert (
         claude_code_selector_model_id("deepseek", "deepseek-v4-pro")
