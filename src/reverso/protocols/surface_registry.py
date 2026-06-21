@@ -38,9 +38,10 @@ _CLAUDE_MARKER = "claude"
 # Which backend each litellm_config model_name maps to, by the model id naming
 # convention used in config/litellm_config.yaml. The config carries no explicit
 # backend tag, so the backend is derived from the model-name family here, the one
-# place that knows the first-party backend taxonomy.
+# place that knows the first-party backend taxonomy. copilot has no config rows
+# (it is a first-party-only backend exposed via SURFACE_BACKENDS), so no copilot
+# prefix is derived here.
 _DEEPSEEK_PREFIX = "deepseek"
-_COPILOT_PREFIX = "copilot"
 _AUGGIE_PREFIX = "auggie"
 
 

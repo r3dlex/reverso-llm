@@ -226,3 +226,148 @@ async def test_stream_pre_first_event_failure_returns_502_not_200_stream() -> No
     # Secret-free: only the exception class name, never the payload text.
     assert "sk-SECRET-do-not-leak" not in body["error"]["message"]
     assert "RuntimeError" in body["error"]["message"]
+
+
+# --- security findings (G008 quality gate) -----------------------------------
+
+
+def _deeply_nested_payload_bytes(depth: int, *, stream: bool = False) -> bytes:
+    """Build a pre-serialised Messages payload with tool_result nested ``depth``
+    levels deep, with a gated image block at the TOP level so the gate rejects it
+    regardless of depth.
+
+    Pre-serialised to bytes so httpx sends the raw body without calling
+    json.dumps on a deeply-recursive Python dict (which would itself hit the
+    encoder's recursion limit before the request reaches the server).
+
+    The top-level image block is guaranteed to be found at depth 0 of the scan
+    (before any recursion), so the gate raises AnthropicFeatureRejected for
+    backends that do not support images, giving a 400. This exercises the
+    structured-error contract even when the depth cap silently truncates deep
+    recursion. The nesting itself proves no RecursionError escapes.
+    """
+    leaf = '{"type":"text","text":"leaf"}'
+    inner = leaf
+    for _ in range(depth):
+        inner = (
+            '{"type":"tool_result","tool_use_id":"toolu_x","content":[' + inner + "]}"
+        )
+    # The image block is at the TOP of the content list so the gate sees it at
+    # scan depth 0, independent of how deep the tool_result nesting goes.
+    image_block = '{"type":"image","source":{"type":"base64","media_type":"image/png","data":"x"}}'
+    stream_field = ',"stream":true' if stream else ""
+    body = (
+        '{"model":"'
+        + _BACKEND_MODEL["deepseek"]
+        + '","max_tokens":64'
+        + stream_field
+        + ',"messages":[{"role":"user","content":['
+        + image_block
+        + ","
+        + inner
+        + "]}]}"
+    )
+    return body.encode()
+
+
+@pytest.mark.asyncio
+async def test_deeply_nested_payload_nonstreaming_returns_400_not_500() -> None:
+    """Finding 1: a deeply-nested tool_result payload (depth > _MAX_BLOCK_DEPTH)
+    on POST /v1/messages must return a structured 400 invalid_request_error, NOT
+    a 500 framework crash.
+
+    The top-level image block triggers the gate (images are unsupported on deepseek)
+    giving a clean 400. The nesting depth exercises the cap and proves no
+    RecursionError escapes as an unhandled 500.
+    """
+    from reverso.protocols.anthropic_feature_gate import _MAX_BLOCK_DEPTH  # noqa: PLC0415
+
+    depth = _MAX_BLOCK_DEPTH + 5
+    async with _build_client() as client:
+        resp = await client.post(
+            _prefix("deepseek"),
+            content=_deeply_nested_payload_bytes(depth),
+            headers={"content-type": "application/json"},
+        )
+    assert resp.status_code == 400
+    assert "application/json" in resp.headers["content-type"]
+    body = resp.json()
+    assert body["type"] == "error"
+    assert body["error"]["type"] == "invalid_request_error"
+
+
+@pytest.mark.asyncio
+async def test_deeply_nested_payload_streaming_returns_400_not_200_stream() -> None:
+    """Finding 1: a deeply-nested payload with stream=true must return a 400 JSON
+    body (NOT a 200 text/event-stream) because gating runs before the 200 header.
+    """
+    from reverso.protocols.anthropic_feature_gate import _MAX_BLOCK_DEPTH  # noqa: PLC0415
+
+    depth = _MAX_BLOCK_DEPTH + 5
+    async with _build_client() as client:
+        resp = await client.post(
+            _prefix("deepseek"),
+            content=_deeply_nested_payload_bytes(depth, stream=True),
+            headers={"content-type": "application/json"},
+        )
+    assert resp.status_code == 400
+    assert "application/json" in resp.headers["content-type"]
+    body = resp.json()
+    assert body["type"] == "error"
+    assert body["error"]["type"] == "invalid_request_error"
+
+
+@pytest.mark.asyncio
+async def test_oversized_body_returns_structured_error() -> None:
+    """Finding 2: a body exceeding _MAX_BODY_BYTES must return a structured 413
+    Anthropic error envelope, not an unhandled crash or silent buffering.
+    """
+    from reverso.protocols.anthropic_app import _MAX_BODY_BYTES  # noqa: PLC0415
+
+    oversized_body = b'{"model":"' + b"x" * (_MAX_BODY_BYTES + 1) + b'"}'
+    async with _build_client() as client:
+        resp = await client.post(
+            _prefix("copilot"),
+            content=oversized_body,
+            headers={"content-type": "application/json"},
+        )
+    assert resp.status_code in (400, 413)
+    assert "application/json" in resp.headers["content-type"]
+    body = resp.json()
+    assert body["type"] == "error"
+    assert body["error"]["type"] == "invalid_request_error"
+
+
+@pytest.mark.asyncio
+async def test_stream_mid_failure_generator_closed() -> None:
+    """Finding 3: a mid-stream failure must still close the async generator
+    (aclose called via finally), releasing the upstream resource promptly.
+
+    We verify indirectly: the stream completes without hanging and returns
+    a terminal in-band error event or a 502 envelope (the mid-stream failure
+    path). If aclose were missing this test could hang on some event-loop
+    implementations because the generator is never exhausted.
+    """
+    adapters = {b: FixtureAdapter(b) for b in ANTHROPIC_BACKENDS}
+    adapters["copilot"] = _StreamFailsImmediatelyAdapter()
+    app = AnthropicMessagesApp(adapters)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://127.0.0.1:64946"
+    ) as client:
+        resp = await client.post(
+            _prefix("copilot"),
+            json={
+                "model": _BACKEND_MODEL["copilot"],
+                "max_tokens": 64,
+                "stream": True,
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+        )
+    # The response must be complete (no hang). Status is either 502 (pre-stream
+    # failure caught by peek-first) or 200 with in-band error (mid-stream).
+    assert resp.status_code in (200, 502)
+    # If it is a 502 it must be a valid Anthropic error envelope.
+    if resp.status_code == 502:
+        body = resp.json()
+        assert body["type"] == "error"

@@ -313,3 +313,43 @@ def test_rejected_error_message_secret_free_names_feature_and_backend() -> None:
     message = str(exc.value)
     assert FEATURE_IMAGE in message
     assert "deepseek" in message
+
+
+# --- depth-bound recursion safety (Finding 1a) --------------------------------
+
+
+def _deeply_nested_tool_result(depth: int) -> dict:
+    """Build a payload whose tool_result content is nested ``depth`` levels deep.
+
+    Each level wraps the previous in another tool_result so the scanner must
+    recurse ``depth`` times to reach the innermost block. At depth > _MAX_BLOCK_DEPTH
+    the scan silently stops. A depth of _MAX_BLOCK_DEPTH+1 is enough to prove
+    the cap; we keep depth small so Python's own dict construction never blows up.
+    """
+    inner: list = [{"type": "text", "text": "leaf"}]
+    for _ in range(depth):
+        inner = [{"type": "tool_result", "tool_use_id": "toolu_x", "content": inner}]
+    return {"messages": [{"role": "user", "content": inner}]}
+
+
+def test_extract_deeply_nested_tool_result_does_not_raise() -> None:
+    """A payload nested beyond _MAX_BLOCK_DEPTH must not raise RecursionError.
+
+    extract_anthropic_features must return cleanly regardless of nesting depth
+    beyond the cap.
+    """
+    from reverso.protocols.anthropic_feature_gate import _MAX_BLOCK_DEPTH  # noqa: PLC0415
+
+    # One level beyond the cap is sufficient to exercise the depth guard.
+    payload = _deeply_nested_tool_result(_MAX_BLOCK_DEPTH + 1)
+    result = extract_anthropic_features(payload)
+    assert isinstance(result, set)
+
+
+def test_gate_deeply_nested_tool_result_does_not_raise() -> None:
+    """gate_anthropic_features must not raise RecursionError on a deeply nested payload."""
+    from reverso.protocols.anthropic_feature_gate import _MAX_BLOCK_DEPTH  # noqa: PLC0415
+
+    payload = _deeply_nested_tool_result(_MAX_BLOCK_DEPTH + 1)
+    # No gated features in a plain text payload: gate passes without raising.
+    gate_anthropic_features(payload, "deepseek")

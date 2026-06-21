@@ -220,13 +220,28 @@ def _model_from_payload(payload: dict[str, Any] | None) -> str | None:
     return model if isinstance(model, str) else None
 
 
+# Maximum cumulative request body size accepted by _read_body (16 MiB). A body
+# that exceeds this cap is rejected with a structured 413 Anthropic error envelope
+# rather than buffered unbounded into memory.
+_MAX_BODY_BYTES = 16 * 1024 * 1024  # 16 MiB
+
+
+class _BodyTooLargeError(Exception):
+    """Raised by _read_body when the cumulative body exceeds _MAX_BODY_BYTES."""
+
+
 async def _read_body(receive: Receive) -> bytes:
     chunks: list[bytes] = []
+    total = 0
     while True:
         message = await receive()
         if message.get("type") == "http.disconnect":
             break
-        chunks.append(message.get("body", b""))
+        chunk = message.get("body", b"")
+        total += len(chunk)
+        if total > _MAX_BODY_BYTES:
+            raise _BodyTooLargeError(f"request body exceeds {_MAX_BODY_BYTES} bytes")
+        chunks.append(chunk)
         if not message.get("more_body", False):
             break
     return b"".join(chunks)
@@ -381,7 +396,17 @@ class AnthropicMessagesApp:
 
         # Read and decode the body: the auto-routing path resolves the requested
         # model, and the full payload is translated into a ResponsesRequest.
-        body = await _read_body(receive)
+        try:
+            body = await _read_body(receive)
+        except _BodyTooLargeError:
+            await _send_error(
+                send,
+                413,
+                "invalid_request_error",
+                "request body too large",
+                anthropic_version=anthropic_version,
+            )
+            return
         payload = _parse_body(body)
         model = _model_from_payload(payload)
 
@@ -449,6 +474,20 @@ class AnthropicMessagesApp:
                 400,
                 "invalid_request_error",
                 str(rejected),
+                anthropic_version=anthropic_version,
+            )
+            return
+        except RecursionError:
+            # A crafted payload with extreme block nesting can drive the feature
+            # scanner into a RecursionError despite the _MAX_BLOCK_DEPTH cap on
+            # _scan_block_list (belt-and-suspenders: the depth cap is the primary
+            # defence; this catch is the last-resort so the structured Anthropic
+            # error contract is never broken by a framework 500).
+            await _send_error(
+                send,
+                400,
+                "invalid_request_error",
+                "request content is too deeply nested",
                 anthropic_version=anthropic_version,
             )
             return
@@ -578,6 +617,11 @@ class AnthropicMessagesApp:
                     "more_body": True,
                 }
             )
+        finally:
+            # Deterministically close the async generator so the upstream
+            # stream/subprocess is released promptly on both success and
+            # mid-stream-failure paths (Finding 3).
+            await anthropic_events.aclose()
         if not started:
             # The mapper always yields at least message_start, so this is
             # defensive; commit the header so the client sees a valid stream.
