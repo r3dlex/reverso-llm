@@ -30,6 +30,7 @@ import httpx
 import pytest
 
 from conftest import FixtureAdapter
+from reverso.protocols.model_exposure import CODEX_BUILTIN_MODELS
 from reverso.protocols.responses_app import (
     APP_PROVIDER_PREFIXES,
     build_app,
@@ -42,7 +43,7 @@ RESPONSES_PROVIDERS = ["claude", "copilot", "auggie", "deepseek"]
 
 # The five gpt ids and the codex backend key that must NEVER be on the Responses
 # surface (they are Anthropic-surface-only, ADR 0007).
-_GPT_MODELS = ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex-spark", "gpt-4.1"]
+_GPT_MODELS = list(CODEX_BUILTIN_MODELS)
 _CODEX_KEY = "codex"
 
 

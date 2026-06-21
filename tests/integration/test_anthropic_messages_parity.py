@@ -49,6 +49,7 @@ import pytest
 
 from conftest import FixtureAdapter
 from reverso.protocols.anthropic_app import build_anthropic_app
+from reverso.protocols.model_exposure import CODEX_BUILTIN_MODELS
 
 # claude is NOT in the matrix: it is excluded from the Anthropic surface (D2).
 PROVIDERS = ["copilot", "deepseek", "auggie", "codex"]
@@ -64,7 +65,7 @@ _CODEX_MODEL = "gpt-5.5"
 
 # The five gpt ids the codex backend serves first-party on the Anthropic surface
 # (PRD / ADR 0007); GET /v1/models must advertise all five.
-_GPT_MODELS = {"gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex-spark", "gpt-4.1"}
+_GPT_MODELS = set(CODEX_BUILTIN_MODELS)
 
 # Backends that emit a tool_use OUTPUT block for a tools request (native or
 # translated function calling). auggie and codex are text-only (partial), so

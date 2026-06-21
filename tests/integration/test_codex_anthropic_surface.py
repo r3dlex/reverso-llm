@@ -29,9 +29,10 @@ import pytest
 
 from conftest import FixtureAdapter
 from reverso.protocols.anthropic_app import build_anthropic_app
+from reverso.protocols.model_exposure import CODEX_BUILTIN_MODELS
 
 # The five gpt ids served first-party on the Anthropic surface (PRD / ADR 0007).
-_GPT_MODELS = ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex-spark", "gpt-4.1"]
+_GPT_MODELS = list(CODEX_BUILTIN_MODELS)
 
 
 def _build_client() -> httpx.AsyncClient:

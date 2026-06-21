@@ -22,6 +22,8 @@ from typing import Any
 
 import yaml
 
+from reverso.protocols.model_exposure import codex_builtin_model_backends
+
 # Surface-scoped backend exposure as DATA (ADR 0006 D2). The Anthropic surface
 # exposes copilot, deepseek, and auggie; claude is EXCLUDED because Claude Code
 # talking to a claude backend through Reverso is circular (the claude backend is
@@ -54,13 +56,7 @@ _AUGGIE_PREFIX = "auggie"
 # stays config-independent yet lint-covered: the backend-membership assertion in
 # cross_check still applies, while the config-existence assertion exempts these
 # ids so import does not raise once the gpt config rows are gone.
-_CODEX_MODELS: dict[str, str] = {
-    "gpt-5.5": "codex",
-    "gpt-5.4": "codex",
-    "gpt-5.4-mini": "codex",
-    "gpt-5.3-codex-spark": "codex",
-    "gpt-4.1": "codex",
-}
+_CODEX_MODELS: dict[str, str] = codex_builtin_model_backends()
 
 
 def _resolve_config_path() -> Path:
