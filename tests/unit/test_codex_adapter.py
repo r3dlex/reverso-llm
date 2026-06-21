@@ -33,6 +33,8 @@ import pytest
 from reverso.protocols.adapter import ResponsesRequest
 from reverso.protocols.adapters.cli_spine import BoundedCliStreamFailure
 from reverso.protocols.adapters.codex import (
+    _DEFAULT_CODEX_MODEL_FLAG,
+    _codex_model_flag,
     CodexAdapter,
     CodexAuthError,
     CodexOAuthAuth,
@@ -354,3 +356,184 @@ async def test_list_models_returns_exactly_the_five_gpt_ids() -> None:
         "gpt-5.3-codex-spark",
         "gpt-4.1",
     ]
+
+
+# --- MINOR-2(a): empty-turn contract (no agent_message, exit 0) -------------
+
+
+_EMPTY_TURN_LINES = [
+    json.dumps({"type": "thread.started", "thread_id": "thread-empty"}),
+    json.dumps({"type": "turn.completed"}),
+]
+_EMPTY_TURN_STDOUT = "\n".join(_EMPTY_TURN_LINES) + "\n"
+
+
+@pytest.mark.asyncio
+async def test_empty_turn_create_response_returns_valid_empty_envelope() -> None:
+    """A turn with no agent_message yields an empty completion, not an error.
+
+    Pins the MINOR-1 contract: zero-output turns are valid empty completions.
+    """
+    adapter = CodexAdapter(
+        auth=_valid_auth(),
+        cli_runner=_fake_buffered_runner(_EMPTY_TURN_STDOUT),
+    )
+    envelope = await adapter.create_response(_make_request())
+
+    assert envelope.status == "completed"
+    assert len(envelope.output) == 1
+    assert envelope.output[0]["content"][0]["text"] == ""
+    assert envelope.usage is not None
+    assert envelope.usage["output_tokens"] == 0
+
+
+@pytest.mark.asyncio
+async def test_empty_turn_stream_response_no_double_spawn() -> None:
+    """A clean zero-fragment stream builds an empty envelope without re-invoking cli_runner.
+
+    The buffered _cli_runner tripwire must NEVER fire: the empty stream is a
+    valid completion and must not trigger a second codex invocation (MINOR-4).
+    """
+    spawned = False
+
+    def _tripwire(prompt: str, model_flag: str) -> str:
+        nonlocal spawned
+        spawned = True
+        return "should-not-be-called"
+
+    async def _empty_stream(prompt: str, model_flag: str) -> AsyncIterator[str]:
+        # Yields nothing; terminates cleanly (StopAsyncIteration).
+        return
+        yield  # make this an async generator  # noqa: unreachable
+
+    adapter = CodexAdapter(
+        auth=_valid_auth(),
+        cli_runner=_tripwire,
+        stream_cli_runner=_empty_stream,
+    )
+    events = await _collect(adapter.stream_response(_make_request(stream=True)))
+
+    assert spawned is False, "_cli_runner must NOT be called for a clean empty stream"
+    names = [event.event for event in events]
+    assert names[0] == "response.created"
+    assert names[-1] == "response.completed"
+    completed = events[-1].data["response"]
+    assert completed["output"][0]["content"][0]["text"] == ""
+
+
+# --- MINOR-2(b): two-agent_message turn aggregation -------------------------
+
+_TWO_MSG_TEXT_A = "First part."
+_TWO_MSG_TEXT_B = "Second part."
+_TWO_MSG_EXPECTED = f"{_TWO_MSG_TEXT_A}\n{_TWO_MSG_TEXT_B}"
+
+_TWO_MSG_TURN_LINES = [
+    json.dumps({"type": "thread.started", "thread_id": "thread-two"}),
+    json.dumps(
+        {
+            "type": "item.completed",
+            "item": {"type": "agent_message", "text": _TWO_MSG_TEXT_A},
+        }
+    ),
+    json.dumps(
+        {
+            "type": "item.completed",
+            "item": {"type": "agent_message", "text": _TWO_MSG_TEXT_B},
+        }
+    ),
+    json.dumps({"type": "turn.completed"}),
+]
+_TWO_MSG_TURN_STDOUT = "\n".join(_TWO_MSG_TURN_LINES) + "\n"
+
+
+@pytest.mark.asyncio
+async def test_two_agent_messages_aggregated_buffered() -> None:
+    """Two agent_message events are newline-joined in the buffered (create_response) path."""
+    adapter = CodexAdapter(
+        auth=_valid_auth(),
+        cli_runner=_fake_buffered_runner(_TWO_MSG_TURN_STDOUT),
+    )
+    envelope = await adapter.create_response(_make_request())
+
+    assert envelope.output[0]["content"][0]["text"] == _TWO_MSG_EXPECTED
+
+
+@pytest.mark.asyncio
+async def test_two_agent_messages_aggregated_streaming() -> None:
+    """Two agent_message fragments each become a separate delta; the terminal
+    response.completed body carries the replay_incremental-accumulated full text
+    (fragments concatenated without separator, matching replay_incremental's
+    "".join contract, not the buffered path's newline-join).
+    """
+    adapter = CodexAdapter(
+        auth=_valid_auth(),
+        stream_cli_runner=_fake_stream_runner(_TWO_MSG_TURN_LINES),
+    )
+    events = await _collect(adapter.stream_response(_make_request(stream=True)))
+
+    deltas = [
+        event.data["delta"]
+        for event in events
+        if event.event == "response.output_text.delta"
+    ]
+    # Two separate deltas, one per agent_message fragment.
+    assert deltas == [_TWO_MSG_TEXT_A, _TWO_MSG_TEXT_B]
+    # replay_incremental accumulates with "".join (no separator between deltas).
+    accumulated = "".join(deltas)
+    completed = events[-1].data["response"]
+    assert completed["output"][0]["content"][0]["text"] == accumulated
+
+
+# --- MINOR-2(c): garbled turn resilience ------------------------------------
+
+_GARBLED_TURN_STDOUT = (
+    "\n".join(
+        [
+            "{not json",
+            "",
+            json.dumps({"type": "thread.started", "thread_id": "thread-garbled"}),
+            '["a", "list", "not", "a", "dict"]',
+            json.dumps(
+                {
+                    "type": "item.completed",
+                    "item": {"type": "agent_message", "text": _AGENT_TEXT},
+                }
+            ),
+            json.dumps({"type": "turn.completed"}),
+        ]
+    )
+    + "\n"
+)
+
+
+@pytest.mark.asyncio
+async def test_garbled_lines_do_not_crash_and_yield_clean_text() -> None:
+    """Interleaved non-JSON, blank, and non-dict lines are skipped; no crash."""
+    adapter = CodexAdapter(
+        auth=_valid_auth(),
+        cli_runner=_fake_buffered_runner(_GARBLED_TURN_STDOUT),
+    )
+    envelope = await adapter.create_response(_make_request())
+
+    assert envelope.status == "completed"
+    assert envelope.output[0]["content"][0]["text"] == _AGENT_TEXT
+
+
+# --- MINOR-3: _codex_model_flag parametrized --------------------------------
+
+
+@pytest.mark.parametrize(
+    "model_id",
+    ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex-spark", "gpt-4.1"],
+)
+def test_codex_model_flag_identity_for_known_ids(model_id: str) -> None:
+    """Each of the five served gpt ids maps to itself as the --model flag."""
+    assert _codex_model_flag(model_id) == model_id
+
+
+def test_codex_model_flag_none_returns_default() -> None:
+    assert _codex_model_flag(None) == _DEFAULT_CODEX_MODEL_FLAG
+
+
+def test_codex_model_flag_bogus_returns_default() -> None:
+    assert _codex_model_flag("bogus-model-xyz") == _DEFAULT_CODEX_MODEL_FLAG

@@ -266,6 +266,7 @@ class CodexOAuthAuth:
             )
 
         if expires_at is not None:
+            # expires_at is epoch MILLISECONDS (JWT exp is seconds, multiplied by 1000).
             details["expires_at"] = expires_at
         return AuthResolution(
             authenticated=True,
@@ -519,7 +520,11 @@ class CodexAdapter:
                 return
 
     async def create_response(self, request: ResponsesRequest) -> ResponseEnvelope:
-        """Return a non-streaming Responses object for ``request``."""
+        """Return a non-streaming Responses object for ``request``.
+
+        A turn that exits 0 with no ``agent_message`` event yields an envelope
+        with empty text; this is a VALID empty completion, not an error.
+        """
         self._ensure_authenticated()
         prompt = build_prompt(request)
         model_flag = _codex_model_flag(request.model)
@@ -541,20 +546,31 @@ class CodexAdapter:
         prompt = build_prompt(request)
         model_flag = _codex_model_flag(request.model)
 
-        # Codex buffers a full turn, so there is no token-level delta to forward.
-        # Pull the runner before any event is emitted: any pre-first-fragment
-        # failure (auth, missing CLI, nonzero exit) folds into the buffered
-        # fallback so the client still gets a complete response; once a fragment
-        # has been yielded a failure propagates so the gateway's mid-stream
-        # contract (response.failed + [DONE]) takes over. This mirrors the claude
-        # streaming fallback window.
+        # Codex buffers a full turn: text arrives only at item.completed
+        # (agent_message), not as token deltas.  Two distinct pre-first-chunk
+        # outcomes require different handling:
+        #
+        #   StopAsyncIteration (clean empty stream): the process exited 0 with no
+        #   agent_message.  This is a VALID empty completion -- do NOT re-invoke
+        #   _cli_runner.  A second spawn would double latency and subscription
+        #   usage for what is simply a turn with no output.  Build the empty
+        #   envelope directly and replay it.
+        #
+        #   BoundedCliStreamFailure / any other exception (actual failure): the
+        #   process failed before emitting any output.  Fall back to the buffered
+        #   _cli_runner so the caller receives a structured error (CodexAuthError)
+        #   rather than a truncated stream.  This is the only case where the
+        #   buffered runner is invoked.
         stream = self._stream_cli_runner(prompt, model_flag)
         first_chunk: str | None = None
+        _stream_failed = False
         if hasattr(stream, "__anext__"):
             try:
                 first_chunk = await stream.__anext__()  # type: ignore[union-attr]
             except StopAsyncIteration:
+                # Clean empty turn: build empty completion directly (no re-spawn).
                 first_chunk = None
+                _stream_failed = False
             except BoundedCliStreamFailure as exc:
                 logger.info(
                     "codex streaming failed before first chunk; "
@@ -562,21 +578,30 @@ class CodexAdapter:
                     exc.returncode,
                 )
                 first_chunk = None
+                _stream_failed = True
             except Exception as exc:  # noqa: BLE001 - any pre-stream failure folds into fallback
                 logger.warning(
                     "codex streaming runner failed before first chunk: %s",
                     type(exc).__name__,
                 )
                 first_chunk = None
-        else:
-            first_chunk = None
+                _stream_failed = True
 
-        if first_chunk is None:
-            # Fallback: buffered CLI path. Identical shape to create_response. A
-            # failing codex exec raises CodexAuthError here (no false-green); the
-            # gateway renders it as a structured Anthropic error.
+        if first_chunk is None and _stream_failed:
+            # Failure fallback: re-invoke the buffered runner.  A failing codex
+            # exec raises CodexAuthError here (no false-green); the gateway
+            # renders it as a structured Anthropic error.
             text = await asyncio.to_thread(self._cli_runner, prompt, model_flag)
             envelope = buffered_envelope(request, prompt=prompt, text=text)
+            async for event in replay_turn(
+                envelope, store=self._store, input_items=record_input_items(request)
+            ):
+                yield event
+            return
+
+        if first_chunk is None:
+            # Clean empty turn: replay an empty envelope directly, no re-spawn.
+            envelope = buffered_envelope(request, prompt=prompt, text="")
             async for event in replay_turn(
                 envelope, store=self._store, input_items=record_input_items(request)
             ):
