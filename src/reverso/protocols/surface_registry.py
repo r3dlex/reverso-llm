@@ -145,10 +145,10 @@ def _display_name_for_model(model_id: str) -> str:
     """Derive a human-friendly display_name from a normalized model id.
 
     The litellm_config rows carry no display name, so it is derived here (the one
-    place that owns the first-party model taxonomy): split on hyphens, drop a
-    leading backend-family token when it duplicates the backend prefix, and
-    title-case the remaining words. This is a simple DERIVED label (documented as
-    a convenience, not a provider-authoritative product name), e.g.
+    place that owns the first-party model taxonomy): split on hyphens, RETAIN every
+    token (the leading backend-family token is kept, not dropped), and title-case
+    each word (a vN version token is upper-cased). This is a simple DERIVED label
+    (documented as a convenience, not a provider-authoritative product name), e.g.
     "deepseek-v4-pro" -> "Deepseek V4 Pro", "auggie-default" -> "Auggie Default".
     """
     words = [part for part in model_id.split("-") if part]
