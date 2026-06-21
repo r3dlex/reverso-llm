@@ -27,7 +27,7 @@ import yaml
 # talking to a claude backend through Reverso is circular (the claude backend is
 # the claude CLI itself). Milestone 2 adds "codex-cli" here as a single row.
 SURFACE_BACKENDS: dict[str, frozenset[str]] = {
-    "anthropic": frozenset({"copilot", "deepseek", "auggie"}),
+    "anthropic": frozenset({"copilot", "deepseek", "auggie", "codex"}),
 }
 
 # Model-name substrings/prefixes that identify the claude family. The Anthropic
@@ -43,6 +43,24 @@ _CLAUDE_MARKER = "claude"
 # prefix is derived here.
 _DEEPSEEK_PREFIX = "deepseek"
 _AUGGIE_PREFIX = "auggie"
+
+# The five gpt model ids served first-party by the codex backend on the Anthropic
+# surface (Milestone 2, ADR 0007). These are NOT derivable from a config name
+# prefix the way deepseek/auggie are: codex has its own first-party model taxonomy
+# and (after G005) its rows are removed from litellm_config entirely. The mapping
+# is therefore held as STATIC data here, seeded into the model index inside
+# _build_model_index so BOTH the module-level _MODEL_INDEX and the fresh index
+# cross_check_anthropic_models rebuilds carry these ids identically (C3). Routing
+# stays config-independent yet lint-covered: the backend-membership assertion in
+# cross_check still applies, while the config-existence assertion exempts these
+# ids so import does not raise once the gpt config rows are gone.
+_CODEX_MODELS: dict[str, str] = {
+    "gpt-5.5": "codex",
+    "gpt-5.4": "codex",
+    "gpt-5.4-mini": "codex",
+    "gpt-5.3-codex-spark": "codex",
+    "gpt-4.1": "codex",
+}
 
 
 def _resolve_config_path() -> Path:
@@ -114,6 +132,14 @@ def _build_model_index(path: Path | None = None) -> dict[str, str]:
         if backend is None:
             continue
         index[_normalize_model(model_name)] = backend
+    # Seed the static codex ids (Milestone 2). These are config-independent: codex
+    # owns its own model taxonomy and (after G005) has no litellm_config rows, so
+    # they are seeded here rather than derived from config. Seeding inside the
+    # builder (not only the module-level _MODEL_INDEX) means cross_check's
+    # independently-rebuilt fresh_index carries them too, keeping resolution and
+    # the build-time lint consistent (C3).
+    for model_id, backend in _CODEX_MODELS.items():
+        index[_normalize_model(model_id)] = backend
     return index
 
 
@@ -206,8 +232,15 @@ def cross_check_anthropic_models(path: Path | None = None) -> None:
         if isinstance(row.get("model_name"), str)
     }
     anthropic_backends = SURFACE_BACKENDS["anthropic"]
+    # The static codex ids are exempt from the CONFIG-EXISTENCE assertion only:
+    # they are seeded data, not config rows, and G005 removes the gpt rows from
+    # litellm_config entirely, so requiring them in the config would make import
+    # raise. They are NOT exempt from the backend-membership assertion below, so
+    # codex routing stays lint-covered (a codex id mapping to a backend absent
+    # from the Anthropic surface still raises).
+    codex_exempt = {_normalize_model(model_id) for model_id in _CODEX_MODELS}
     for model_name, backend in fresh_index.items():
-        if model_name not in config_names:
+        if model_name not in config_names and model_name not in codex_exempt:
             raise RuntimeError(
                 "surface_registry drift: indexed Anthropic model "
                 f"{model_name!r} is not present in litellm_config.yaml"

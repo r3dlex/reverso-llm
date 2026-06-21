@@ -167,7 +167,9 @@ def test_capability_tables_cover_all_providers_and_features() -> None:
     Belt-and-suspenders to the generator step: a partial JSON would silently
     leave a provider 'allowed' for a feature whose support is actually unknown.
     """
-    assert set(PROVIDERS) == {"claude", "copilot", "auggie", "deepseek"}
+    # codex (Milestone 2) is the fifth capability column, served on the Anthropic
+    # surface only; it mirrors auggie's text-only ceiling.
+    assert set(PROVIDERS) == {"claude", "copilot", "auggie", "deepseek", "codex"}
     for provider in PROVIDERS:
         assert set(CAPABILITY_TABLES[provider].keys()) == set(FEATURES)
 
