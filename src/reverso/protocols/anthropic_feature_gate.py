@@ -72,17 +72,30 @@ class AnthropicFeatureRejected(Exception):
         self.backend = backend
 
 
+# Maximum nesting depth for tool_result inner content scans. Anthropic does not
+# legitimately nest tool_result inside tool_result; this cap prevents a crafted
+# payload from driving unbounded recursion into a RecursionError (cheap loopback
+# DoS). Depth 8 covers any real multi-level content list with large headroom.
+_MAX_BLOCK_DEPTH = 8
+
+
 def _has_cache_control(obj: Any) -> bool:
     return isinstance(obj, dict) and obj.get("cache_control") is not None
 
 
-def _scan_block_list(blocks: Any, found: set[str]) -> None:
+def _scan_block_list(blocks: Any, found: set[str], *, depth: int = 0) -> None:
     """Scan a list of Anthropic content blocks, accumulating feature keys.
 
     Detects image blocks, thinking / redacted_thinking blocks, cache_control on
     any block, and recurses into a tool_result block's inner ``content`` list so
     nested image and nested cache_control are gated consistently with top-level.
+
+    ``depth`` is the current recursion depth; scanning stops silently at
+    ``_MAX_BLOCK_DEPTH`` so a malformed deeply-nested payload cannot exhaust
+    the Python call stack.
     """
+    if depth > _MAX_BLOCK_DEPTH:
+        return
     if not isinstance(blocks, list):
         return
     for block in blocks:
@@ -98,7 +111,7 @@ def _scan_block_list(blocks: Any, found: set[str]) -> None:
         elif block_type == "tool_result":
             # tool_result inner content may itself carry image / cache_control
             # blocks; scan it so nested features are gated like top-level ones.
-            _scan_block_list(block.get("content"), found)
+            _scan_block_list(block.get("content"), found, depth=depth + 1)
 
 
 def _scan_messages(messages: Any, found: set[str]) -> None:
