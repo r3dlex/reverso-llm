@@ -113,11 +113,59 @@ curl -sS "${BASE}/v1/models" \
 echo ""
 echo ""
 
-# --- Step 5: POST /claude/v1/messages (negative, expect 404) ----------------
+# --- Step 5: gpt-* via the codex backend (COMMENTED, requires codex login) --
+# Milestone 2 (ADR 0007) serves the five gpt-* models on the Anthropic surface
+# through the codex backend: a gpt id auto-resolves to codex on the BARE /v1 path
+# (codex has no per-profile prefix). The output is mapped onto the Anthropic
+# Messages shape exactly like the other backends.
+#
+# This step is COMMENTED OUT because it spawns the local `codex exec` CLI, which
+# requires:
+#   - codex LOGGED IN (codex login completed; ChatGPT/Codex OAuth subscription).
+#   - CODEX_HOME pointing at a WORKING codex home. The local ~/.codex may carry an
+#     oh-my-codex overlay that breaks `codex exec`; export CODEX_HOME at a clean
+#     codex home to avoid it, for example:
+#         export CODEX_HOME="${HOME}/.codex-clean"
+# Uncomment the two curl blocks below to run the live codex path. No secrets are
+# embedded; the CLI authenticates from its own stored login session.
+#
+# echo "==> Step 5: POST /v1/messages (codex backend, non-streaming, model=gpt-5.5)"
+# echo "    expect: HTTP 200, JSON {\"type\":\"message\",\"role\":\"assistant\",...}"
+# curl -sS -X POST "${BASE}/v1/messages" \
+#     -H "Content-Type: application/json" \
+#     -H "anthropic-version: ${VERSION}" \
+#     -d "{
+#         \"model\": \"gpt-5.5\",
+#         \"max_tokens\": 64,
+#         \"messages\": [
+#             {\"role\": \"user\", \"content\": \"Say hello in one short sentence.\"}
+#         ]
+#     }"
+# echo ""
+# echo ""
+#
+# echo "==> Step 5b: POST /v1/messages (codex backend, stream:true, model=gpt-5.5)"
+# echo "    expect: text/event-stream with message_start, ping, content_block_*,"
+# echo "            message_delta, message_stop events"
+# curl -sS -N -X POST "${BASE}/v1/messages" \
+#     -H "Content-Type: application/json" \
+#     -H "anthropic-version: ${VERSION}" \
+#     -d "{
+#         \"model\": \"gpt-5.5\",
+#         \"max_tokens\": 64,
+#         \"stream\": true,
+#         \"messages\": [
+#             {\"role\": \"user\", \"content\": \"Count from one to three.\"}
+#         ]
+#     }"
+# echo ""
+# echo ""
+
+# --- Step 6: POST /claude/v1/messages (negative, expect 404) ----------------
 # Checks: claude is excluded from the Anthropic surface (ADR 0006 D2). A
 # claude-pinned request is CLAIMED by this surface (never delegated to legacy) and
 # returns an Anthropic-shaped 404 not_found_error envelope.
-echo "==> Step 5: POST /claude/v1/messages (negative, expect 404 not_found_error)"
+echo "==> Step 6: POST /claude/v1/messages (negative, expect 404 not_found_error)"
 echo "    expect: HTTP 404, {\"type\":\"error\",\"error\":{\"type\":\"not_found_error\",...}}"
 curl -sS -o /dev/null -w "    HTTP status: %{http_code}\n" \
     -X POST "${BASE}/claude/v1/messages" \

@@ -3,7 +3,7 @@
 This is the EXACT MIRROR of test_anthropic_claude_exclusion. ADR 0007 makes codex
 an Anthropic-surface-ONLY backend (gpt models served first-party through
 `codex exec` under ChatGPT OAuth, the reverse of claude which is Responses-surface
-only). Coexisting with the legacy openai_cli gpt-on-the-Responses route is removed
+only). Coexisting with the legacy LiteLLM CLI provider gpt-on-the-Responses route is removed
 by the clean cut, so this suite asserts, through the real Responses gateway wiring,
 that NO Responses-surface route, prefix, adapter, or listing ever resolves gpt/codex:
 
