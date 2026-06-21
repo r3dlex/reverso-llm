@@ -7,6 +7,7 @@ from reverso.protocols.model_exposure import (
     CODEX_DEFAULT_MODEL,
     CODEX_FRONTIER_MODELS,
     STATIC_CATALOG_SEEDS,
+    claude_code_selector_model_id,
     codex_builtin_model_backends,
     selector_model_id,
 )
@@ -29,6 +30,21 @@ def test_selector_model_id_prefixes_only_collision_prone_providers() -> None:
     assert selector_model_id("deepseek", "deepseek-v4-pro") == "deepseek-v4-pro"
     assert selector_model_id("minimax", "MiniMax-M3") == "MiniMax-M3"
     assert selector_model_id("claude", "claude-sonnet-4-6") == "claude-sonnet-4-6"
+
+
+def test_claude_code_selector_uses_cli_safe_prefixes_for_conflicts() -> None:
+    assert claude_code_selector_model_id("copilot", "opus-4-8") == "copilot-opus-4-8"
+    assert claude_code_selector_model_id("auggie", "prism-a") == "auggie-prism-a"
+    assert claude_code_selector_model_id("agy", "nova") == "agy-nova"
+    assert claude_code_selector_model_id("claude", "sonnet") == "sonnet"
+    assert (
+        claude_code_selector_model_id("claude", "claude-opus-4-5")
+        == "claude-opus-4-5"
+    )
+    assert (
+        claude_code_selector_model_id("deepseek", "deepseek-v4-pro")
+        == "deepseek-v4-pro"
+    )
 
 
 def test_static_catalog_seeds_are_unprefixed_for_builtin_codex() -> None:

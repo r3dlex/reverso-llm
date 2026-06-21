@@ -38,6 +38,13 @@ def selector_model_id(prefix: str, model_id: str) -> str:
     return model_id
 
 
+def claude_code_selector_model_id(prefix: str, model_id: str) -> str:
+    """Return the Claude Code selector id for a provider/model pair."""
+    if prefix in PREFIXED_SELECTOR_PREFIXES:
+        return f"{prefix}-{model_id}"
+    return model_id
+
+
 def codex_builtin_model_backends() -> dict[str, str]:
     """Return built-in Codex GPT ids mapped to their Anthropic backend."""
     return {model_id: "codex" for model_id in CODEX_BUILTIN_MODELS}
