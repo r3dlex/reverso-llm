@@ -1,5 +1,5 @@
 {
-  "$schema_note": "Per-feature classification per provider. Values: native | translated | unsupported | partial. 'partial' is used only where the adapter handles a subset of the feature and the remainder is unsupported_feature; the parity doc must spell out the boundary. Source: read of src/reverso/protocols/adapters/{claude,copilot,auggie,deepseek}.py at 2026-06-10. B1 generates capability tables from this JSON.",
+  "$schema_note": "Per-feature classification per provider. Values: native | translated | unsupported | partial. 'partial' is used only where the adapter handles a subset of the feature and the remainder is unsupported_feature; the parity doc must spell out the boundary. Source: read of src/reverso/protocols/adapters/{claude,copilot,auggie,deepseek}.py at 2026-06-10. B1 generates capability tables from this JSON. SURFACE NOTE (Milestone 2, G006): the codex column's Responses-side endpoint/event entries are present for TABLE RECTANGULARITY ONLY and are NOT a Responses-surface grant; codex is an Anthropic-surface-only backend (gpt models served first-party via `codex exec` under ChatGPT OAuth, ADR 0007), and its absence from the Responses surface is enforced by tests/integration/test_codex_responses_exclusion.py.",
   "providers": ["claude", "copilot", "auggie", "deepseek", "codex"],
   "features": {
     "input.string": {
