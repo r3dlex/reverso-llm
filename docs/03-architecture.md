@@ -448,3 +448,44 @@ replay discards reasoning deltas and nothing honors prompt caching) and both sur
 as a hard `invalid_request_error`. `count_tokens` is a documented word-count approximation, not a
 real tokenizer. The `anthropic` SDK is a docs and contract reference only, not a runtime
 dependency.
+
+## 14. Codex GPT backend on the Anthropic surface (ADR 0007)
+
+This section augments Section 13 and records the Milestone 2 addition of a first-party Codex
+backend that exposes gpt-* models on the Anthropic surface. The authoritative decision record is
+`docs/architecture/adr/0007-codex-anthropic-surface-via-chatgpt-oauth.md`.
+
+### 14.1 A fifth adapter, Anthropic-surface-only
+
+Milestone 2 adds a first-party `CodexAdapter` that serves the five gpt models (gpt-5.5, gpt-5.4,
+gpt-5.4-mini, gpt-5.3-codex-spark, gpt-4.1) on the Anthropic Messages surface ONLY. This is the
+symmetric mirror of Milestone 1: the claude backend is Responses-surface-only because Claude Code
+talking to a claude backend is circular, so the codex backend is Anthropic-surface-only because
+Codex talking to a codex backend is circular. gpt-on-the-Responses-surface is removed by this
+milestone, not relocated. `codex` is added to `SURFACE_BACKENDS` as a single data row and
+registered in `build_adapters`; a negative test asserts the codex backend is not reachable on the
+Responses surface.
+
+### 14.2 Codex CLI under ChatGPT OAuth via the bounded spine
+
+`CodexAdapter` implements the frozen `ProviderAdapter` Protocol and invokes the Codex CLI
+(`codex exec`) through the bounded `cli_spine` (ADR 0005) for both non-streaming and streaming,
+inheriting its wall-clock bound, redaction, cause suppression, and kill-on-abandon contract. It
+parses Codex Responses-style events into the internal Responses contract (`ResponsesRequest`,
+`ResponseEnvelope`, `SSEEvent`); the Milestone 1 Anthropic translation, streaming, and gating
+layers then convert that contract to and from Anthropic Messages. Reverso does NOT call the OpenAI
+Platform Responses API and does NOT add `openai-python` as a runtime dependency.
+
+Authentication is a new `CodexOAuthAuth` resolver mirroring `ClaudeOAuthAuth`: it reads and
+validates the ChatGPT/Codex OAuth subscription artifact (written by `codex login`, NOT an OpenAI
+API key), fails closed with a structured Anthropic error when the session is missing or expired,
+and injects the OAuth token into the Codex CLI child environment without ever logging it. The exact
+artifact location and format are an explicit discovery spike before the resolver is implemented.
+
+### 14.3 Clean-cut removal of the legacy openai_cli path
+
+The legacy LiteLLM gpt path (`openai_cli_provider.py` and the `openai_cli` gpt rows in
+`config/litellm_config.yaml`) is removed in this milestone, not kept as a coexisting fallback;
+`codex_sync.py` is reconciled with the removal. After the clean cut the first-party `CodexAdapter`
+is the sole gpt path, backstopped by the Anthropic parity suite, the loopback smoke test, and a
+fast `git` revert.
