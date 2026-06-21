@@ -219,6 +219,116 @@ def test_token_material_never_logged_on_unresolved_gate(caplog, tmp_path) -> Non
         assert _FAKE_ACCESS_SECRET not in record.getMessage()
 
 
+def test_jwt_exp_non_finite_does_not_crash() -> None:
+    """Adversarial JWT exp values (inf, huge int, NaN-ish) never raise out of resolve().
+
+    A structurally-valid JWT whose ``exp`` claim cannot be converted to a finite
+    int must be treated as unobservable (expiry not determinable, gate passes) so
+    resolve() ALWAYS returns a structured AuthResolution and NEVER propagates an
+    OverflowError or any other ArithmeticError. Mirrors the MAJOR code-review fix.
+    """
+    import base64 as _b64
+    import json as _json
+
+    def _crafted_jwt(exp_value: object) -> str:
+        header = _b64.urlsafe_b64encode(b'{"alg":"RS256"}').rstrip(b"=").decode()
+        payload_raw = _json.dumps({"exp": exp_value, "sub": "synthetic"}).encode()
+        payload = _b64.urlsafe_b64encode(payload_raw).rstrip(b"=").decode()
+        return f"{header}.{payload}.synthetic-sig"
+
+    adversarial_cases = {
+        "float_overflow_1e400": 1e400,  # serializes as Infinity -> non-finite
+        "huge_int": 10**309,  # beyond float range -> OverflowError on int()
+        "negative_huge": -(10**309),  # same, negative direction
+    }
+
+    for label, exp_value in adversarial_cases.items():
+        try:
+            token = _crafted_jwt(exp_value)
+        except (ValueError, OverflowError):
+            # json.dumps may itself refuse Infinity/NaN; that's fine -- the test
+            # objective is that no exception escapes resolve(). If we can't even
+            # build the JWT, use a raw non-finite string in the payload instead.
+            payload_raw = f'{{"exp": {exp_value!r}, "sub": "synthetic"}}'.encode()
+            payload = _b64.urlsafe_b64encode(payload_raw).rstrip(b"=").decode()
+            header = _b64.urlsafe_b64encode(b'{"alg":"RS256"}').rstrip(b"=").decode()
+            token = f"{header}.{payload}.synthetic-sig"
+
+        artifact = _json.dumps(
+            {
+                "auth_mode": "chatgpt",
+                "tokens": {
+                    "access_token": token,
+                    "refresh_token": "r",
+                    "id_token": "i",
+                    "account_id": "a",
+                },
+                "last_refresh": "2026-06-21T00:00:00Z",
+            }
+        )
+
+        auth = CodexOAuthAuth(
+            credentials_path=None,
+            keychain_reader=lambda a=artifact: a,
+        )
+        # Must NOT raise; must return a structured AuthResolution.
+        try:
+            resolution = auth.resolve()
+        except Exception as exc:  # noqa: BLE001
+            raise AssertionError(
+                f"resolve() raised {type(exc).__name__} for exp={label!r}: {exc}"
+            ) from exc
+
+        assert isinstance(
+            resolution.authenticated, bool
+        ), f"resolve() returned non-bool authenticated for exp={label!r}"
+        assert resolution.method == OAUTH_METHOD, f"wrong method for exp={label!r}"
+        # Non-finite exp is unobservable; gate treats token as live (expires_at=None).
+        assert resolution.details.get("expires_at") is None, (
+            f"non-finite exp should yield expires_at=None, got "
+            f"{resolution.details.get('expires_at')!r} for exp={label!r}"
+        )
+
+
+def test_non_dict_artifact_fails_closed(tmp_path) -> None:
+    """A top-level JSON list (valid JSON, non-dict) artifact fails closed.
+
+    json.loads succeeds but the result is not a dict; _load_artifact must skip
+    it, fall through to no further source, and resolve() must fail closed.
+    credentials_path points to a non-existent file so no real artifact can
+    rescue the resolution.
+    """
+    auth = CodexOAuthAuth(
+        credentials_path=tmp_path / "does-not-exist.json",
+        keychain_reader=lambda: '[{"access_token": "sneaky"}]',
+    )
+    resolution = auth.resolve()
+
+    assert resolution.authenticated is False
+    assert resolution.method == OAUTH_METHOD
+    assert resolution.details.get("reason") == "no_codex_oauth_artifact"
+
+
+def test_keychain_invalid_falls_through_to_credentials_file(tmp_path) -> None:
+    """An invalid (non-JSON) keychain result falls through to the credentials file.
+
+    Exercises the _load_artifact source-iteration loop: keychain returns garbage,
+    logs a warning, then the credentials-file source resolves successfully.
+    """
+    cred_file = tmp_path / "auth.json"
+    cred_file.write_text(_artifact(exp_seconds=_future_seconds()), encoding="utf-8")
+
+    auth = CodexOAuthAuth(
+        credentials_path=cred_file,
+        keychain_reader=lambda: "not-valid-json!!!",
+    )
+    resolution = auth.resolve()
+
+    assert resolution.authenticated is True
+    assert resolution.method == OAUTH_METHOD
+    assert resolution.details.get("source") == "credentials_file"
+
+
 def test_import_does_not_pull_legacy_app_or_litellm() -> None:
     """Importing codex.py must not import reverso.proxy.app or litellm.
 

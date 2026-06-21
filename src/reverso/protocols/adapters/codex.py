@@ -255,8 +255,16 @@ def _jwt_exp_ms(access_token: Any) -> int | None:
         return None
     exp = claims.get("exp")
     try:
-        return int(float(exp) * 1000.0)
-    except (TypeError, ValueError):
+        ms = float(exp) * 1000.0
+        # A non-finite exp (inf, nan from a crafted JWT) is not observable as a
+        # real expiry; treat it as live so the caller propagates to the real CLI.
+        if not (ms > float("-inf") and ms < float("inf")):
+            return None
+        return int(ms)
+    except (TypeError, ValueError, OverflowError):
+        # OverflowError: e.g. exp=1e400 -> float('inf') -> int(inf) raises
+        # OverflowError (an ArithmeticError, NOT a ValueError). Non-finite/
+        # overflowing exp is treated as unobservable, not a gate failure.
         return None
 
 
