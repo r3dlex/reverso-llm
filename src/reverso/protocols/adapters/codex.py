@@ -45,6 +45,7 @@ repository secret is read or stored; synthetic fixtures only in tests.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import json
@@ -52,9 +53,37 @@ import logging
 import subprocess
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, AsyncIterator, Callable
 
-from reverso.protocols.auth import AuthResolution
+from reverso.protocols.adapter import (
+    InputItemList,
+    ModelList,
+    ResponseEnvelope,
+    ResponsesRequest,
+    SSEEvent,
+)
+from reverso.protocols.adapters.cli_spine import (
+    BoundedCliStreamFailure,
+    run_bounded_cli,
+    stream_bounded_cli,
+)
+from reverso.protocols.auth import (
+    AuthResolution,
+    redact_mapping,
+)
+from reverso.protocols.replay import (
+    buffered_envelope,
+    build_prompt,
+    estimate_usage,
+    message_item,
+    new_message_id,
+    new_response_id,
+    record_input_items,
+    replay_incremental,
+    replay_turn,
+)
+from reverso.protocols.store import ResponseStore
+from reverso.proxy.profile_routing import CURRENT_PROFILE_WORKSPACE
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +110,22 @@ _TOKENS_KEY = "tokens"
 _ACCESS_TOKEN_FIELD = "access_token"
 _ACCOUNT_ID_FIELD = "account_id"
 _AUTH_MODE_FIELD = "auth_mode"
+
+# The five gpt model ids served first-party on the Anthropic surface (PRD), each
+# mapped to the ``codex exec --model`` flag. Codex accepts the gpt id directly as
+# its model flag, so the mapping is identity here; it is kept explicit so the
+# served set is the single source of truth for list_models and the --model flag.
+_CODEX_MODEL_FLAGS: dict[str, str] = {
+    "gpt-5.5": "gpt-5.5",
+    "gpt-5.4": "gpt-5.4",
+    "gpt-5.4-mini": "gpt-5.4-mini",
+    "gpt-5.3-codex-spark": "gpt-5.3-codex-spark",
+    "gpt-4.1": "gpt-4.1",
+}
+
+# Default codex --model flag when the request model is not one of the five served
+# ids; the frontier model is the safe default so an unknown id still resolves.
+_DEFAULT_CODEX_MODEL_FLAG = "gpt-5.5"
 
 
 class CodexAuthError(RuntimeError):
@@ -282,3 +327,329 @@ def _is_expired(expires_at: Any) -> bool:
     except (TypeError, ValueError):
         return False
     return expiry_ms <= time.time() * 1000.0
+
+
+def _codex_model_flag(model: str | None) -> str:
+    """Map a requested gpt id to its ``codex exec --model`` flag.
+
+    The five served ids map to themselves (Codex takes the gpt id directly as its
+    model flag); an unknown id falls back to the frontier default so a stray id
+    never produces an empty flag.
+    """
+    return _CODEX_MODEL_FLAGS.get(model or "", _DEFAULT_CODEX_MODEL_FLAG)
+
+
+def _agent_message_text(event: dict[str, Any]) -> str:
+    """Return the assistant text carried by one codex --json event, or "".
+
+    The Codex ``--json`` grammar (B2, mirrored from
+    ``reverso.daemon.parsers.codex_cli``) emits assistant text at
+    ``item.completed`` with ``item.type == "agent_message"``. A
+    ``command_execution`` item is a shell OBSERVATION, not Responses
+    function-call output, so it returns "" here: the adapter is TEXT-ONLY and
+    never fabricates a tool_use / function_call output item (pre-mortem 3).
+    ``thread.started`` and ``turn.completed`` carry no assistant text.
+    """
+    if event.get("type") != "item.completed":
+        return ""
+    item = event.get("item")
+    if not isinstance(item, dict):
+        return ""
+    if item.get("type") != "agent_message":
+        return ""
+    text = item.get("text")
+    return text if isinstance(text, str) else ""
+
+
+def _is_turn_complete(event: dict[str, Any]) -> bool:
+    """Return True for the terminal ``turn.completed`` event."""
+    return event.get("type") == "turn.completed"
+
+
+def _parse_codex_lines(stdout: str) -> str:
+    """Parse a buffered ``codex exec --json`` stdout into assistant text.
+
+    Joins all ``agent_message`` texts with newlines (the same aggregation the
+    daemon ``CodexCLIParser`` performs) and stops at ``turn.completed``. Lines
+    that are blank or not JSON are skipped, matching the lenient daemon grammar.
+    """
+    parts: list[str] = []
+    for raw_line in stdout.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        text = _agent_message_text(event)
+        if text:
+            parts.append(text)
+        if _is_turn_complete(event):
+            break
+    return "\n".join(parts)
+
+
+class CodexAdapter:
+    """ProviderAdapter for gpt models served over the local ChatGPT subscription.
+
+    Completion text is produced by invoking the locally installed ``codex`` CLI
+    (``codex exec ... --json``) as a subprocess through the bounded CLI spine
+    (ADR 0005), so the adapter rides the user's ``codex login`` session rather
+    than a metered OpenAI API key. Output is mapped into the internal Responses
+    ``ResponseEnvelope`` / ``SSEEvent`` shapes; the M1 Anthropic surface converts
+    those into Anthropic-native bodies and events.
+
+    PRE-FLIGHT GATE: every turn first calls ``CodexOAuthAuth.resolve()`` and FAILS
+    CLOSED with ``CodexAuthError`` if the subscription artifact is missing or
+    expired. Per design point A3 (validate-only, the only buildable option proven
+    by the G002.0 spike) NO token is injected into the child env: ``codex exec``
+    exposes no injection variable, so the CLI authenticates the turn from its own
+    login session. The gate is therefore a pre-flight validity check; the
+    no-divergence coupling test asserts a valid gate with a FAILING ``codex exec``
+    surfaces a STRUCTURED error (never a false-green).
+
+    TEXT-ONLY ceiling (pre-mortem 3): Codex emits ``command_execution``
+    observations, not Responses function-call output, so this adapter never emits
+    a structured tool_use / function_call output item.
+    """
+
+    def __init__(
+        self,
+        *,
+        auth: CodexOAuthAuth | None = None,
+        store: ResponseStore | None = None,
+        cli_runner: Callable[[str, str], str] | None = None,
+        stream_cli_runner: Callable[[str, str], AsyncIterator[str]] | None = None,
+    ) -> None:
+        self._auth = auth or CodexOAuthAuth()
+        self._store = store or ResponseStore()
+        # Injectable completion backend for tests; defaults to the codex CLI. The
+        # runner returns the assistant text for a single buffered turn.
+        self._cli_runner = cli_runner or self._run_codex_cli
+        # Injectable streaming backend; defaults to the codex CLI stream over the
+        # bounded spine, yielding one fragment per agent_message. Tests inject
+        # plain async generators.
+        self._stream_cli_runner = stream_cli_runner or self._default_stream_cli_runner
+
+    def _ensure_authenticated(self) -> AuthResolution:
+        resolution = self._auth.resolve()
+        if not resolution.authenticated:
+            logger.warning(
+                "codex auth not resolved: %s",
+                redact_mapping(dict(resolution.details)),
+            )
+            raise CodexAuthError(
+                str(resolution.details.get("reason", "codex_oauth_unavailable"))
+            )
+        # Defensive invariant: this adapter only ever uses the OAuth path.
+        if resolution.method != OAUTH_METHOD:
+            raise CodexAuthError(
+                f"codex auth resolved to {resolution.method!r}, "
+                f"expected {OAUTH_METHOD!r}"
+            )
+        return resolution
+
+    def _run_codex_cli(self, prompt: str, model_flag: str) -> str:
+        """Run ``codex exec`` once for a single-shot completion and return text.
+
+        Uses the existing CLI login session (ChatGPT subscription OAuth, A3): NO
+        ``env=`` is passed, so the spine inherits the parent env and the CLI
+        authenticates from its own session; no reverso bearer is injected. The
+        legacy ``-s workspace-write`` grant is deliberately DROPPED (read-only
+        sandbox default) since this serves a text turn, not a file-mutating task.
+        Bounding, redaction, and cause suppression live in the shared spine.
+        """
+        stdout = run_bounded_cli(
+            [
+                "codex",
+                "exec",
+                prompt,
+                "--json",
+                "--model",
+                model_flag,
+                "--skip-git-repo-check",
+            ],
+            error=CodexAuthError,
+            cli_label="codex CLI",
+            cwd=CURRENT_PROFILE_WORKSPACE.get(),
+        )
+        return _parse_codex_lines(stdout)
+
+    async def _default_stream_cli_runner(
+        self, prompt: str, model_flag: str
+    ) -> AsyncIterator[str]:
+        """Default streaming runner over ``codex exec --json``.
+
+        Drives the bounded streaming spine (ADR 0005), which owns the deadline,
+        kill-on-abandon, and redacted stderr logging. Codex buffers a full turn
+        (assistant text arrives only at ``item.completed`` (agent_message)), so
+        this yields one fragment per agent_message rather than token deltas; the
+        canonical SSE shape is produced by ``replay_incremental`` above. No token
+        is injected into the child env (A3); the parent env is inherited.
+        """
+        async for line in stream_bounded_cli(
+            [
+                "codex",
+                "exec",
+                prompt,
+                "--json",
+                "--model",
+                model_flag,
+                "--skip-git-repo-check",
+            ],
+            cli_label="codex CLI",
+            cwd=CURRENT_PROFILE_WORKSPACE.get(),
+        ):
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                event = json.loads(stripped)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(event, dict):
+                continue
+            fragment = _agent_message_text(event)
+            if fragment:
+                yield fragment
+            if _is_turn_complete(event):
+                return
+
+    async def create_response(self, request: ResponsesRequest) -> ResponseEnvelope:
+        """Return a non-streaming Responses object for ``request``."""
+        self._ensure_authenticated()
+        prompt = build_prompt(request)
+        model_flag = _codex_model_flag(request.model)
+        # The CLI runner is a blocking subprocess; offload it so a single Codex
+        # call cannot stall the gateway's shared event loop for its full run.
+        text = await asyncio.to_thread(self._cli_runner, prompt, model_flag)
+        envelope = buffered_envelope(request, prompt=prompt, text=text)
+        self._store.put_response(envelope, record_input_items(request))
+        return envelope
+
+    def stream_response(self, request: ResponsesRequest) -> AsyncIterator[SSEEvent]:
+        """Yield Responses SSE events for ``request`` (stream=True)."""
+        return self._stream_response(request)
+
+    async def _stream_response(
+        self, request: ResponsesRequest
+    ) -> AsyncIterator[SSEEvent]:
+        self._ensure_authenticated()
+        prompt = build_prompt(request)
+        model_flag = _codex_model_flag(request.model)
+
+        # Codex buffers a full turn, so there is no token-level delta to forward.
+        # Pull the runner before any event is emitted: any pre-first-fragment
+        # failure (auth, missing CLI, nonzero exit) folds into the buffered
+        # fallback so the client still gets a complete response; once a fragment
+        # has been yielded a failure propagates so the gateway's mid-stream
+        # contract (response.failed + [DONE]) takes over. This mirrors the claude
+        # streaming fallback window.
+        stream = self._stream_cli_runner(prompt, model_flag)
+        first_chunk: str | None = None
+        if hasattr(stream, "__anext__"):
+            try:
+                first_chunk = await stream.__anext__()  # type: ignore[union-attr]
+            except StopAsyncIteration:
+                first_chunk = None
+            except BoundedCliStreamFailure as exc:
+                logger.info(
+                    "codex streaming failed before first chunk; "
+                    "falling back to buffered (rc=%s)",
+                    exc.returncode,
+                )
+                first_chunk = None
+            except Exception as exc:  # noqa: BLE001 - any pre-stream failure folds into fallback
+                logger.warning(
+                    "codex streaming runner failed before first chunk: %s",
+                    type(exc).__name__,
+                )
+                first_chunk = None
+        else:
+            first_chunk = None
+
+        if first_chunk is None:
+            # Fallback: buffered CLI path. Identical shape to create_response. A
+            # failing codex exec raises CodexAuthError here (no false-green); the
+            # gateway renders it as a structured Anthropic error.
+            text = await asyncio.to_thread(self._cli_runner, prompt, model_flag)
+            envelope = buffered_envelope(request, prompt=prompt, text=text)
+            async for event in replay_turn(
+                envelope, store=self._store, input_items=record_input_items(request)
+            ):
+                yield event
+            return
+
+        # Incremental path: replay_incremental owns the canonical SSE sequence
+        # and the finalize-time store write. After the first fragment any iterator
+        # failure propagates unwrapped so the gateway's mid-stream contract takes
+        # over verbatim.
+        response_id = new_response_id()
+        message_id = new_message_id()
+
+        async def chunks() -> AsyncIterator[dict[str, Any]]:
+            yield {"text": first_chunk}
+            async for fragment in stream:
+                yield {"text": fragment}
+
+        def finalize(
+            *,
+            full_text: str,
+            full_reasoning: str | None,
+            usage: dict[str, Any] | None,
+            tool_calls: list[dict[str, Any]],
+        ) -> ResponseEnvelope:
+            return ResponseEnvelope(
+                id=response_id,
+                model=request.model,
+                output=[message_item(message_id, full_text)],
+                status="completed",
+                usage=estimate_usage(prompt, full_text),
+                previous_response_id=request.previous_response_id,
+            )
+
+        async for event in replay_incremental(
+            chunks(),
+            response_id=response_id,
+            message_id=message_id,
+            model=request.model,
+            store=self._store,
+            input_items=record_input_items(request),
+            finalize=finalize,
+        ):
+            yield event
+
+    async def list_models(self) -> ModelList:
+        """Return the five served gpt ids as a ``/v1/models`` listing.
+
+        No live upstream call is required: the served set is static data
+        (``_CODEX_MODEL_FLAGS``), the single source of truth for routing.
+        """
+        created = int(time.time())
+        data = [
+            {
+                "id": model_id,
+                "object": "model",
+                "created": created,
+                "owned_by": "openai",
+            }
+            for model_id in _CODEX_MODEL_FLAGS
+        ]
+        return ModelList(data=data, models=list(data))
+
+    async def get_response(self, response_id: str) -> ResponseEnvelope:
+        """Return a previously created response by id."""
+        envelope = self._store.get_response(response_id)
+        if envelope is None:
+            raise CodexAuthError(f"unknown response_id {response_id!r}")
+        return envelope
+
+    async def list_input_items(self, response_id: str) -> InputItemList:
+        """Return the input items recorded for a prior response id."""
+        items = self._store.get_input_items(response_id)
+        if items is None:
+            return InputItemList(response_id=response_id, data=[])
+        return items
