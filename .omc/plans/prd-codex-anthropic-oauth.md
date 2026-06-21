@@ -3,7 +3,7 @@ type: prd
 project: reverso
 slug: codex-anthropic-oauth
 milestone: 2
-status: pending approval
+status: approved
 source_interview: rev-m2-gpt-oauth
 final_ambiguity: 0.15
 threshold: 0.20
@@ -12,6 +12,7 @@ generated: 2026-06-21
 related:
   - docs/architecture/adr/0005-bounded-cli-spine.md
   - docs/architecture/adr/0006-anthropic-messages-api-surface.md
+  - docs/architecture/adr/0007-codex-anthropic-surface-via-chatgpt-oauth.md
 ---
 
 # PRD: Codex GPT models on the Anthropic surface via ChatGPT OAuth (Milestone 2)
