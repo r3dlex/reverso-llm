@@ -90,7 +90,7 @@ class CompositionRoot:
             # The Anthropic Messages surface is checked BEFORE the Responses
             # split so /v1/messages and /<profile>/v1/messages (including
             # /claude/v1/messages, now served first-party by the Anthropic app
-            # via the claude CLI under subscription OAuth — ADR 0008, superseding
+            # via the claude CLI under subscription OAuth, ADR 0008 superseding
             # ADR 0006 D2) route to the Anthropic app and never reach the legacy
             # LiteLLM app. Responses (/v1/responses, /v1/models) routing is left
             # byte-unchanged.
