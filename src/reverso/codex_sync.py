@@ -1,14 +1,17 @@
 """``reverso-codex-sync`` console script.
 
 Synchronizes live per-provider model listings from the local reverso gateway
-into Codex's static configuration so the TUI ``/model`` picker can see them.
+into Codex's static configuration so the TUI ``/model`` picker can see them
+ONLY when the matching profile is selected with ``codex -p <prefix>``.
 
 Per A2 decision (.omc/research/codex-model-picker.md), Codex 0.139.0 has no
 native mechanism to feed ``/model`` from a custom provider's ``/v1/models``
 endpoint. This script bridges that gap by GET-ing each reverso provider's
-``/v1/models`` and idempotently writing per-model entries into
-``~/.codex/config.toml`` under sentinel-marked managed sections, with full
-backup, rotation, atomic replace, and unrelated-key byte-faithful preservation.
+``/v1/models`` and idempotently writing one ``[profiles.<prefix>]`` table per
+gateway prefix into ``~/.codex/config.toml`` under a sentinel-marked managed
+section. Each profile pins ``model``, ``model_provider``, and a per-provider
+``model_catalog_json`` so the ``/model`` picker is scoped to that provider only
+when the profile is active. The DEFAULT config exposes NO reverso models.
 
 The implementation operates on the raw TOML text rather than parsing and
 serializing, because round-tripping through ``tomllib`` would drop comments and
@@ -29,17 +32,14 @@ import sys
 import tempfile
 import tomllib
 import typing as t
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import httpx
 
 from reverso.protocols.copilot_models import is_copilot_responses_model_id
 from reverso.protocols.model_exposure import (
-    CODEX_BUILTIN_MODELS,
     CODEX_DEFAULT_MODEL,
-    STATIC_CATALOG_SEEDS,
-    selector_model_id as _exposure_selector_model_id,
 )
 
 logger = logging.getLogger(__name__)
@@ -47,10 +47,8 @@ logger = logging.getLogger(__name__)
 GATEWAY_BASE_URL = "http://127.0.0.1:64946"
 GATEWAY_PREFIXES: tuple[str, ...] = ("claude", "copilot", "auggie", "deepseek")
 
-# Built-in Codex model ids stay bare. Reverso-discovered providers that can
-# collide with those ids use provider-qualified selector/catalog slugs so they
-# augment the Codex provider instead of shadowing it.
-CODEX_DEFAULT_MODELS = CODEX_BUILTIN_MODELS
+# DeepSeek's preferred default model when the gateway lists it.
+DEEPSEEK_PREFERRED_DEFAULT = "deepseek-v4-pro"
 
 
 def _codex_responses_compatible_models(prefix: str, model_ids: list[str]) -> list[str]:
@@ -73,20 +71,15 @@ BACKUPS_KEPT = 5
 BACKUP_SUFFIX_PREFIX = ".reverso-sync."
 
 DEFAULT_CONFIG_PATH = Path.home() / ".codex" / "config.toml"
-DEFAULT_CATALOG_PATH = Path.home() / ".codex" / "reverso-model-catalog.json"
+# Per-provider catalog JSON files live under this directory, one per profile
+# (e.g. ~/.codex/reverso/copilot.json). The directory is derived from the
+# config file's parent so a custom --config relocates the catalogs too.
+CATALOG_DIR_NAME = "reverso"
 
-# The trailing \r? keeps CRLF-edited configs on the header-aware merge path;
-# with MULTILINE, $ anchors before \n only, so the \r must be consumed.
-_NUX_TABLE_HEADER_RE = re.compile(
-    r"^[ \t]*\[tui\.model_availability_nux\][ \t]*(?:#.*)?\r?$",
-    re.MULTILINE,
-)
 _TABLE_HEADER_LINE_RE = re.compile(r"^[ \t]*\[", re.MULTILINE)
 _TOP_LEVEL_MODEL_LINE_RE = re.compile(r"^[ \t]*model[ \t]*=", re.MULTILINE)
-_TOP_LEVEL_MODEL_CATALOG_LINE_RE = re.compile(
-    r"^[ \t]*model_catalog_json[ \t]*=.*(?:\n|$)",
-    re.MULTILINE,
-)
+# The trailing \r? keeps CRLF-edited configs on the strip path; with MULTILINE,
+# $ anchors before \n only, so the \r must be consumed.
 _ORPHAN_PROFILE_TABLE_RE = re.compile(
     r"^[ \t]*\[model_providers\.reverso_[^\]\n]+__[^\]\n]+\]" r"[ \t]*(?:#.*)?\r?$",
     re.MULTILINE,
@@ -103,7 +96,7 @@ class ProviderModels:
 
 @dataclass(frozen=True)
 class CatalogModelEntry:
-    """One selectable model entry in Codex's global model catalog."""
+    """One selectable model entry in a per-provider Codex model catalog."""
 
     prefix: str
     slug: str
@@ -173,105 +166,77 @@ def fetch_all(
     return out
 
 
+def _live_provider_models(
+    provider_models: list[ProviderModels],
+) -> list[ProviderModels]:
+    """Return only the prefixes that have at least one live model.
+
+    Ordering follows GATEWAY_PREFIXES so the rendered profiles block is
+    deterministic regardless of fetch ordering.
+    """
+    by_prefix = {pm.prefix: pm for pm in provider_models if pm.models}
+    return [by_prefix[prefix] for prefix in GATEWAY_PREFIXES if prefix in by_prefix]
+
+
+def _default_model_for(prefix: str, models: tuple[str, ...]) -> str:
+    """Return the default model id pinned by a provider's profile.
+
+    DeepSeek prefers ``deepseek-v4-pro`` when present; every other provider
+    (and DeepSeek without it) uses the first model in its live listing.
+    """
+    if prefix == "deepseek" and DEEPSEEK_PREFERRED_DEFAULT in models:
+        return DEEPSEEK_PREFERRED_DEFAULT
+    return models[0]
+
+
+def _catalog_path_for(catalog_dir: Path, prefix: str) -> Path:
+    """Return the per-provider catalog JSON path for ``prefix``."""
+    return catalog_dir / f"{prefix}.json"
+
+
 def _render_profiles_block(
     provider_models: list[ProviderModels],
-    catalog_path: Path | None = None,
+    catalog_dir: Path | None = None,
 ) -> str:
     """Render the managed profiles block between PROFILES_BEGIN/END sentinels.
 
-    Each entry is a ``[model_providers.reverso_<prefix>__<model_id>]`` table
-    whose only purpose is to surface the ``(prefix, model)`` pair to Codex
-    via the model_providers map. The base provider entries
-    (``model_providers.reverso_<prefix>``) remain hand-managed outside this
-    block; this script only adds per-model overlay tables and never touches
-    the base entries.
+    One ``[profiles.<prefix>]`` inline table is emitted per gateway prefix that
+    has live models. Each profile pins ``model`` (the provider default), routes
+    through the hand-managed ``model_provider = "reverso_<prefix>"`` base table,
+    and scopes the ``/model`` picker to a per-provider ``model_catalog_json``.
+    The hand-managed base provider tables are never emitted or modified here.
     """
     lines: list[str] = [PROFILES_BEGIN]
-    seen_sections: set[str] = set()
-    for entry in provider_models:
-        for model_id in entry.models:
-            section = f"reverso_{entry.prefix}__{_toml_table_key(model_id)}"
-            if section in seen_sections:
-                continue
-            seen_sections.add(section)
-            lines.append("")
-            lines.append(f"[model_providers.{section}]")
-            lines.append(f"name = {_toml_string(f'Reverso {entry.prefix} {model_id}')}")
-            lines.append(f'base_url = "{GATEWAY_BASE_URL}/{entry.prefix}/v1"')
-            lines.append('wire_api = "responses"')
-            lines.append(f"model = {_toml_string(model_id)}")
-            if catalog_path:
-                lines.append(f"model_catalog_json = {_toml_string(str(catalog_path))}")
+    for entry in _live_provider_models(provider_models):
+        default_model = _default_model_for(entry.prefix, entry.models)
+        lines.append("")
+        lines.append(f"[profiles.{entry.prefix}]")
+        lines.append(f"model = {_toml_string(default_model)}")
+        lines.append(f"model_provider = {_toml_string(f'reverso_{entry.prefix}')}")
+        if catalog_dir is not None:
+            catalog_path = _catalog_path_for(catalog_dir, entry.prefix)
+            lines.append(f"model_catalog_json = {_toml_string(str(catalog_path))}")
     lines.append("")
     lines.append(PROFILES_END)
     return "\n".join(lines)
 
 
-def _selector_model_id(prefix: str, model_id: str) -> str:
-    """Return the Codex-visible selector id for a provider/model pair."""
-    return _exposure_selector_model_id(prefix, model_id)
+def _catalog_model_entries(entry: ProviderModels) -> list[CatalogModelEntry]:
+    """Return one provider's catalog entries with bare model-id slugs.
 
-
-def _iter_selectable_model_ids(
-    provider_models: list[ProviderModels],
-) -> t.Iterator[str]:
-    """Yield Codex-visible model ids in picker/catalog priority order."""
-    seen: set[str] = set()
-    for model_id in CODEX_DEFAULT_MODELS:
-        key = _toml_table_key(model_id)
-        if key in seen:
-            continue
-        seen.add(key)
-        yield model_id
-    for entry in provider_models:
-        for model_id in entry.models:
-            selector = _selector_model_id(entry.prefix, model_id)
-            key = _toml_table_key(selector)
-            if key in seen:
-                continue
-            seen.add(key)
-            yield selector
-
-
-def _render_nux_block(provider_models: list[ProviderModels]) -> str:
-    """Render the managed NUX block including the table header.
-
-    Only used when the user config does NOT already define
-    ``[tui.model_availability_nux]``; emitting the header next to an existing
-    user-owned table would be a duplicate-table TOML error.
+    Per-provider catalogs cannot collide across providers, and Codex sends the
+    slug as ``model`` to the pinned provider, so the slug MUST be the bare
+    upstream model id (no provider-prefixing).
     """
-    lines: list[str] = [NUX_BEGIN]
-    lines.append("[tui.model_availability_nux]")
-    for model_id in _iter_selectable_model_ids(provider_models):
-        lines.append(f"{_toml_string(model_id)} = 4")
-    lines.append(NUX_END)
-    return "\n".join(lines)
-
-
-def _catalog_model_entries(
-    provider_models: list[ProviderModels],
-) -> list[CatalogModelEntry]:
-    """Return selectable catalog entries without slug collisions."""
     merged: list[CatalogModelEntry] = []
     seen_slugs: set[str] = set()
-    for seed in STATIC_CATALOG_SEEDS:
-        for model_id in seed.model_ids:
-            slug = _selector_model_id(seed.prefix, model_id)
-            if slug in seen_slugs:
-                continue
-            seen_slugs.add(slug)
-            merged.append(
-                CatalogModelEntry(prefix=seed.prefix, slug=slug, model_id=model_id)
-            )
-    for entry in provider_models:
-        for model_id in entry.models:
-            slug = _selector_model_id(entry.prefix, model_id)
-            if slug in seen_slugs:
-                continue
-            seen_slugs.add(slug)
-            merged.append(
-                CatalogModelEntry(prefix=entry.prefix, slug=slug, model_id=model_id)
-            )
+    for model_id in entry.models:
+        if model_id in seen_slugs:
+            continue
+        seen_slugs.add(model_id)
+        merged.append(
+            CatalogModelEntry(prefix=entry.prefix, slug=model_id, model_id=model_id)
+        )
     return merged
 
 
@@ -290,11 +255,11 @@ def _catalog_display_name(entry: CatalogModelEntry) -> str:
     return f"Reverso {entry.prefix} {entry.model_id}"
 
 
-def _generate_catalog_json(provider_models: list[ProviderModels]) -> str:
-    """Generate Codex-compatible model catalog JSON for synced models."""
+def _generate_catalog_json(provider: ProviderModels) -> str:
+    """Generate Codex-compatible catalog JSON for one provider's models."""
     models: list[dict[str, t.Any]] = []
 
-    for entry in _catalog_model_entries(provider_models):
+    for entry in _catalog_model_entries(provider):
         context_window = 128000
         if "500k" in entry.model_id.lower():
             context_window = 500000
@@ -351,60 +316,19 @@ def _generate_catalog_json(provider_models: list[ProviderModels]) -> str:
     return json.dumps({"models": models}, indent=2)
 
 
-def _render_catalog_config_block(catalog_path: Path) -> str:
-    """Render the top-level Codex catalog pointer block."""
-    return "\n".join(
-        [
-            CATALOG_BEGIN,
-            f"model_catalog_json = {_toml_string(str(catalog_path))}",
-            CATALOG_END,
-        ]
-    )
-
-
-def _strip_top_level_catalog_line(text: str) -> str:
-    """Remove an existing root ``model_catalog_json`` line before managing it."""
-    first_table = _TABLE_HEADER_LINE_RE.search(text)
-    if first_table is None:
-        return _TOP_LEVEL_MODEL_CATALOG_LINE_RE.sub("", text)
-    prefix = text[: first_table.start()]
-    suffix = text[first_table.start() :]
-    return _TOP_LEVEL_MODEL_CATALOG_LINE_RE.sub("", prefix) + suffix
-
-
 def _merge_catalog_config_block(text: str, catalog_path: Path | None) -> str:
-    """Manage the top-level Codex ``model_catalog_json`` pointer.
+    """Strip the legacy top-level managed catalog block.
 
-    Codex loads custom metadata from a top-level key. Provider-local
-    ``model_catalog_json`` entries do not feed the active catalog, so the
-    managed pointer is inserted before the first TOML table.
+    The default config no longer exposes a global ``model_catalog_json``
+    pointer; per-provider catalogs are referenced from individual profiles
+    instead. This function only ever strips a previously-written managed
+    block, so ``catalog_path`` must be ``None``; it is retained so existing
+    configs that still carry the block get cleaned up on every sync.
     """
-    had_catalog_block = _find_sentinel(text, CATALOG_BEGIN) != -1
-    stripped = _strip_managed_block(text, CATALOG_BEGIN, CATALOG_END)
-    if catalog_path is None:
-        return stripped
-
-    stripped = _strip_top_level_catalog_line(stripped)
-    block = _render_catalog_config_block(catalog_path)
-    if not stripped:
-        return block + "\n"
-
-    first_table = _TABLE_HEADER_LINE_RE.search(stripped)
-    if first_table is None:
-        if stripped and not stripped.endswith("\n"):
-            stripped += "\n"
-        return stripped + block + "\n"
-
-    insert_at = first_table.start()
-    prefix = stripped[:insert_at]
-    suffix = stripped[insert_at:]
-    if had_catalog_block:
-        prefix = prefix.rstrip()
-    if prefix and not prefix.endswith("\n"):
-        prefix += "\n"
-    if prefix and not prefix.endswith("\n\n"):
-        prefix += "\n"
-    return prefix + block + "\n\n" + suffix
+    if catalog_path is not None:
+        msg = "global catalog block is no longer written; pass None to strip it"
+        raise ValueError(msg)
+    return _strip_managed_block(text, CATALOG_BEGIN, CATALOG_END)
 
 
 def _top_level_has_model_key(text: str) -> bool:
@@ -434,30 +358,6 @@ def _ensure_default_model(text: str) -> str:
     if prefix and not prefix.endswith("\n"):
         prefix += "\n"
     return prefix + line + suffix
-
-
-def _render_nux_entries(
-    provider_models: list[ProviderModels],
-    existing_keys: frozenset[str],
-) -> str | None:
-    """Render a headerless fenced NUX block for merging into the user table.
-
-    Keys the user already defines are excluded so the merged table never
-    carries a duplicate key. Returns ``None`` when nothing new needs to be
-    added, in which case no managed block should be present at all.
-    """
-    lines: list[str] = []
-    seen: set[str] = set()
-    normalized_existing_keys = {_toml_table_key(key) for key in existing_keys}
-    for model_id in _iter_selectable_model_ids(provider_models):
-        key = _toml_table_key(model_id)
-        if key in seen or key in normalized_existing_keys:
-            continue
-        seen.add(key)
-        lines.append(f"{_toml_string(model_id)} = 4")
-    if not lines:
-        return None
-    return "\n".join([NUX_BEGIN, *lines, NUX_END])
 
 
 def _strip_orphan_profiles_block(text: str, end_idx: int) -> str:
@@ -501,65 +401,6 @@ def _parse_toml(text: str, context: str) -> dict[str, t.Any]:
     except tomllib.TOMLDecodeError as exc:
         msg = f"{context} is not valid TOML; refusing to write: {exc}"
         raise RuntimeError(msg) from exc
-
-
-def _existing_nux_keys(text: str) -> frozenset[str]:
-    """Return the keys the user already defines under the NUX table."""
-    parsed = _parse_toml(text, "target config (outside managed blocks)")
-    tui = parsed.get("tui")
-    if not isinstance(tui, dict):
-        return frozenset()
-    nux = tui.get("model_availability_nux")
-    if not isinstance(nux, dict):
-        return frozenset()
-    return frozenset(nux)
-
-
-def _insert_into_nux_table(text: str, block: str) -> str:
-    """Insert ``block`` inside the user's NUX table, before the next table.
-
-    The caller guarantees the table header exists in ``text``. The block is
-    placed immediately before the next ``[``-led header line (or at EOF when
-    the NUX table is last), so user-owned key lines stay byte-identical.
-    """
-    header = _NUX_TABLE_HEADER_RE.search(text)
-    if header is None:
-        raise RuntimeError("NUX table header vanished during merge; refusing to write.")
-    line_end = text.find("\n", header.end())
-    if line_end == -1:
-        return text + "\n" + block + "\n"
-    scan_from = line_end + 1
-    next_header = _TABLE_HEADER_LINE_RE.search(text, scan_from)
-    if next_header is None:
-        if not text.endswith("\n"):
-            text += "\n"
-        return text + block + "\n"
-    insert_at = next_header.start()
-    return text[:insert_at] + block + "\n" + text[insert_at:]
-
-
-def _merge_nux_block(
-    text: str,
-    provider_models: list[ProviderModels],
-) -> str:
-    """Merge live model NUX entries into ``text`` without duplicating tables.
-
-    When the user config already defines ``[tui.model_availability_nux]``,
-    the managed block is rendered headerless, excludes user-owned keys, and
-    is relocated inside that table (self-healing any block a previous run
-    emitted elsewhere). Otherwise the block keeps its own header and the
-    fixed-point replace/append path applies.
-    """
-    stripped = _strip_managed_block(text, NUX_BEGIN, NUX_END)
-    if _NUX_TABLE_HEADER_RE.search(stripped) is None:
-        return _replace_managed_block(
-            text, NUX_BEGIN, NUX_END, _render_nux_block(provider_models)
-        )
-    existing_keys = _existing_nux_keys(stripped)
-    entries_block = _render_nux_entries(provider_models, existing_keys)
-    if entries_block is None:
-        return stripped
-    return _insert_into_nux_table(stripped, entries_block)
 
 
 def _toml_table_key(model_id: str) -> str:
@@ -715,6 +556,29 @@ def _atomic_write(target: Path, new_text: str) -> None:
         raise
 
 
+def _default_catalog_dir(target: Path) -> Path:
+    """Return the per-provider catalog directory for a config ``target``."""
+    return target.parent / CATALOG_DIR_NAME
+
+
+def _write_per_provider_catalogs(
+    provider_models: list[ProviderModels],
+    catalog_dir: Path,
+) -> list[Path]:
+    """Write one catalog JSON per live provider; return the paths written.
+
+    Each file contains only that provider's models with bare model-id slugs.
+    Files are written for the same prefixes (and order) the profiles block
+    references, so a profile never points at a missing catalog.
+    """
+    written: list[Path] = []
+    for entry in _live_provider_models(provider_models):
+        path = _catalog_path_for(catalog_dir, entry.prefix)
+        _atomic_write(path, _generate_catalog_json(entry))
+        written.append(path)
+    return written
+
+
 @dataclass
 class SyncResult:
     """Outcome of one ``sync`` invocation, used by tests and the CLI."""
@@ -724,7 +588,8 @@ class SyncResult:
     backup: Path | None
     rotated: list[Path]
     provider_models: list[ProviderModels]
-    catalog: Path | None = None
+    catalog_dir: Path | None = None
+    catalogs: list[Path] = field(default_factory=list)
 
 
 def sync(
@@ -735,9 +600,15 @@ def sync(
     base_url: str = GATEWAY_BASE_URL,
     now: datetime.datetime | None = None,
     keep_backups: int = BACKUPS_KEPT,
-    catalog_target: Path | None = None,
+    catalog_dir: Path | None = None,
 ) -> SyncResult:
     """Synchronize ``target`` against live gateway models.
+
+    Writes one ``[profiles.<prefix>]`` table per gateway prefix with live
+    models and one per-provider catalog JSON under ``catalog_dir`` (default
+    ``<target.parent>/reverso``). The default config exposes no reverso models;
+    they are only selectable via ``codex -p <prefix>``. Any legacy global
+    catalog or NUX managed block is stripped.
 
     The function is idempotent: a second call with the same fetcher output
     produces no diff and creates no backup.
@@ -751,39 +622,43 @@ def sync(
     if not provider_models:
         raise RuntimeError("no reverso provider model listings were available")
 
+    catalog_dir = (
+        catalog_dir if catalog_dir is not None else _default_catalog_dir(target)
+    )
+
     old_text = target.read_text(encoding="utf-8") if target.exists() else ""
 
-    profiles_block = _render_profiles_block(provider_models)
+    profiles_block = _render_profiles_block(provider_models, catalog_dir)
 
     new_text = _ensure_default_model(old_text)
-    new_text = _merge_catalog_config_block(new_text, catalog_target)
+    # Strip the legacy global catalog and NUX managed blocks; neither is
+    # written any more. Profiles carry per-provider catalog pointers instead.
+    new_text = _merge_catalog_config_block(new_text, None)
+    new_text = _strip_managed_block(new_text, NUX_BEGIN, NUX_END)
     new_text = _replace_managed_block(
         new_text, PROFILES_BEGIN, PROFILES_END, profiles_block
     )
-    new_text = _merge_nux_block(new_text, provider_models)
 
     if new_text == old_text:
-        # The catalog is regenerated even when the config text is unchanged:
-        # the config references the catalog path, so a deleted or stale
-        # catalog file must come back on every sync, not only on config diffs.
-        if catalog_target:
-            _atomic_write(catalog_target, _generate_catalog_json(provider_models))
+        # The catalogs are regenerated even when the config text is unchanged:
+        # the profiles reference these paths, so deleted or stale catalog files
+        # must come back on every sync, not only on config diffs.
+        catalogs = _write_per_provider_catalogs(provider_models, catalog_dir)
         return SyncResult(
             target=target,
             changed=False,
             backup=None,
             rotated=[],
             provider_models=provider_models,
-            catalog=catalog_target,
+            catalog_dir=catalog_dir,
+            catalogs=catalogs,
         )
 
     # Fail-closed invariant: validation MUST precede backup and write so a
     # render bug can never replace a valid user config with broken TOML.
     _parse_toml(new_text, "rendered config")
 
-    if catalog_target:
-        catalog_json = _generate_catalog_json(provider_models)
-        _atomic_write(catalog_target, catalog_json)
+    catalogs = _write_per_provider_catalogs(provider_models, catalog_dir)
 
     backup = _make_backup(target, now=now)
     _atomic_write(target, new_text)
@@ -794,7 +669,8 @@ def sync(
         backup=backup,
         rotated=rotated,
         provider_models=provider_models,
-        catalog=catalog_target,
+        catalog_dir=catalog_dir,
+        catalogs=catalogs,
     )
 
 
@@ -816,19 +692,13 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--catalog",
+        "--catalog-dir",
         type=Path,
         default=None,
         help=(
-            "Path to the reverso model-catalog.json to write "
-            "(default: ~/.codex/reverso-model-catalog.json, env: "
-            "REVERSO_CODEX_CATALOG). Inert without --write-catalog."
+            "Directory for per-provider catalog JSON files "
+            "(default: <config dir>/reverso, env: REVERSO_CODEX_CATALOG_DIR)."
         ),
-    )
-    parser.add_argument(
-        "--write-catalog",
-        action="store_true",
-        help="Whether to generate and reference a model catalog JSON.",
     )
     parser.add_argument(
         "--base-url",
@@ -856,13 +726,13 @@ def _resolve_config_path(arg_value: Path | None) -> Path:
     return DEFAULT_CONFIG_PATH
 
 
-def _resolve_catalog_path(arg_value: Path | None) -> Path:
+def _resolve_catalog_dir(arg_value: Path | None, config: Path) -> Path:
     if arg_value is not None:
         return arg_value
-    env_value = os.environ.get("REVERSO_CODEX_CATALOG")
+    env_value = os.environ.get("REVERSO_CODEX_CATALOG_DIR")
     if env_value:
         return Path(env_value)
-    return DEFAULT_CATALOG_PATH
+    return _default_catalog_dir(config)
 
 
 def _resolve_base_url(arg_value: str | None) -> str:
@@ -879,21 +749,21 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     target = _resolve_config_path(args.config)
     base_url = _resolve_base_url(args.base_url)
-    catalog_target = _resolve_catalog_path(args.catalog) if args.write_catalog else None
+    catalog_dir = _resolve_catalog_dir(args.catalog_dir, target)
 
     if args.dry_run:
         fetcher = _default_fetcher(base_url)
         provider_models = fetch_all(GATEWAY_PREFIXES, fetcher, skip_errors=True)
         report = {
             "target": str(target),
-            "catalog_target": str(catalog_target) if catalog_target else None,
+            "catalog_dir": str(catalog_dir),
             "providers": {pm.prefix: list(pm.models) for pm in provider_models},
         }
         sys.stdout.write(json.dumps(report, indent=2) + "\n")
         return 0
 
     try:
-        result = sync(target=target, base_url=base_url, catalog_target=catalog_target)
+        result = sync(target=target, base_url=base_url, catalog_dir=catalog_dir)
     except httpx.HTTPError as exc:
         sys.stderr.write(f"reverso-codex-sync: gateway error: {exc}\n")
         return 2
@@ -906,7 +776,8 @@ def main(argv: list[str] | None = None) -> int:
         "changed": result.changed,
         "backup": str(result.backup) if result.backup else None,
         "rotated": [str(p) for p in result.rotated],
-        "catalog": str(result.catalog) if result.catalog else None,
+        "catalog_dir": str(result.catalog_dir) if result.catalog_dir else None,
+        "catalogs": [str(p) for p in result.catalogs],
         "providers": {pm.prefix: list(pm.models) for pm in result.provider_models},
     }
     sys.stdout.write(json.dumps(report, indent=2) + "\n")

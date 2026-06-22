@@ -2,7 +2,8 @@
 
 No live network. The fetcher is always injected so calls never hit the
 gateway. The target ``config.toml`` path is always under ``tmp_path`` so
-``~/.codex/config.toml`` is never touched.
+``~/.codex/config.toml`` is never touched, and per-provider catalog files
+are always written under ``tmp_path`` too.
 """
 
 from __future__ import annotations
@@ -57,13 +58,73 @@ def _baseline_config_text() -> str:
         'name = "Reverso Claude profile"\n'
         'base_url = "http://127.0.0.1:64946/claude/v1"\n'
         'wire_api = "responses"\n'
+        "[model_providers.reverso_copilot]\n"
+        'name = "Reverso Copilot profile"\n'
+        'base_url = "http://127.0.0.1:64946/copilot/v1"\n'
+        'wire_api = "responses"\n'
+        "[model_providers.reverso_auggie]\n"
+        'name = "Reverso Auggie profile"\n'
+        'base_url = "http://127.0.0.1:64946/auggie/v1"\n'
+        'wire_api = "responses"\n'
+        "[model_providers.reverso_deepseek]\n"
+        'name = "Reverso DeepSeek profile"\n'
+        'base_url = "http://127.0.0.1:64946/deepseek/v1"\n'
+        'wire_api = "responses"\n'
         "# END REVERSO GATEWAY PROFILES\n"
         "\n"
         "[tui]\n"
         'status_line = ["model-with-reasoning", "git-branch"]\n'
         "\n"
+        '[projects."/Users/example/repo"]\n'
+        'trust_level = "trusted"\n'
+    )
+
+
+def _prior_clutter_config_text() -> str:
+    """Config carrying every legacy managed block + orphan overlay tables.
+
+    Models the real ~/.codex/config.toml after the old global-exposure sync
+    ran: a top-level managed catalog block, a managed NUX block, and per-model
+    ``reverso_*__*`` overlay tables inside the managed PROFILES block. A new
+    sync must strip all three.
+    """
+    return (
+        "# user comment header that must survive\n"
+        'model_reasoning_effort = "medium"\n'
+        "\n"
+        + codex_sync.CATALOG_BEGIN
+        + "\n"
+        + 'model_catalog_json = "/old/reverso-model-catalog.json"\n'
+        + codex_sync.CATALOG_END
+        + "\n"
+        "\n"
+        "[model_providers.minimax]\n"
+        'name = "MiniMax"\n'
+        'base_url = "https://api.minimax.io/v1"\n'
+        'wire_api = "responses"\n'
+        "\n"
+        "[model_providers.reverso_copilot]\n"
+        'name = "Reverso Copilot profile"\n'
+        'base_url = "http://127.0.0.1:64946/copilot/v1"\n'
+        'wire_api = "responses"\n'
+        "\n" + codex_sync.PROFILES_BEGIN + "\n"
+        "[model_providers.reverso_copilot__gpt-5_5]\n"
+        'name = "Reverso copilot gpt-5.5"\n'
+        'base_url = "http://127.0.0.1:64946/copilot/v1"\n'
+        'wire_api = "responses"\n'
+        'model = "gpt-5.5"\n'
+        "[model_providers.reverso_claude__claude-fable-5]\n"
+        'name = "Reverso claude claude-fable-5"\n'
+        'base_url = "http://127.0.0.1:64946/claude/v1"\n'
+        'wire_api = "responses"\n'
+        'model = "claude-fable-5"\n' + codex_sync.PROFILES_END + "\n"
+        "\n"
+        "[tui]\n"
+        'status_line = ["model-with-reasoning", "git-branch"]\n'
+        "\n" + codex_sync.NUX_BEGIN + "\n"
         "[tui.model_availability_nux]\n"
         '"gpt-5.5" = 4\n'
+        '"claude-fable-5" = 4\n' + codex_sync.NUX_END + "\n"
         "\n"
         '[projects."/Users/example/repo"]\n'
         'trust_level = "trusted"\n'
@@ -142,74 +203,184 @@ def test_sync_fails_closed_when_all_default_provider_fetches_fail(
     assert target.read_text(encoding="utf-8") == baseline
 
 
-def test_catalog_json_includes_static_metadata_aliases() -> None:
-    catalog = json.loads(
-        codex_sync._generate_catalog_json(
-            [codex_sync.ProviderModels("claude", ("claude-opus-4-8",))]
-        )
+def test_default_model_for_prefers_deepseek_v4_pro() -> None:
+    assert (
+        codex_sync._default_model_for("deepseek", ("deepseek-v3", "deepseek-v4-pro"))
+        == "deepseek-v4-pro"
     )
-
-    slugs = {model["slug"] for model in catalog["models"]}
-
-    assert "gpt-5.5" in slugs
-    assert "gpt-4.1" in slugs
-    assert "claude-opus-4-8" in slugs
-    assert "MiniMax-M3" in slugs
-    assert "gemini-2.5-pro" in slugs
-    assert "gemini-2.5-flash" in slugs
-
-
-def test_catalog_json_dedupes_static_metadata_aliases() -> None:
-    catalog = json.loads(
-        codex_sync._generate_catalog_json(
-            [
-                codex_sync.ProviderModels(
-                    "copilot", ("gemini-2.5-pro", "gemini-2.5-flash")
-                )
-            ]
-        )
+    # Without the preferred id, first listed wins.
+    assert (
+        codex_sync._default_model_for("deepseek", ("deepseek-v3", "deepseek-r1"))
+        == "deepseek-v3"
     )
-
-    slugs = [model["slug"] for model in catalog["models"]]
-
-    assert slugs.count("gemini-2.5-pro") == 1
-    assert slugs.count("gemini-2.5-flash") == 1
-    assert slugs.count("copilot/gemini-2.5-pro") == 1
-    assert slugs.count("copilot/gemini-2.5-flash") == 1
-    assert "MiniMax-M3" in slugs
+    # Non-deepseek providers always use the first model.
+    assert codex_sync._default_model_for("copilot", ("gpt-4o", "gpt-5.5")) == "gpt-4o"
 
 
-def test_sync_catalog_aliases_do_not_create_routing_entries(tmp_path: Path) -> None:
+def test_render_profiles_block_emits_one_profile_per_live_prefix(
+    tmp_path: Path,
+) -> None:
+    pm = [
+        codex_sync.ProviderModels("claude", ("claude-fable-5",)),
+        codex_sync.ProviderModels("copilot", ("gpt-5.5", "gpt-4o")),
+        codex_sync.ProviderModels("auggie", ("prism-a",)),
+        codex_sync.ProviderModels("deepseek", ("deepseek-v3", "deepseek-v4-pro")),
+    ]
+    catalog_dir = tmp_path / "reverso"
+    block = codex_sync._render_profiles_block(pm, catalog_dir)
+
+    assert block.startswith(codex_sync.PROFILES_BEGIN)
+    assert block.rstrip().endswith(codex_sync.PROFILES_END)
+    # One inline table per prefix, GATEWAY_PREFIXES order.
+    order = [
+        block.index("[profiles.claude]"),
+        block.index("[profiles.copilot]"),
+        block.index("[profiles.auggie]"),
+        block.index("[profiles.deepseek]"),
+    ]
+    assert order == sorted(order)
+    assert 'model_provider = "reverso_claude"' in block
+    assert 'model_provider = "reverso_copilot"' in block
+    assert 'model_provider = "reverso_deepseek"' in block
+    # Default models pinned per spec.
+    assert 'model = "claude-fable-5"' in block
+    assert 'model = "gpt-5.5"' in block
+    assert 'model = "deepseek-v4-pro"' in block
+    # Per-provider catalog pointers.
+    assert f'model_catalog_json = "{catalog_dir / "copilot.json"}"' in block
+    # No legacy per-model overlay tables.
+    assert "[model_providers.reverso_" not in block
+
+
+def test_render_profiles_block_skips_prefixes_without_models(
+    tmp_path: Path,
+) -> None:
+    pm = [
+        codex_sync.ProviderModels("claude", ()),
+        codex_sync.ProviderModels("copilot", ("gpt-5.5",)),
+        codex_sync.ProviderModels("auggie", ()),
+        codex_sync.ProviderModels("deepseek", ()),
+    ]
+    block = codex_sync._render_profiles_block(pm, tmp_path)
+    assert "[profiles.copilot]" in block
+    assert "[profiles.claude]" not in block
+    assert "[profiles.auggie]" not in block
+    assert "[profiles.deepseek]" not in block
+
+
+def test_sync_writes_profiles_for_each_live_prefix(tmp_path: Path) -> None:
     target = tmp_path / "config.toml"
-    catalog = tmp_path / "catalog.json"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+    catalog_dir = tmp_path / "reverso"
+
+    result = codex_sync.sync(
+        target=target, fetcher=_make_fetcher(), catalog_dir=catalog_dir
+    )
+
+    assert result.changed is True
+    text = target.read_text(encoding="utf-8")
+    parsed = tomllib.loads(text)
+    profiles = parsed["profiles"]
+    for prefix in ("claude", "copilot", "auggie", "deepseek"):
+        assert profiles[prefix]["model_provider"] == f"reverso_{prefix}"
+        assert profiles[prefix]["model_catalog_json"] == str(
+            catalog_dir / f"{prefix}.json"
+        )
+        assert profiles[prefix]["model"]
+
+
+def test_sync_default_config_exposes_no_reverso_models_globally(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "config.toml"
     target.write_text(_baseline_config_text(), encoding="utf-8")
 
     codex_sync.sync(
-        target=target,
-        fetcher=_make_fetcher({"claude": ["claude-opus-4-8"]}),
-        catalog_target=catalog,
+        target=target, fetcher=_make_fetcher(), catalog_dir=tmp_path / "reverso"
     )
 
     text = target.read_text(encoding="utf-8")
-    catalog_slugs = {
-        model["slug"]
-        for model in json.loads(catalog.read_text(encoding="utf-8"))["models"]
-    }
+    parsed = tomllib.loads(text)
+    # No global NUX block, no top-level managed catalog pointer.
+    assert codex_sync.NUX_BEGIN not in text
+    assert codex_sync.CATALOG_BEGIN not in text
+    assert "[tui.model_availability_nux]" not in text
+    assert "model_catalog_json" not in text[: text.index(codex_sync.PROFILES_BEGIN)]
+    assert "model_catalog_json" not in text[text.index(codex_sync.PROFILES_END) :]
+    # The default codex model stays plain.
+    assert parsed["model"] == "gpt-5.5"
 
-    assert "MiniMax-M3" in catalog_slugs
-    assert "gemini-2.5-pro" in catalog_slugs
-    assert "gemini-2.5-flash" in catalog_slugs
-    assert "MiniMax-M3" not in text
-    assert "gemini-2.5-pro" not in text
-    assert "gemini-2.5-flash" not in text
-    assert "gpt-4.1" in text
+
+def test_sync_writes_per_provider_catalog_files_with_bare_slugs(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+    catalog_dir = tmp_path / "reverso"
+
+    result = codex_sync.sync(
+        target=target, fetcher=_make_fetcher(), catalog_dir=catalog_dir
+    )
+
+    assert result.catalog_dir == catalog_dir
+    written = {p.name for p in result.catalogs}
+    assert written == {"claude.json", "copilot.json", "auggie.json", "deepseek.json"}
+
+    copilot = json.loads((catalog_dir / "copilot.json").read_text(encoding="utf-8"))
+    copilot_slugs = [m["slug"] for m in copilot["models"]]
+    # Bare model-id slugs only; never provider-prefixed.
+    assert "gpt-5.5" in copilot_slugs
+    assert "gpt-4o" in copilot_slugs
+    assert not any("/" in slug for slug in copilot_slugs)
+    assert "copilot/gpt-5.5" not in copilot_slugs
+
+    claude = json.loads((catalog_dir / "claude.json").read_text(encoding="utf-8"))
+    claude_slugs = {m["slug"] for m in claude["models"]}
+    # Each provider catalog only carries its own models.
+    assert claude_slugs == {"claude-fable-5", "claude-sonnet-4-6"}
+    assert "gpt-5.5" not in claude_slugs
+
+
+def test_sync_strips_legacy_clutter_blocks(tmp_path: Path) -> None:
+    """Regression: prior global catalog + NUX + overlay tables all removed."""
+    target = tmp_path / "config.toml"
+    prior = _prior_clutter_config_text()
+    target.write_text(prior, encoding="utf-8")
+
+    codex_sync.sync(
+        target=target, fetcher=_make_fetcher(), catalog_dir=tmp_path / "reverso"
+    )
+
+    text = target.read_text(encoding="utf-8")
+    # Legacy managed catalog block gone.
+    assert codex_sync.CATALOG_BEGIN not in text
+    assert "/old/reverso-model-catalog.json" not in text
+    # Legacy NUX block gone.
+    assert codex_sync.NUX_BEGIN not in text
+    assert "[tui.model_availability_nux]" not in text
+    # Legacy per-model overlay tables gone.
+    assert "[model_providers.reverso_copilot__gpt-5_5]" not in text
+    assert "[model_providers.reverso_claude__claude-fable-5]" not in text
+    # New profiles present and valid.
+    parsed = tomllib.loads(text)
+    assert parsed["profiles"]["copilot"]["model_provider"] == "reverso_copilot"
+    # Hand-managed base provider table preserved.
+    assert "[model_providers.reverso_copilot]" in text
+    assert parsed["model_providers"]["reverso_copilot"]["base_url"].endswith(
+        "/copilot/v1"
+    )
+    # Unrelated user content preserved.
+    assert "# user comment header that must survive" in text
+    assert parsed["projects"]["/Users/example/repo"]["trust_level"] == "trusted"
 
 
 def test_sync_inserts_default_model_when_missing(tmp_path: Path) -> None:
     target = tmp_path / "config.toml"
     target.write_text(_baseline_config_text(), encoding="utf-8")
 
-    codex_sync.sync(target=target, fetcher=_make_fetcher())
+    codex_sync.sync(
+        target=target, fetcher=_make_fetcher(), catalog_dir=tmp_path / "reverso"
+    )
 
     text = target.read_text(encoding="utf-8")
     assert text.index('model = "gpt-5.5"') < text.index("[model_providers.minimax]")
@@ -223,7 +394,9 @@ def test_sync_preserves_user_selected_model(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    codex_sync.sync(target=target, fetcher=_make_fetcher())
+    codex_sync.sync(
+        target=target, fetcher=_make_fetcher(), catalog_dir=tmp_path / "reverso"
+    )
 
     text = target.read_text(encoding="utf-8")
     top_level = text[: text.index("[model_providers.minimax]")]
@@ -237,7 +410,9 @@ def test_sync_writes_block_and_creates_backup(tmp_path: Path) -> None:
     target.write_text(_baseline_config_text(), encoding="utf-8")
     fetcher = _make_fetcher()
 
-    result = codex_sync.sync(target=target, fetcher=fetcher)
+    result = codex_sync.sync(
+        target=target, fetcher=fetcher, catalog_dir=tmp_path / "reverso"
+    )
 
     assert result.changed is True
     assert result.backup is not None
@@ -245,24 +420,23 @@ def test_sync_writes_block_and_creates_backup(tmp_path: Path) -> None:
     new_text = target.read_text(encoding="utf-8")
     assert codex_sync.PROFILES_BEGIN in new_text
     assert codex_sync.PROFILES_END in new_text
-    assert codex_sync.NUX_BEGIN in new_text
-    assert codex_sync.NUX_END in new_text
-    assert "claude-fable-5" in new_text
-    assert "copilot/gpt-5.5" in new_text
-    assert "auggie/prism-a" in new_text
-    assert 'model = "prism-a"' in new_text
+    assert "[profiles.claude]" in new_text
+    assert "[profiles.copilot]" in new_text
+    assert "[profiles.auggie]" in new_text
+    assert "[profiles.deepseek]" in new_text
 
 
 def test_sync_is_idempotent_no_diff_no_backup(tmp_path: Path) -> None:
     target = tmp_path / "config.toml"
     target.write_text(_baseline_config_text(), encoding="utf-8")
     fetcher = _make_fetcher()
+    catalog_dir = tmp_path / "reverso"
 
-    first = codex_sync.sync(target=target, fetcher=fetcher)
+    first = codex_sync.sync(target=target, fetcher=fetcher, catalog_dir=catalog_dir)
     assert first.changed is True
     text_after_first = target.read_text(encoding="utf-8")
 
-    second = codex_sync.sync(target=target, fetcher=fetcher)
+    second = codex_sync.sync(target=target, fetcher=fetcher, catalog_dir=catalog_dir)
     assert second.changed is False
     assert second.backup is None
     assert second.rotated == []
@@ -276,7 +450,7 @@ def test_sync_preserves_unrelated_keys_byte_for_byte(tmp_path: Path) -> None:
     target.write_text(baseline, encoding="utf-8")
     fetcher = _make_fetcher()
 
-    codex_sync.sync(target=target, fetcher=fetcher)
+    codex_sync.sync(target=target, fetcher=fetcher, catalog_dir=tmp_path / "reverso")
     new_text = target.read_text(encoding="utf-8")
 
     untouched_lines = [
@@ -290,8 +464,6 @@ def test_sync_preserves_unrelated_keys_byte_for_byte(tmp_path: Path) -> None:
         "# END REVERSO GATEWAY PROFILES",
         "[tui]",
         'status_line = ["model-with-reasoning", "git-branch"]',
-        "[tui.model_availability_nux]",
-        '"gpt-5.5" = 4',
         '[projects."/Users/example/repo"]',
         'trust_level = "trusted"',
     ]
@@ -314,6 +486,7 @@ def test_sync_keeps_only_five_newest_backups(tmp_path: Path) -> None:
             target=target,
             fetcher=_make_fetcher(payload),
             now=base_ts + datetime.timedelta(minutes=i),
+            catalog_dir=tmp_path / "reverso",
         )
         assert result.changed is True
 
@@ -337,13 +510,25 @@ def test_sync_no_existing_file_creates_target_no_backup(tmp_path: Path) -> None:
     target = tmp_path / "fresh" / "config.toml"
     fetcher = _make_fetcher()
 
-    result = codex_sync.sync(target=target, fetcher=fetcher)
+    result = codex_sync.sync(
+        target=target, fetcher=fetcher, catalog_dir=tmp_path / "reverso"
+    )
 
     assert result.changed is True
     assert result.backup is None
     assert target.exists()
     text = target.read_text(encoding="utf-8")
     assert codex_sync.PROFILES_BEGIN in text
+
+
+def test_sync_default_catalog_dir_is_config_parent_reverso(tmp_path: Path) -> None:
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+
+    result = codex_sync.sync(target=target, fetcher=_make_fetcher())
+
+    assert result.catalog_dir == tmp_path / "reverso"
+    assert (tmp_path / "reverso" / "copilot.json").exists()
 
 
 def test_sync_atomic_write_uses_temp_in_same_dir(
@@ -362,51 +547,24 @@ def test_sync_atomic_write_uses_temp_in_same_dir(
 
     monkeypatch.setattr(codex_sync.tempfile, "mkstemp", _spy_mkstemp)
 
-    codex_sync.sync(target=target, fetcher=_make_fetcher())
+    codex_sync.sync(
+        target=target, fetcher=_make_fetcher(), catalog_dir=tmp_path / "rev"
+    )
 
     assert seen_dirs, "atomic write must mkstemp; none observed"
-    for d in seen_dirs:
-        assert d == str(
-            target.parent
-        ), f"temp file must live in target.parent; saw dir={d}"
+    assert str(target.parent) in seen_dirs
 
 
 def test_sync_no_temp_files_left_behind(tmp_path: Path) -> None:
     target = tmp_path / "config.toml"
     target.write_text(_baseline_config_text(), encoding="utf-8")
 
-    codex_sync.sync(target=target, fetcher=_make_fetcher())
+    codex_sync.sync(
+        target=target, fetcher=_make_fetcher(), catalog_dir=tmp_path / "rev"
+    )
 
-    leftovers = [p for p in target.parent.iterdir() if p.name.endswith(".tmp")]
+    leftovers = [p for p in target.parent.rglob("*.tmp")]
     assert leftovers == []
-
-
-def test_render_profiles_block_emits_per_model_tables() -> None:
-    pm = [
-        codex_sync.ProviderModels("claude", ("claude-fable-5",)),
-        codex_sync.ProviderModels("copilot", ("gpt-5.5",)),
-    ]
-    block = codex_sync._render_profiles_block(pm)
-    assert block.startswith(codex_sync.PROFILES_BEGIN)
-    assert block.rstrip().endswith(codex_sync.PROFILES_END)
-    assert "[model_providers.reverso_claude__claude-fable-5]" in block
-    assert "[model_providers.reverso_copilot__gpt-5_5]" in block
-    assert 'base_url = "http://127.0.0.1:64946/claude/v1"' in block
-    assert 'base_url = "http://127.0.0.1:64946/copilot/v1"' in block
-    assert 'wire_api = "responses"' in block
-    assert 'model = "claude-fable-5"' in block
-
-
-def test_render_nux_block_dedupes_model_ids() -> None:
-    pm = [
-        codex_sync.ProviderModels("claude", ("claude-fable-5", "shared-id")),
-        codex_sync.ProviderModels("copilot", ("shared-id",)),
-    ]
-    block = codex_sync._render_nux_block(pm)
-    assert block.count('"shared-id" = 4') == 1
-    assert '"copilot/shared-id" = 4' in block
-    assert '"claude-fable-5" = 4' in block
-    assert '"gpt-5.5" = 4' in block
 
 
 def test_replace_managed_block_appends_when_absent() -> None:
@@ -476,6 +634,7 @@ def test_main_dry_run_does_not_write(
     target.write_text(baseline, encoding="utf-8")
 
     monkeypatch.setenv("REVERSO_CODEX_CONFIG", str(target))
+    monkeypatch.setenv("REVERSO_CODEX_CATALOG_DIR", str(tmp_path / "reverso"))
     monkeypatch.setattr(
         codex_sync,
         "_default_fetcher",
@@ -485,6 +644,7 @@ def test_main_dry_run_does_not_write(
     rc = codex_sync.main(["--dry-run"])
     assert rc == 0
     assert target.read_text(encoding="utf-8") == baseline
+    assert not (tmp_path / "reverso").exists()
     out = capsys.readouterr().out
     assert "claude-fable-5" in out
 
@@ -497,6 +657,7 @@ def test_main_writes_when_not_dry_run(
     target = tmp_path / "config.toml"
     target.write_text(_baseline_config_text(), encoding="utf-8")
     monkeypatch.setenv("REVERSO_CODEX_CONFIG", str(target))
+    monkeypatch.setenv("REVERSO_CODEX_CATALOG_DIR", str(tmp_path / "reverso"))
     monkeypatch.setattr(
         codex_sync,
         "_default_fetcher",
@@ -507,8 +668,15 @@ def test_main_writes_when_not_dry_run(
     assert rc == 0
     new_text = target.read_text(encoding="utf-8")
     assert codex_sync.PROFILES_BEGIN in new_text
-    out = capsys.readouterr().out
-    assert '"changed": true' in out
+    report = json.loads(capsys.readouterr().out)
+    assert report["changed"] is True
+    assert report["catalog_dir"] == str(tmp_path / "reverso")
+    assert sorted(Path(p).name for p in report["catalogs"]) == [
+        "auggie.json",
+        "claude.json",
+        "copilot.json",
+        "deepseek.json",
+    ]
 
 
 def test_no_secret_material_written_anywhere(tmp_path: Path) -> None:
@@ -522,7 +690,7 @@ def test_no_secret_material_written_anywhere(tmp_path: Path) -> None:
     target.write_text(baseline, encoding="utf-8")
 
     fetcher = _make_fetcher()
-    codex_sync.sync(target=target, fetcher=fetcher)
+    codex_sync.sync(target=target, fetcher=fetcher, catalog_dir=tmp_path / "reverso")
 
     new_text = target.read_text(encoding="utf-8")
     assert sensitive in new_text, "byte-faithful preservation must keep the user line"
@@ -540,12 +708,11 @@ def test_no_secret_material_written_anywhere(tmp_path: Path) -> None:
         )
 
     pm = codex_sync.fetch_all(codex_sync.GATEWAY_PREFIXES, fetcher)
-    profiles_block = codex_sync._render_profiles_block(pm)
-    nux_block = codex_sync._render_nux_block(pm)
-    for produced in (profiles_block, nux_block):
-        assert "api_key" not in produced
-        assert "env_key" not in produced
-        assert "secret" not in produced.lower()
+    profiles_block = codex_sync._render_profiles_block(pm, Path("/codex/reverso"))
+    assert "api_key" not in profiles_block
+    assert "env_key" not in profiles_block
+    assert "secret" not in profiles_block.lower()
+    assert sensitive not in profiles_block
 
 
 def test_resolve_helpers_prefer_explicit_then_env(
@@ -570,6 +737,21 @@ def test_resolve_helpers_prefer_explicit_then_env(
     assert codex_sync._resolve_base_url(None) == "http://env.invalid"
 
 
+def test_resolve_catalog_dir_prefers_explicit_then_env_then_config_parent(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = tmp_path / "sub" / "config.toml"
+    monkeypatch.delenv("REVERSO_CODEX_CATALOG_DIR", raising=False)
+    assert codex_sync._resolve_catalog_dir(None, config) == config.parent / "reverso"
+
+    monkeypatch.setenv("REVERSO_CODEX_CATALOG_DIR", str(tmp_path / "env-cat"))
+    assert codex_sync._resolve_catalog_dir(None, config) == tmp_path / "env-cat"
+
+    explicit = tmp_path / "explicit-cat"
+    assert codex_sync._resolve_catalog_dir(explicit, config) == explicit
+
+
 def test_toml_table_key_replaces_invalid_characters() -> None:
     assert codex_sync._toml_table_key("gpt-5.5") == "gpt-5_5"
     assert codex_sync._toml_table_key("claude-sonnet-4-6") == "claude-sonnet-4-6"
@@ -577,22 +759,21 @@ def test_toml_table_key_replaces_invalid_characters() -> None:
     assert codex_sync._toml_table_key("") == "model"
 
 
-def test_sync_with_no_models_writes_empty_profiles_and_codex_defaults_nux_block(
-    tmp_path: Path,
-) -> None:
+def test_sync_with_no_models_writes_empty_profiles_block(tmp_path: Path) -> None:
     target = tmp_path / "config.toml"
     target.write_text(_baseline_config_text(), encoding="utf-8")
     empty = _make_fetcher({"claude": [], "copilot": [], "auggie": [], "deepseek": []})
 
-    codex_sync.sync(target=target, fetcher=empty)
+    result = codex_sync.sync(
+        target=target, fetcher=empty, catalog_dir=tmp_path / "reverso"
+    )
     text = target.read_text(encoding="utf-8")
     assert codex_sync.PROFILES_BEGIN in text
-    assert "[model_providers.reverso_claude__" not in text
-    # Reverso may have no live models, but Codex defaults are still selectable.
-    assert codex_sync.NUX_BEGIN in text
-    assert text.count("[tui.model_availability_nux]") == 1
-    assert '"gpt-5.5" = 4' in text
-    assert '"gpt-4.1" = 4' in text
+    assert "[profiles." not in text
+    assert codex_sync.NUX_BEGIN not in text
+    assert "[tui.model_availability_nux]" not in text
+    assert result.catalogs == []
+    tomllib.loads(text)
 
 
 def test_atomic_write_round_trip(tmp_path: Path) -> None:
@@ -620,126 +801,17 @@ def test_atomic_write_unlinks_tmp_on_failure(
     assert leftovers == []
 
 
-def test_sync_merges_into_existing_nux_table_single_header(tmp_path: Path) -> None:
-    """Regression: a pre-existing user NUX table must never get a second header.
-
-    The live ~/.codex/config.toml already had [tui.model_availability_nux]
-    (with "gpt-5.5" = 4); the old renderer emitted its own header at EOF,
-    producing a duplicate-table TOML error that broke codex entirely.
-    """
-    target = tmp_path / "config.toml"
-    target.write_text(_baseline_config_text(), encoding="utf-8")
-
-    codex_sync.sync(target=target, fetcher=_make_fetcher())
-    text = target.read_text(encoding="utf-8")
-
-    assert text.count("[tui.model_availability_nux]") == 1
-    parsed = tomllib.loads(text)
-    nux = parsed["tui"]["model_availability_nux"]
-    assert nux["gpt-5.5"] == 4
-    assert nux["gpt-4.1"] == 4
-    assert nux["claude-fable-5"] == 4
-    assert nux["copilot/gpt-5.5"] == 4
-    assert nux["auggie/prism-a"] == 4
-    assert nux["deepseek-v3"] == 4
-    # User-owned colliding key must appear exactly once, never re-emitted.
-    assert text.count('"gpt-5.5" = 4') == 1
-
-
-def test_sync_inserts_nux_entries_inside_user_table(tmp_path: Path) -> None:
-    target = tmp_path / "config.toml"
-    target.write_text(_baseline_config_text(), encoding="utf-8")
-
-    codex_sync.sync(target=target, fetcher=_make_fetcher())
-    text = target.read_text(encoding="utf-8")
-
-    header_idx = text.index("[tui.model_availability_nux]")
-    begin_idx = text.index(codex_sync.NUX_BEGIN)
-    end_idx = text.index(codex_sync.NUX_END)
-    projects_idx = text.index('[projects."/Users/example/repo"]')
-    assert header_idx < begin_idx < end_idx < projects_idx
-
-
-def test_sync_idempotent_with_existing_nux_table(tmp_path: Path) -> None:
-    target = tmp_path / "config.toml"
-    target.write_text(_baseline_config_text(), encoding="utf-8")
-
-    first = codex_sync.sync(target=target, fetcher=_make_fetcher())
-    assert first.changed is True
-    text_first = target.read_text(encoding="utf-8")
-
-    second = codex_sync.sync(target=target, fetcher=_make_fetcher())
-    assert second.changed is False
-    text_second = target.read_text(encoding="utf-8")
-    assert text_first == text_second
-    assert text_second.count("[tui.model_availability_nux]") == 1
-
-
-def test_sync_all_keys_already_present_writes_no_nux_block(tmp_path: Path) -> None:
-    target = tmp_path / "config.toml"
-    existing = "".join(
-        f'"{model}" = 4\n'
-        for model in (*codex_sync.CODEX_DEFAULT_MODELS[1:], "copilot/gpt-5.5")
-    )
-    target.write_text(
-        _baseline_config_text().replace(
-            '"gpt-5.5" = 4\n', '"gpt-5.5" = 4\n' + existing
-        ),
-        encoding="utf-8",
-    )
-    only_collision = _make_fetcher(
-        {"claude": [], "copilot": ["gpt-5.5"], "auggie": [], "deepseek": []}
-    )
-
-    codex_sync.sync(target=target, fetcher=only_collision)
-    text = target.read_text(encoding="utf-8")
-
-    assert codex_sync.NUX_BEGIN not in text
-    assert text.count('"gpt-5.5" = 4') == 1
-    nux = tomllib.loads(text)["tui"]["model_availability_nux"]
-    assert nux["gpt-5.5"] == 4
-    assert nux["copilot/gpt-5.5"] == 4
-
-
-def test_sync_relocates_legacy_eof_nux_block_into_user_table(tmp_path: Path) -> None:
-    """Self-healing: a block written by the buggy version (duplicate header at
-    EOF) must be stripped and re-merged inside the user table."""
-    legacy_block = "\n".join(
-        [
-            codex_sync.NUX_BEGIN,
-            "[tui.model_availability_nux]",
-            '"claude-fable-5" = 4',
-            '"gpt-5.5" = 4',
-            codex_sync.NUX_END,
-        ]
-    )
-    corrupted = _baseline_config_text() + "\n" + legacy_block + "\n"
-    assert corrupted.count("[tui.model_availability_nux]") == 2
-
-    target = tmp_path / "config.toml"
-    target.write_text(corrupted, encoding="utf-8")
-
-    result = codex_sync.sync(target=target, fetcher=_make_fetcher())
-    assert result.changed is True
-    text = target.read_text(encoding="utf-8")
-
-    assert text.count("[tui.model_availability_nux]") == 1
-    parsed = tomllib.loads(text)
-    nux = parsed["tui"]["model_availability_nux"]
-    assert nux["gpt-5.5"] == 4
-    assert nux["claude-fable-5"] == 4
-    assert text.count('"gpt-5.5" = 4') == 1
-
-
 def test_sync_refuses_to_write_when_user_toml_is_invalid(tmp_path: Path) -> None:
     """Fail closed: user-owned duplicate tables (invalid TOML) must abort the
     sync before any backup or write happens."""
-    broken = _baseline_config_text() + "\n[tui.model_availability_nux]\n'again' = 1\n"
+    broken = _baseline_config_text() + "\n[tui]\nstatus_line = 1\n"
     target = tmp_path / "config.toml"
     target.write_text(broken, encoding="utf-8")
 
     with pytest.raises(RuntimeError):
-        codex_sync.sync(target=target, fetcher=_make_fetcher())
+        codex_sync.sync(
+            target=target, fetcher=_make_fetcher(), catalog_dir=tmp_path / "reverso"
+        )
 
     assert target.read_text(encoding="utf-8") == broken
     backups = [
@@ -755,10 +827,11 @@ def test_main_returns_3_on_runtime_error(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    broken = _baseline_config_text() + "\n[tui.model_availability_nux]\n'again' = 1\n"
+    broken = _baseline_config_text() + "\n[tui]\nstatus_line = 1\n"
     target = tmp_path / "config.toml"
     target.write_text(broken, encoding="utf-8")
     monkeypatch.setenv("REVERSO_CODEX_CONFIG", str(target))
+    monkeypatch.setenv("REVERSO_CODEX_CATALOG_DIR", str(tmp_path / "reverso"))
     monkeypatch.setattr(
         codex_sync,
         "_default_fetcher",
@@ -772,130 +845,81 @@ def test_main_returns_3_on_runtime_error(
     assert "refusing to write" in err
 
 
-def test_render_nux_entries_excludes_existing_keys() -> None:
-    pm = [
-        codex_sync.ProviderModels("claude", ("claude-fable-5",)),
-        codex_sync.ProviderModels("copilot", ("gpt-5.5",)),
-    ]
-    block = codex_sync._render_nux_entries(pm, frozenset({"gpt-5.5"}))
-    assert block is not None
-    assert '"gpt-5.5" = 4' not in block
-    assert '"copilot/gpt-5.5" = 4' in block
-    assert '"claude-fable-5" = 4' in block
-    assert "[tui.model_availability_nux]" not in block
-
-    nothing_new = codex_sync._render_nux_entries(
-        pm, frozenset(codex_sync._iter_selectable_model_ids(pm))
-    )
-    assert nothing_new is None
+def test_render_profiles_block_dedupes_to_one_table_per_prefix(
+    tmp_path: Path,
+) -> None:
+    pm = [codex_sync.ProviderModels("copilot", ("gpt-5.5", "gpt-4o"))]
+    block = codex_sync._render_profiles_block(pm, tmp_path)
+    assert block.count("[profiles.copilot]") == 1
 
 
-def test_render_profiles_block_dedupes_coerced_section_collisions() -> None:
-    pm = [codex_sync.ProviderModels("copilot", ("gpt-5.5", "gpt-5_5"))]
-    block = codex_sync._render_profiles_block(pm)
-    assert block.count("[model_providers.reverso_copilot__gpt-5_5]") == 1
-
-
-def test_sync_handles_crlf_config_with_existing_nux_table(tmp_path: Path) -> None:
-    """Regression: CRLF-edited configs must take the header-aware merge path.
-
-    Before the \\r-tolerant header regex, the user table went undetected and
-    sync emitted a duplicate header, failing closed with exit 3 forever.
-    """
+def test_sync_handles_crlf_config(tmp_path: Path) -> None:
+    """Regression: CRLF-edited configs must still sync and stay idempotent."""
     crlf_baseline = _baseline_config_text().replace("\n", "\r\n")
     target = tmp_path / "config.toml"
     target.write_bytes(crlf_baseline.encode("utf-8"))
+    catalog_dir = tmp_path / "reverso"
 
-    first = codex_sync.sync(target=target, fetcher=_make_fetcher())
+    first = codex_sync.sync(
+        target=target, fetcher=_make_fetcher(), catalog_dir=catalog_dir
+    )
     assert first.changed is True
     text = target.read_bytes().decode("utf-8")
-
-    assert text.count("[tui.model_availability_nux]") == 1
     parsed = tomllib.loads(text)
-    nux = parsed["tui"]["model_availability_nux"]
-    assert nux["gpt-5.5"] == 4
-    assert nux["claude-fable-5"] == 4
+    assert parsed["profiles"]["claude"]["model_provider"] == "reverso_claude"
 
-    second = codex_sync.sync(target=target, fetcher=_make_fetcher())
+    second = codex_sync.sync(
+        target=target, fetcher=_make_fetcher(), catalog_dir=catalog_dir
+    )
     assert second.changed is False
 
 
 def test_renderers_escape_hostile_model_ids(tmp_path: Path) -> None:
     hostile = 'we"ird\\id'
-    pm = [codex_sync.ProviderModels("claude", (hostile,))]
-
-    entries = codex_sync._render_nux_entries(pm, frozenset())
-    assert entries is not None
-    body = "\n".join(line for line in entries.splitlines() if not line.startswith("#"))
-    parsed = tomllib.loads("[t]\n" + body)["t"]
-    assert parsed[hostile] == 4
-
     target = tmp_path / "config.toml"
     target.write_text(_baseline_config_text(), encoding="utf-8")
-    codex_sync.sync(target=target, fetcher=_make_fetcher({"claude": [hostile]}))
+    catalog_dir = tmp_path / "reverso"
+
+    codex_sync.sync(
+        target=target,
+        fetcher=_make_fetcher({"claude": [hostile]}),
+        catalog_dir=catalog_dir,
+    )
     text = target.read_text(encoding="utf-8")
     full = tomllib.loads(text)
-    assert full["tui"]["model_availability_nux"][hostile] == 4
-    section = f"reverso_claude__{codex_sync._toml_table_key(hostile)}"
-    assert full["model_providers"][section]["model"] == hostile
+    assert full["profiles"]["claude"]["model"] == hostile
 
-
-def test_nux_entries_dedupe_on_coerced_key_matching_profiles() -> None:
-    pm = [codex_sync.ProviderModels("copilot", ("gpt-5.5", "gpt-5_5"))]
-    entries = codex_sync._render_nux_entries(pm, frozenset())
-    assert entries is not None
-    assert '"gpt-5.5" = 4' in entries
-    assert '"copilot/gpt-5.5" = 4' in entries
-    assert '"copilot/gpt-5_5"' not in entries
-    assert entries.count(" = 4") == len(codex_sync.CODEX_DEFAULT_MODELS) + 1
-
-    block = codex_sync._render_nux_block(pm)
-    assert block.count(" = 4") == len(codex_sync.CODEX_DEFAULT_MODELS) + 1
+    claude = json.loads((catalog_dir / "claude.json").read_text(encoding="utf-8"))
+    assert claude["models"][0]["slug"] == hostile
 
 
 def test_sentinel_mentioned_midline_in_comment_is_ignored(tmp_path: Path) -> None:
     baseline = (
         _baseline_config_text()
-        + f"# note: the marker {codex_sync.NUX_BEGIN} is managed tooling\n"
+        + f"# note: the marker {codex_sync.PROFILES_BEGIN} is managed tooling\n"
     )
     target = tmp_path / "config.toml"
     target.write_text(baseline, encoding="utf-8")
 
-    result = codex_sync.sync(target=target, fetcher=_make_fetcher())
+    result = codex_sync.sync(
+        target=target, fetcher=_make_fetcher(), catalog_dir=tmp_path / "reverso"
+    )
     assert result.changed is True
     text = target.read_text(encoding="utf-8")
-    assert f"# note: the marker {codex_sync.NUX_BEGIN} is managed tooling" in text
-    assert text.count("[tui.model_availability_nux]") == 1
+    assert f"# note: the marker {codex_sync.PROFILES_BEGIN} is managed tooling" in text
     tomllib.loads(text)
 
 
 def test_generate_catalog_json_shape_dedup_and_context_window() -> None:
-    pm = [
-        codex_sync.ProviderModels("claude", ("shared-model", "big-500k-model")),
-        codex_sync.ProviderModels("copilot", ("shared-model", "gpt-4o")),
-    ]
+    pm = codex_sync.ProviderModels("copilot", ("shared-model", "big-500k-model"))
     payload = json.loads(codex_sync._generate_catalog_json(pm))
 
     assert set(payload.keys()) == {"models"}
     slugs = [m["slug"] for m in payload["models"]]
-    assert slugs[: len(codex_sync.CODEX_DEFAULT_MODELS)] == list(
-        codex_sync.CODEX_DEFAULT_MODELS
-    )
-    assert "shared-model" in slugs
-    assert "copilot/shared-model" in slugs
-    assert "copilot/gpt-4o" in slugs
-    assert "MiniMax-M3" in slugs
-    assert "gemini-2.5-pro" in slugs
-    assert "gemini-2.5-flash" in slugs
+    assert slugs == ["shared-model", "big-500k-model"]
 
     by_slug = {m["slug"]: m for m in payload["models"]}
-    assert by_slug["gpt-5.5"]["display_name"] == "GPT (Codex) gpt-5.5"
-    assert (
-        by_slug["shared-model"]["display_name"] == "Claude (Claude Code) shared-model"
-    )
-    assert by_slug["copilot/shared-model"]["display_name"] == (
-        "Reverso copilot shared-model"
-    )
+    assert by_slug["shared-model"]["display_name"] == "Reverso copilot shared-model"
     assert by_slug["shared-model"]["context_window"] == 128000
     assert by_slug["big-500k-model"]["context_window"] == 500000
     required_keys = {
@@ -921,9 +945,16 @@ def test_generate_catalog_json_shape_dedup_and_context_window() -> None:
         assert model["supported_reasoning_levels"]
 
 
+def test_generate_catalog_json_dedupes_within_provider() -> None:
+    pm = codex_sync.ProviderModels("copilot", ("gpt-5.5", "gpt-5.5", "gpt-4o"))
+    payload = json.loads(codex_sync._generate_catalog_json(pm))
+    slugs = [m["slug"] for m in payload["models"]]
+    assert slugs == ["gpt-5.5", "gpt-4o"]
+
+
 def test_generate_catalog_json_survives_hostile_model_ids() -> None:
     hostile = 'evil"\\\nmodel\t\x01id'
-    pm = [codex_sync.ProviderModels("claude", (hostile,))]
+    pm = codex_sync.ProviderModels("claude", (hostile,))
 
     payload = json.loads(codex_sync._generate_catalog_json(pm))
 
@@ -931,72 +962,51 @@ def test_generate_catalog_json_survives_hostile_model_ids() -> None:
     assert by_slug[hostile]["display_name"] == f"Claude (Claude Code) {hostile}"
 
 
-def test_resolve_catalog_path_prefers_explicit_then_env(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    monkeypatch.delenv("REVERSO_CODEX_CATALOG", raising=False)
-    assert codex_sync._resolve_catalog_path(None) == codex_sync.DEFAULT_CATALOG_PATH
-
-    monkeypatch.setenv("REVERSO_CODEX_CATALOG", str(tmp_path / "env-catalog.json"))
-    assert codex_sync._resolve_catalog_path(None) == tmp_path / "env-catalog.json"
-
-    explicit = tmp_path / "explicit-catalog.json"
-    assert codex_sync._resolve_catalog_path(explicit) == explicit
-
-
-def test_sync_with_catalog_target_writes_catalog_and_references_it(
-    tmp_path: Path,
-) -> None:
+def test_sync_unchanged_run_regenerates_deleted_catalogs(tmp_path: Path) -> None:
     target = tmp_path / "config.toml"
     target.write_text(_baseline_config_text(), encoding="utf-8")
-    catalog = tmp_path / "catalog.json"
+    catalog_dir = tmp_path / "reverso"
+    fetcher = _make_fetcher()
 
-    result = codex_sync.sync(
-        target=target, fetcher=_make_fetcher(), catalog_target=catalog
-    )
+    first = codex_sync.sync(target=target, fetcher=fetcher, catalog_dir=catalog_dir)
+    assert first.changed is True
+    copilot_catalog = catalog_dir / "copilot.json"
+    assert copilot_catalog.exists()
+    catalog_text = copilot_catalog.read_text(encoding="utf-8")
 
-    assert result.changed is True
-    assert result.catalog == catalog
-    assert catalog.exists()
-    payload = json.loads(catalog.read_text(encoding="utf-8"))
-    slugs = {m["slug"] for m in payload["models"]}
-    assert "gpt-5.5" in slugs
-    assert "gpt-4.1" in slugs
-    assert "copilot/gpt-5.5" in slugs
-    assert "auggie/prism-a" in slugs
-    assert "claude-fable-5" in slugs
-    assert "MiniMax-M3" in slugs
-    assert "deepseek-v3" in slugs
-    assert not any(slug.startswith("deepseek/") for slug in slugs)
+    copilot_catalog.unlink()
+    second = codex_sync.sync(target=target, fetcher=fetcher, catalog_dir=catalog_dir)
 
-    text = target.read_text(encoding="utf-8")
-    assert codex_sync.CATALOG_BEGIN in text
-    assert codex_sync.CATALOG_END in text
-    assert f'model_catalog_json = "{catalog}"' in text
-    assert text.index("model_catalog_json") < text.index("[model_providers.minimax]")
-    assert "model_catalog_json" not in text[text.index(codex_sync.PROFILES_BEGIN) :]
-    tomllib.loads(text)
+    assert second.changed is False
+    assert second.backup is None
+    assert copilot_catalog.exists(), "unchanged config must still restore catalogs"
+    assert copilot_catalog.read_text(encoding="utf-8") == catalog_text
 
 
-def test_sync_replaces_existing_top_level_catalog_pointer(tmp_path: Path) -> None:
+def test_main_dry_run_reports_catalog_dir_without_writing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     target = tmp_path / "config.toml"
-    catalog = tmp_path / "catalog.json"
-    target.write_text(
-        _baseline_config_text().replace(
-            'model_reasoning_effort = "medium"\n',
-            'model_reasoning_effort = "medium"\nmodel_catalog_json = "/old/catalog.json"\n',
-        ),
-        encoding="utf-8",
+    baseline = _baseline_config_text()
+    target.write_text(baseline, encoding="utf-8")
+    catalog_dir = tmp_path / "reverso"
+    monkeypatch.setenv("REVERSO_CODEX_CONFIG", str(target))
+    monkeypatch.setenv("REVERSO_CODEX_CATALOG_DIR", str(catalog_dir))
+    monkeypatch.setattr(
+        codex_sync,
+        "_default_fetcher",
+        lambda base_url: _make_fetcher(),
     )
 
-    codex_sync.sync(target=target, fetcher=_make_fetcher(), catalog_target=catalog)
+    rc = codex_sync.main(["--dry-run"])
 
-    text = target.read_text(encoding="utf-8")
-    assert text.count("model_catalog_json") == 1
-    assert f'model_catalog_json = "{catalog}"' in text
-    assert "/old/catalog.json" not in text
-    tomllib.loads(text)
+    assert rc == 0
+    assert not catalog_dir.exists()
+    assert target.read_text(encoding="utf-8") == baseline
+    report = json.loads(capsys.readouterr().out)
+    assert report["catalog_dir"] == str(catalog_dir)
 
 
 def test_sync_strips_legacy_orphan_profiles_block(tmp_path: Path) -> None:
@@ -1013,134 +1023,34 @@ def test_sync_strips_legacy_orphan_profiles_block(tmp_path: Path) -> None:
     )
     target.write_text(legacy, encoding="utf-8")
 
-    codex_sync.sync(target=target, fetcher=_make_fetcher())
+    codex_sync.sync(
+        target=target, fetcher=_make_fetcher(), catalog_dir=tmp_path / "reverso"
+    )
 
     text = target.read_text(encoding="utf-8")
     assert 'name = "old"' not in text
-    assert text.count("[model_providers.reverso_copilot__gpt-5_5]") == 1
+    assert "[model_providers.reverso_copilot__gpt-5_5]" not in text
     tomllib.loads(text)
 
 
-def test_sync_without_catalog_target_writes_no_catalog(tmp_path: Path) -> None:
-    target = tmp_path / "config.toml"
-    target.write_text(_baseline_config_text(), encoding="utf-8")
-
-    result = codex_sync.sync(target=target, fetcher=_make_fetcher())
-
-    assert result.catalog is None
-    assert "model_catalog_json" not in target.read_text(encoding="utf-8")
-    assert not list(tmp_path.glob("*.json"))
-
-
-def test_sync_unchanged_run_regenerates_deleted_catalog(tmp_path: Path) -> None:
-    target = tmp_path / "config.toml"
-    target.write_text(_baseline_config_text(), encoding="utf-8")
-    catalog = tmp_path / "catalog.json"
-    fetcher = _make_fetcher()
-
-    first = codex_sync.sync(target=target, fetcher=fetcher, catalog_target=catalog)
-    assert first.changed is True
-    assert catalog.exists()
-    catalog_text = catalog.read_text(encoding="utf-8")
-
-    catalog.unlink()
-    second = codex_sync.sync(target=target, fetcher=fetcher, catalog_target=catalog)
-
-    assert second.changed is False
-    assert second.backup is None
-    assert second.catalog == catalog
-    assert catalog.exists(), "unchanged config must still restore a deleted catalog"
-    assert catalog.read_text(encoding="utf-8") == catalog_text
-
-
-def test_main_write_catalog_flag_writes_and_reports(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    target = tmp_path / "config.toml"
-    target.write_text(_baseline_config_text(), encoding="utf-8")
-    catalog = tmp_path / "catalog.json"
-    monkeypatch.setenv("REVERSO_CODEX_CONFIG", str(target))
-    monkeypatch.setattr(
-        codex_sync,
-        "_default_fetcher",
-        lambda base_url: _make_fetcher(),
+def test_merge_catalog_config_block_strips_legacy_block() -> None:
+    base = (
+        'model = "gpt-5.5"\n'
+        + codex_sync.CATALOG_BEGIN
+        + "\n"
+        + 'model_catalog_json = "/old/catalog.json"\n'
+        + codex_sync.CATALOG_END
+        + "\n"
+        + "[tui]\n"
     )
-
-    rc = codex_sync.main(["--write-catalog", "--catalog", str(catalog)])
-
-    assert rc == 0
-    assert catalog.exists()
-    report = json.loads(capsys.readouterr().out)
-    assert report["catalog"] == str(catalog)
-
-
-def test_main_without_write_catalog_flag_ignores_catalog_path(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    target = tmp_path / "config.toml"
-    target.write_text(_baseline_config_text(), encoding="utf-8")
-    catalog = tmp_path / "catalog.json"
-    monkeypatch.setenv("REVERSO_CODEX_CONFIG", str(target))
-    monkeypatch.setattr(
-        codex_sync,
-        "_default_fetcher",
-        lambda base_url: _make_fetcher(),
-    )
-
-    rc = codex_sync.main(["--catalog", str(catalog)])
-
-    assert rc == 0
-    assert not catalog.exists()
-    report = json.loads(capsys.readouterr().out)
-    assert report["catalog"] is None
-
-
-def test_main_dry_run_reports_catalog_target_without_writing(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    target = tmp_path / "config.toml"
-    baseline = _baseline_config_text()
-    target.write_text(baseline, encoding="utf-8")
-    catalog = tmp_path / "catalog.json"
-    monkeypatch.setenv("REVERSO_CODEX_CONFIG", str(target))
-    monkeypatch.setattr(
-        codex_sync,
-        "_default_fetcher",
-        lambda base_url: _make_fetcher(),
-    )
-
-    rc = codex_sync.main(["--dry-run", "--write-catalog", "--catalog", str(catalog)])
-
-    assert rc == 0
-    assert not catalog.exists()
-    assert target.read_text(encoding="utf-8") == baseline
-    report = json.loads(capsys.readouterr().out)
-    assert report["catalog_target"] == str(catalog)
-
-
-def test_merge_catalog_config_block_replaces_and_removes_when_disabled(
-    tmp_path: Path,
-) -> None:
-    catalog_a = tmp_path / "a.json"
-    catalog_b = tmp_path / "b.json"
-    base = _baseline_config_text()
-
-    first = codex_sync._merge_catalog_config_block(base, catalog_a)
-    assert f'model_catalog_json = "{catalog_a}"' in first
-    assert first.index("model_catalog_json") < first.index("[model_providers.minimax]")
-
-    second = codex_sync._merge_catalog_config_block(first, catalog_b)
-    assert f'model_catalog_json = "{catalog_a}"' not in second
-    assert f'model_catalog_json = "{catalog_b}"' in second
-    assert second.count(codex_sync.CATALOG_BEGIN) == 1
-
-    removed = codex_sync._merge_catalog_config_block(second, None)
+    removed = codex_sync._merge_catalog_config_block(base, None)
     assert codex_sync.CATALOG_BEGIN not in removed
     assert "model_catalog_json" not in removed
+    assert 'model = "gpt-5.5"' in removed
+    assert "[tui]" in removed
     tomllib.loads(removed)
+
+
+def test_merge_catalog_config_block_rejects_a_path() -> None:
+    with pytest.raises(ValueError):
+        codex_sync._merge_catalog_config_block("", Path("/x.json"))
