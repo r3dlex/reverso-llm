@@ -424,7 +424,7 @@ reads that file via `yaml.safe_load` as DATA only and never imports the legacy a
 0002 D2 quarantine is preserved. Surface-scoped exposure is data, held in a `SURFACE_BACKENDS`
 table. For Milestone 1 the Anthropic-surface backends are `copilot`, `deepseek`, and `auggie`;
 `claude` was excluded because Claude Code talking to a claude backend is circular (superseded by
-ADR 0008: claude is now served first-party via the local claude CLI, with `ANTHROPIC_BASE_URL`/
+ADR 0009: claude is now served first-party via the local claude CLI, with `ANTHROPIC_BASE_URL`/
 `ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_API_KEY` scrubbed from the subprocess env to prevent the loop).
 Milestone 2 adds `codex-cli` as a single one-row addition.
 

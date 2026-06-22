@@ -84,12 +84,12 @@ Claude Code talking to a claude backend through Reverso is circular (the claude 
 claude CLI itself), so the Anthropic surface must never route to it. Milestone 2 adds
 `codex-cli` as a single one-row addition to `SURFACE_BACKENDS`, no conditionals.
 
-> **Superseded by ADR 0008.** The `claude` exclusion stated here is reversed: `claude` is now
+> **Superseded by ADR 0009.** The `claude` exclusion stated here is reversed: `claude` is now
 > SERVED on the Anthropic surface via the local `claude` CLI under subscription OAuth. The
 > circularity concern is mitigated because Reverso runs as a server whose process env carries no
 > `ANTHROPIC_BASE_URL`, and the claude adapter additionally scrubs
 > `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_API_KEY` from the spawned CLI's child
-> env, so the CLI always reaches `api.anthropic.com`, never Reverso. See ADR 0008.
+> env, so the CLI always reaches `api.anthropic.com`, never Reverso. See ADR 0009.
 
 ### D3. Routing, version, and error decisions
 
@@ -99,7 +99,7 @@ claude CLI itself), so the Anthropic surface must never route to it. Milestone 2
   `/copilot/v1/messages`, `/auggie/v1/messages`. These mirror the Responses-surface prefixes and
   bypass model-to-backend auto-resolution for that request.
 - An unknown model returns HTTP 404 with a `not_found_error`. (Originally a `claude` model
-  also 404'd here as a hard negative case for the D2 circularity reason; reversed by ADR 0008 -
+  also 404'd here as a hard negative case for the D2 circularity reason; reversed by ADR 0009 -
   claude now resolves to the claude backend and is served 200.)
 - A missing `anthropic-version` header defaults to `"2023-06-01"` and is echoed back on the
   response. A missing version header is never a 400.
@@ -191,7 +191,7 @@ gated-error on auggie while it is native on copilot and translated on deepseek.
   `/v1/messages/count_tokens` response is an estimate and is labeled as such in the docs; it is
   not represented as exact provider tokenization.
 - **unknown model**: HTTP 404 `not_found_error` (D3). (A `claude` model originally also 404'd
-  here for the D2 circularity reason; reversed by ADR 0008 - claude is now served 200 via the
+  here for the D2 circularity reason; reversed by ADR 0009 - claude is now served 200 via the
   local claude CLI.)
 
 ## Consequences

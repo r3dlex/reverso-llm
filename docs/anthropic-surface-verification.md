@@ -43,7 +43,7 @@ Backends exposed on this surface (data-driven via `SURFACE_BACKENDS`):
   See the dedicated section below.
 - `claude` was EXCLUDED at Milestone 1 (Claude Code talking to a claude backend
   through Reverso is circular), so a `/claude/v1/...` request returned a 404
-  `not_found_error`. **Superseded by ADR 0008**: claude is now SERVED first-party
+  `not_found_error`. **Superseded by ADR 0009**: claude is now SERVED first-party
   via the local claude CLI under subscription OAuth, with `ANTHROPIC_BASE_URL`/
   `ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_API_KEY` scrubbed from the subprocess env so it
   reaches `api.anthropic.com` directly and never loops back. An unknown model is

@@ -2,7 +2,7 @@
 
 Asserts, through the real composition root over an httpx ASGITransport:
   - POST /claude/v1/messages is served first-party by the claude backend and is
-    NOT delegated to the legacy LiteLLM app (claude served, ADR 0008);
+    NOT delegated to the legacy LiteLLM app (claude served, ADR 0009);
   - POST /v1/responses routing is byte-unchanged: it still reaches the first-party
     Responses gateway (FixtureAdapter), never the Anthropic app or legacy app.
 """

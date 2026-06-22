@@ -76,7 +76,7 @@ OAUTH_METHOD = "claude_oauth"
 _FORBIDDEN_AUTH_ENV = ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")
 
 # Routing/auth env that MUST be scrubbed from the spawned claude CLI's child env
-# (ADR 0008 loop prevention). When Reverso serves claude on the inbound Anthropic
+# (ADR 0009 loop prevention). When Reverso serves claude on the inbound Anthropic
 # surface, a caller (e.g. Claude Code pointed at Reverso) sets ANTHROPIC_BASE_URL
 # to Reverso and may pass ANTHROPIC_AUTH_TOKEN/ANTHROPIC_API_KEY. If the claude
 # CLI inherited those, it would call Reverso again (infinite loop) or use a
@@ -336,7 +336,7 @@ class ClaudeAdapter:
         fragment is yielded per assistant text content chunk. The resolved
         OAuth token is handed to the child via its environment ONLY and is
         never logged; the child env inherits the parent except the scrubbed
-        routing/auth keys (ADR 0008 loop guard) injected by _child_env_for_cli.
+        routing/auth keys (ADR 0009 loop guard) injected by _child_env_for_cli.
 
         Fallback semantics (mirrored in _stream_response): any spine failure
         or unparseable stream-json BEFORE the first fragment raises
@@ -347,7 +347,7 @@ class ClaudeAdapter:
         EOF (long-standing parity: the emitted text stands as the turn).
         """
         token = _resolve_token_sync(self._auth)
-        # Scrub routing/auth env so the CLI never re-enters Reverso (ADR 0008).
+        # Scrub routing/auth env so the CLI never re-enters Reverso (ADR 0009).
         child_env = _child_env_for_cli(token)
         argv = [
             "claude",
@@ -409,7 +409,7 @@ class ClaudeAdapter:
         """
         token = _resolve_token_sync(self._auth)
         # Hand the child the live subscription token (redact before any logging)
-        # and scrub routing/auth env so the CLI never re-enters Reverso (ADR 0008).
+        # and scrub routing/auth env so the CLI never re-enters Reverso (ADR 0009).
         child_env = _child_env_for_cli(token)
         stdout = run_bounded_cli(
             ["claude", "--print", "--model", model, "--", prompt],
@@ -601,7 +601,7 @@ class ClaudeAdapter:
 
 
 def _child_env_for_cli(token: str) -> dict[str, str]:
-    """Build the child env for the claude CLI subprocess (ADR 0008 loop guard).
+    """Build the child env for the claude CLI subprocess (ADR 0009 loop guard).
 
     Copies the parent os.environ, then SCRUBS the routing/auth keys in
     _LOOP_PREVENTION_ENV so an inherited ANTHROPIC_BASE_URL cannot redirect the

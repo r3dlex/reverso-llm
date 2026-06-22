@@ -1,7 +1,7 @@
 ---
 type: adr
 project: reverso
-id: 0008
+id: 0009
 title: Serve claude on the inbound Anthropic Messages surface
 status: Accepted
 date: 2026-06-22
@@ -14,7 +14,7 @@ related:
   - docs/architecture/adr/0007-codex-anthropic-surface-via-chatgpt-oauth.md
 ---
 
-# ADR 0008: Serve claude on the inbound Anthropic Messages surface
+# ADR 0009: Serve claude on the inbound Anthropic Messages surface
 
 ## Status
 

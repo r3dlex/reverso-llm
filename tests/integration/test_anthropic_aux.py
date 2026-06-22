@@ -100,7 +100,7 @@ async def test_count_tokens_unknown_model_404() -> None:
 
 @pytest.mark.asyncio
 async def test_count_tokens_claude_model_served() -> None:
-    # A claude model now resolves to the claude backend (ADR 0008); count_tokens
+    # A claude model now resolves to the claude backend (ADR 0009); count_tokens
     # sizes it the same as any served model.
     async with _anthropic_client() as client:
         resp = await client.post(
@@ -141,7 +141,7 @@ async def test_models_includes_claude() -> None:
     assert ids, "expected at least one listed model"
     assert any(
         "claude" in model_id.lower() for model_id in ids
-    ), f"claude models must appear on the Anthropic surface listing (ADR 0008); got {ids!r}"
+    ), f"claude models must appear on the Anthropic surface listing (ADR 0009); got {ids!r}"
 
 
 @pytest.mark.asyncio

@@ -658,7 +658,7 @@ def test_child_env_scrubs_routing_auth_and_keeps_os_environ(
 ) -> None:
     """The CLI child env never carries ANTHROPIC_BASE_URL/AUTH_TOKEN/API_KEY.
 
-    ADR 0008 loop guard: when Reverso serves claude on the inbound Anthropic
+    ADR 0009 loop guard: when Reverso serves claude on the inbound Anthropic
     surface, a caller may set ANTHROPIC_BASE_URL (pointing at Reverso) and pass
     ANTHROPIC_AUTH_TOKEN/ANTHROPIC_API_KEY. If the spawned claude CLI inherited
     those it would re-enter Reverso (infinite loop) or use a hijacked credential.

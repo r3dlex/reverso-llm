@@ -1,6 +1,6 @@
-"""Conformance suite: claude IS served on the Anthropic surface (ADR 0008).
+"""Conformance suite: claude IS served on the Anthropic surface (ADR 0009).
 
-ADR 0008 supersedes ADR 0006 D2: claude is now SERVED on the inbound Anthropic
+ADR 0009 supersedes ADR 0006 D2: claude is now SERVED on the inbound Anthropic
 Messages surface via the local claude CLI under subscription OAuth. The
 circularity concern is mitigated because Reverso's process env carries no
 ANTHROPIC_BASE_URL and the claude adapter scrubs routing/auth env from the
@@ -188,7 +188,7 @@ def test_build_anthropic_adapters_includes_claude() -> None:
 
 
 def test_build_anthropic_adapters_constructs_claude_adapter() -> None:
-    """The claude entry is a ClaudeAdapter instance (ADR 0008)."""
+    """The claude entry is a ClaudeAdapter instance (ADR 0009)."""
     from reverso.protocols.adapters.claude import ClaudeAdapter
 
     adapters = build_anthropic_adapters()
@@ -196,7 +196,7 @@ def test_build_anthropic_adapters_constructs_claude_adapter() -> None:
 
 
 def test_anthropic_app_accepts_injected_claude_adapter() -> None:
-    """Injecting a claude adapter is now permitted (claude is served, ADR 0008)."""
+    """Injecting a claude adapter is now permitted (claude is served, ADR 0009)."""
 
     class _StubAdapter:
         pass

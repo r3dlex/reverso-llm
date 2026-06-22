@@ -6,7 +6,7 @@ clearly-marked stub. These tests pin: unknown model -> 404 not_found_error;
 CompositionRoot so it is NOT delegated to the legacy app); mixed-case claude
 auto-routes to the claude backend; /deepseek and /copilot prefixes reach the
 named backend (stub ok); missing anthropic-version succeeds and echoes the
-default; the build accepts a claude adapter (ADR 0008).
+default; the build accepts a claude adapter (ADR 0009).
 """
 
 from __future__ import annotations
@@ -161,7 +161,7 @@ async def test_mixed_case_claude_model_auto_routes_to_claude_backend() -> None:
     status, _headers, body = await _drive(
         app, "POST", "/v1/messages", b'{"model":"Claude-Opus"}'
     )
-    # A claude model now resolves to the claude backend (ADR 0008): the stub
+    # A claude model now resolves to the claude backend (ADR 0009): the stub
     # adapter returns a valid (empty-content) Anthropic message body, not a 404.
     assert status == 200
     assert body is not None
@@ -221,7 +221,7 @@ async def test_explicit_anthropic_version_is_echoed() -> None:
 
 
 def test_build_accepts_claude_adapter() -> None:
-    # claude is now a permitted Anthropic-surface backend (ADR 0008).
+    # claude is now a permitted Anthropic-surface backend (ADR 0009).
     app = AnthropicMessagesApp({"claude": _StubAdapter()})
     assert "claude" in app._adapters
 
@@ -240,7 +240,7 @@ async def test_uppercase_claude_prefix_claimed_and_served_first_party() -> None:
 
     Profile segments are normalized to lowercase before the prefix membership
     check, so /CLAUDE and /Claude are treated identically to /claude and reach
-    the claude backend (ADR 0008), never the legacy app.
+    the claude backend (ADR 0009), never the legacy app.
     """
     legacy_calls: list[str] = []
 
