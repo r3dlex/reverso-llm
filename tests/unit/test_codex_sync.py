@@ -1033,6 +1033,53 @@ def test_sync_strips_legacy_orphan_profiles_block(tmp_path: Path) -> None:
     tomllib.loads(text)
 
 
+def test_strip_orphan_preserves_interleaved_user_content() -> None:
+    # Regression: a lost PROFILES_BEGIN with a surviving END must NOT delete a
+    # user table sitting between an orphan overlay and the stray END line.
+    text = (
+        'model = "gpt-5.5"\n'
+        "[model_providers.reverso_copilot__gpt-5_5]\n"
+        'name = "old"\n'
+        'model = "gpt-5.5"\n'
+        "[my_important_user_table]\n"
+        'precious = "data"\n' + codex_sync.PROFILES_END + "\n"
+        "[after]\n"
+        'k = "v"\n'
+    )
+    out = codex_sync._strip_managed_block(
+        text, codex_sync.PROFILES_BEGIN, codex_sync.PROFILES_END
+    )
+    assert "[model_providers.reverso_copilot__gpt-5_5]" not in out
+    assert 'name = "old"' not in out
+    # User content on BOTH sides of the orphan is preserved byte-faithfully.
+    assert "[my_important_user_table]" in out
+    assert 'precious = "data"' in out
+    assert "[after]" in out
+    assert 'k = "v"' in out
+    # The stray END comment is cleaned up.
+    assert codex_sync.PROFILES_END not in out
+    tomllib.loads(out)
+
+
+def test_strip_orphan_overlay_after_stray_end_is_removed() -> None:
+    # Mirror case: an orphan overlay table positioned AFTER a stray END line is
+    # still stripped, while the user table between them is preserved.
+    text = (
+        'model = "gpt-5.5"\n' + codex_sync.PROFILES_END + "\n"
+        "[user_keep]\n"
+        'a = "b"\n'
+        "[model_providers.reverso_auggie__opus]\n"
+        'model = "opus"\n'
+    )
+    out = codex_sync._strip_managed_block(
+        text, codex_sync.PROFILES_BEGIN, codex_sync.PROFILES_END
+    )
+    assert "[model_providers.reverso_auggie__opus]" not in out
+    assert "[user_keep]" in out and 'a = "b"' in out
+    assert codex_sync.PROFILES_END not in out
+    tomllib.loads(out)
+
+
 def test_merge_catalog_config_block_strips_legacy_block() -> None:
     base = (
         'model = "gpt-5.5"\n'

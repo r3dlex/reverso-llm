@@ -360,16 +360,51 @@ def _ensure_default_model(text: str) -> str:
     return prefix + line + suffix
 
 
-def _strip_orphan_profiles_block(text: str, end_idx: int) -> str:
-    """Remove legacy profile overlays whose begin sentinel was lost."""
-    for match in _ORPHAN_PROFILE_TABLE_RE.finditer(text):
-        if match.start() >= end_idx:
-            break
-        tail_start = end_idx + len(PROFILES_END)
-        if tail_start < len(text) and text[tail_start] == "\n":
-            tail_start += 1
-        return text[: match.start()] + text[tail_start:]
-    return text
+def _strip_overlay_tables(text: str) -> str:
+    """Remove every legacy ``reverso_<prefix>__<id>`` overlay table, table-scoped.
+
+    Each overlay is removed from its own ``[model_providers.reverso_*__*]`` header
+    through the line before the NEXT TOML table header (or EOF). The span never
+    reaches past a table boundary, so interleaved user tables/keys are preserved
+    byte-faithfully even when an overlay sits between them. Overlays anywhere in
+    the document are stripped, regardless of any surviving managed sentinel.
+    """
+    while True:
+        match = _ORPHAN_PROFILE_TABLE_RE.search(text)
+        if match is None:
+            return text
+        start = match.start()
+        line_end = text.find("\n", match.end())
+        scan_from = line_end + 1 if line_end != -1 else len(text)
+        next_header = _TABLE_HEADER_LINE_RE.search(text, scan_from)
+        end = next_header.start() if next_header is not None else len(text)
+        text = text[:start] + text[end:]
+
+
+def _strip_lone_sentinel_line(text: str, token: str) -> str:
+    """Remove a single managed sentinel comment line (and its newline) if present.
+
+    Used to clean up a stray ``PROFILES_END`` whose matching begin sentinel was
+    lost; only the one comment line is removed, never surrounding content.
+    """
+    idx = _find_sentinel(text, token)
+    if idx == -1:
+        return text
+    line_end = text.find("\n", idx)
+    if line_end == -1:
+        cut = idx - 1 if idx > 0 and text[idx - 1] == "\n" else idx
+        return text[:cut]
+    return text[:idx] + text[line_end + 1 :]
+
+
+def _strip_orphan_profiles_block(text: str) -> str:
+    """Remove legacy profile overlays whose begin sentinel was lost.
+
+    Strips the orphan overlay tables themselves (table-scoped, never spanning
+    arbitrary content) and any stray managed ``PROFILES_END`` comment line, so a
+    partially hand-edited config is cleaned without deleting user-owned content.
+    """
+    return _strip_lone_sentinel_line(_strip_overlay_tables(text), PROFILES_END)
 
 
 def _strip_managed_block(text: str, begin: str, end: str) -> str:
@@ -377,9 +412,7 @@ def _strip_managed_block(text: str, begin: str, end: str) -> str:
     start_idx = _find_sentinel(text, begin)
     if start_idx == -1:
         if begin == PROFILES_BEGIN:
-            end_idx = _find_sentinel(text, end)
-            if end_idx != -1:
-                return _strip_orphan_profiles_block(text, end_idx)
+            return _strip_orphan_profiles_block(text)
         return text
     end_idx = _find_sentinel(text, end, start_idx)
     if end_idx == -1:
