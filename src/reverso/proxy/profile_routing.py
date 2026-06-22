@@ -11,20 +11,17 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
+from reverso.protocols.model_exposure import (
+    CODEX_BUILTIN_MODELS,
+    CODEX_FRONTIER_MODELS,
+)
+
 Receive = Callable[[], Awaitable[dict[str, Any]]]
 Scope = dict[str, Any]
 Send = Callable[[dict[str, Any]], Awaitable[None]]
 
-FRONTIER_GPT_MODELS = frozenset({"gpt-5.5", "gpt-5.4"})
-KNOWN_GPT_MODELS = frozenset(
-    {
-        "gpt-5.5",
-        "gpt-5.4",
-        "gpt-5.4-mini",
-        "gpt-5.3-codex-spark",
-        "gpt-4.1",
-    }
-)
+FRONTIER_GPT_MODELS = frozenset(CODEX_FRONTIER_MODELS)
+KNOWN_GPT_MODELS = frozenset(CODEX_BUILTIN_MODELS)
 MODEL_ALIASES = {
     "claude-opus-4.8": "claude-opus-4-8",
     "claude-sonnet-4.6": "claude-sonnet-4-6",

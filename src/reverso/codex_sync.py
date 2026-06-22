@@ -35,6 +35,12 @@ from pathlib import Path
 import httpx
 
 from reverso.protocols.copilot_models import is_copilot_responses_model_id
+from reverso.protocols.model_exposure import (
+    CODEX_BUILTIN_MODELS,
+    CODEX_DEFAULT_MODEL,
+    STATIC_CATALOG_SEEDS,
+    selector_model_id as _exposure_selector_model_id,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,27 +50,7 @@ GATEWAY_PREFIXES: tuple[str, ...] = ("claude", "copilot", "auggie", "deepseek")
 # Built-in Codex model ids stay bare. Reverso-discovered providers that can
 # collide with those ids use provider-qualified selector/catalog slugs so they
 # augment the Codex provider instead of shadowing it.
-CODEX_DEFAULT_MODEL = "gpt-5.5"
-CODEX_DEFAULT_MODELS: tuple[str, ...] = (
-    "gpt-5.5",
-    "gpt-5.4",
-    "gpt-5.4-mini",
-    "gpt-5.3-codex-spark",
-    "gpt-4.1",
-)
-PREFIXED_SELECTOR_PREFIXES = frozenset({"copilot", "auggie", "agy"})
-
-# Metadata-only aliases that Codex should understand even when the backing
-# provider listing is unavailable. These are deliberately added only to the
-# model catalog JSON, not to generated provider profile tables. A local OAuth
-# outage or unauthenticated CLI must not make live routing look healthy. Codex
-# model metadata is slug-global, so each alias appears once even when multiple
-# Reverso profiles may use the same upstream model family.
-STATIC_CATALOG_MODELS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("codex", CODEX_DEFAULT_MODELS),
-    ("minimax", ("MiniMax-M3",)),
-    ("oauth", ("gemini-2.5-pro", "gemini-2.5-flash")),
-)
+CODEX_DEFAULT_MODELS = CODEX_BUILTIN_MODELS
 
 
 def _codex_responses_compatible_models(prefix: str, model_ids: list[str]) -> list[str]:
@@ -223,9 +209,7 @@ def _render_profiles_block(
 
 def _selector_model_id(prefix: str, model_id: str) -> str:
     """Return the Codex-visible selector id for a provider/model pair."""
-    if prefix in PREFIXED_SELECTOR_PREFIXES:
-        return f"{prefix}/{model_id}"
-    return model_id
+    return _exposure_selector_model_id(prefix, model_id)
 
 
 def _iter_selectable_model_ids(
@@ -270,14 +254,14 @@ def _catalog_model_entries(
     """Return selectable catalog entries without slug collisions."""
     merged: list[CatalogModelEntry] = []
     seen_slugs: set[str] = set()
-    for prefix, model_ids in STATIC_CATALOG_MODELS:
-        for model_id in model_ids:
-            slug = _selector_model_id(prefix, model_id)
+    for seed in STATIC_CATALOG_SEEDS:
+        for model_id in seed.model_ids:
+            slug = _selector_model_id(seed.prefix, model_id)
             if slug in seen_slugs:
                 continue
             seen_slugs.add(slug)
             merged.append(
-                CatalogModelEntry(prefix=prefix, slug=slug, model_id=model_id)
+                CatalogModelEntry(prefix=seed.prefix, slug=slug, model_id=model_id)
             )
     for entry in provider_models:
         for model_id in entry.models:

@@ -62,3 +62,12 @@ cause suppressed so raw stderr never rides a traceback, and (streaming only)
 the child killed when the consumer abandons the iterator so a client
 disconnect never leaks a running CLI. CLI backed provider adapters (claude,
 auggie) contribute only argv and stdout parsing.
+
+## Model selector
+
+A Codex visible model name used by the local Codex picker and catalog. The
+Model selector Module owns the selector/catalog Interface for Codex visible
+names. Its Implementation keeps built in Codex GPT selectors bare, adds Reverso
+provider selectors without replacing built in names, and prefixes only collision
+prone provider families such as `copilot/`. This deepens the Seam across Codex
+sync, routing, and surface registry code while improving Leverage and Locality.

@@ -17,6 +17,7 @@ dependencies = [
 reverso-proxy = "reverso.proxy.main:main"
 reverso-daemon = "reverso.daemon.main:main"
 reverso-codex-sync = "reverso.codex_sync:main"
+reverso-claude-code-sync = "reverso.claude_code_sync:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
