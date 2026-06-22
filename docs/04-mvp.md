@@ -349,7 +349,8 @@ Messages surface (`/v1/messages`, `/v1/messages/count_tokens`, `/v1/models`) on
 `127.0.0.1:64946`, with Claude-Code-observed parity. The surface is inbound only (Reverso never
 calls `api.anthropic.com`); Messages traffic is model-routed by default to the copilot, deepseek,
 and auggie backends through a single first-party authority, with optional per-profile prefixes.
-The claude backend is excluded (circular).
+The claude backend was excluded (circular); superseded by ADR 0009, which serves claude
+first-party via the local claude CLI with routing/auth env scrubbed from the subprocess.
 
 ### First deliverable (current increment): docs first
 
@@ -368,8 +369,9 @@ written until the docs and ADR are reviewed. Implementation then proceeds via pe
 - A `surface_registry` that is the single first-party model-to-backend authority, reading
   `config/litellm_config.yaml` via `yaml.safe_load` as data and never importing the legacy app,
   with a data-driven `SURFACE_BACKENDS` exposure table (Anthropic surface = copilot, deepseek,
-  auggie; claude excluded).
-- Default auto-routing plus optional per-profile prefixes; unknown OR claude model -> 404
+  auggie; claude excluded at Milestone 1, now served per ADR 0009).
+- Default auto-routing plus optional per-profile prefixes; unknown model -> 404 (claude was 404
+  at Milestone 1, now served per ADR 0009)
   `not_found_error`; missing `anthropic-version` -> default `"2023-06-01"` and echo; Anthropic
   error envelope.
 - A per-(feature x backend) capability ceiling enforced as structured errors, with streamed

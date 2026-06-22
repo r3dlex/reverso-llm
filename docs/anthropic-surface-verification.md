@@ -41,11 +41,13 @@ Backends exposed on this surface (data-driven via `SURFACE_BACKENDS`):
   (gpt-5.5, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex-spark, gpt-4.1) first-party
   through the local `codex exec` CLI under the ChatGPT/Codex OAuth subscription.
   See the dedicated section below.
-- `claude` is EXCLUDED. Claude Code talking to a claude backend through Reverso is
-  circular (the claude backend is the claude CLI itself), so a `/claude/v1/...`
-  request is claimed by this surface and returns a 404 `not_found_error` rather
-  than reaching any backend. An unknown non-claude model is also a 404
-  `not_found_error`.
+- `claude` was EXCLUDED at Milestone 1 (Claude Code talking to a claude backend
+  through Reverso is circular), so a `/claude/v1/...` request returned a 404
+  `not_found_error`. **Superseded by ADR 0009**: claude is now SERVED first-party
+  via the local claude CLI under subscription OAuth, with `ANTHROPIC_BASE_URL`/
+  `ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_API_KEY` scrubbed from the subprocess env so it
+  reaches `api.anthropic.com` directly and never loops back. An unknown model is
+  still a 404 `not_found_error`.
 
 Routing, version, and error rules:
 

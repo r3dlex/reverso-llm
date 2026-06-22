@@ -653,6 +653,43 @@ def test_default_claude_runner_honors_profile_workspace_context(
     ]
 
 
+def test_child_env_scrubs_routing_auth_and_keeps_os_environ(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The CLI child env never carries ANTHROPIC_BASE_URL/AUTH_TOKEN/API_KEY.
+
+    ADR 0009 loop guard: when Reverso serves claude on the inbound Anthropic
+    surface, a caller may set ANTHROPIC_BASE_URL (pointing at Reverso) and pass
+    ANTHROPIC_AUTH_TOKEN/ANTHROPIC_API_KEY. If the spawned claude CLI inherited
+    those it would re-enter Reverso (infinite loop) or use a hijacked credential.
+    The adapter must scrub all three from the CHILD env before injecting the
+    subscription OAuth token, while leaving the parent os.environ untouched.
+    """
+    import os
+
+    from reverso.protocols.adapters.claude import _child_env_for_cli
+
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "http://127.0.0.1:64946")
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "caller-token-should-be-scrubbed")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-should-be-scrubbed")
+    monkeypatch.setenv("PATH", os.environ.get("PATH", "/usr/bin"))
+
+    child_env = _child_env_for_cli("live-oauth-token")
+
+    # The routing/auth keys are absent from the child env handed to the CLI spine.
+    assert "ANTHROPIC_BASE_URL" not in child_env
+    assert "ANTHROPIC_AUTH_TOKEN" not in child_env
+    assert "ANTHROPIC_API_KEY" not in child_env
+    # The subscription token is injected and an unrelated var (PATH) survives.
+    assert child_env["CLAUDE_CODE_OAUTH_TOKEN"] == "live-oauth-token"
+    assert "PATH" in child_env
+    # The parent process env is NOT mutated (the falsifiable gate asserts this).
+    assert os.environ.get("ANTHROPIC_BASE_URL") == "http://127.0.0.1:64946"
+    assert os.environ.get("ANTHROPIC_AUTH_TOKEN") == "caller-token-should-be-scrubbed"
+    assert os.environ.get("ANTHROPIC_API_KEY") == "sk-ant-should-be-scrubbed"
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in os.environ
+
+
 def test_default_claude_stream_runner_honors_profile_workspace_context(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:

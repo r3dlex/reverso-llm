@@ -2,8 +2,8 @@
 
 Covers POST /v1/messages/count_tokens (a documented word-count APPROXIMATION, not
 a real tokenizer) and the bare GET /v1/models (the Anthropic-shaped listing of the
-surface_registry Anthropic-surface model set, never a claude model), both driven
-through the real AnthropicMessagesApp and the real CompositionRoot.
+surface_registry Anthropic-surface model set, now including claude rows per ADR
+0008), both driven through the real AnthropicMessagesApp and the real CompositionRoot.
 
 The CompositionRoot coexistence test pins the key G006 risk: the bare GET
 /v1/models now routes to the Anthropic surface, while /deepseek/v1/models and
@@ -23,7 +23,7 @@ from reverso.protocols.responses_app import build_app
 from reverso.protocols.surface_registry import list_anthropic_surface_models
 from reverso.proxy.compose import CompositionRoot
 
-ANTHROPIC_BACKENDS = ["copilot", "deepseek", "auggie"]
+ANTHROPIC_BACKENDS = ["copilot", "deepseek", "auggie", "claude"]
 RESPONSES_PROVIDERS = ["claude", "copilot", "auggie", "deepseek"]
 
 # A real deepseek model id from litellm_config so count_tokens resolves a backend.
@@ -99,14 +99,16 @@ async def test_count_tokens_unknown_model_404() -> None:
 
 
 @pytest.mark.asyncio
-async def test_count_tokens_claude_model_404() -> None:
+async def test_count_tokens_claude_model_served() -> None:
+    # A claude model now resolves to the claude backend (ADR 0009); count_tokens
+    # sizes it the same as any served model.
     async with _anthropic_client() as client:
         resp = await client.post(
             "/v1/messages/count_tokens",
             json=_messages_body("claude-opus", "hi"),
         )
-    assert resp.status_code == 404
-    assert resp.json()["error"]["type"] == "not_found_error"
+    assert resp.status_code == 200, resp.text
+    assert set(resp.json()) == {"input_tokens"}
 
 
 # --- /v1/models -------------------------------------------------------------
@@ -132,14 +134,14 @@ async def test_models_returns_anthropic_listing_shape() -> None:
 
 
 @pytest.mark.asyncio
-async def test_models_excludes_claude() -> None:
+async def test_models_includes_claude() -> None:
     async with _anthropic_client() as client:
         resp = await client.get("/v1/models")
     ids = [row["id"] for row in resp.json()["data"]]
     assert ids, "expected at least one listed model"
-    assert all(
-        "claude" not in model_id.lower() for model_id in ids
-    ), f"no claude model may appear on the Anthropic surface listing; got {ids!r}"
+    assert any(
+        "claude" in model_id.lower() for model_id in ids
+    ), f"claude models must appear on the Anthropic surface listing (ADR 0009); got {ids!r}"
 
 
 @pytest.mark.asyncio

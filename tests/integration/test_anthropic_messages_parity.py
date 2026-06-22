@@ -3,9 +3,10 @@
 The Anthropic Messages surface is exercised over the SAME deterministic
 FixtureAdapter seam the Responses parity suite uses (tests/integration/conftest),
 across the FOUR Anthropic-surface backends (copilot, deepseek, auggie, codex).
-claude is intentionally ABSENT from this matrix: it is excluded from the Anthropic
-surface (ADR 0006 D2) and its exclusion is asserted as a separate negative
-conformance suite (test_anthropic_claude_exclusion). No real Copilot, DeepSeek,
+claude is intentionally ABSENT from this matrix even though it is now SERVED on
+the Anthropic surface (ADR 0009): like codex's `codex exec`, the real claude CLI
+subprocess cannot run in CI, and claude's surface routing/serving is asserted in a
+dedicated suite (test_anthropic_claude_exclusion). No real Copilot, DeepSeek,
 Auggie, or Codex endpoint, process, or credential is touched; FixtureAdapter
 replays fixture bodies/events and authenticates through the fake-auth seam,
 UNCHANGED.
@@ -51,7 +52,8 @@ from conftest import FixtureAdapter
 from reverso.protocols.anthropic_app import build_anthropic_app
 from reverso.protocols.model_exposure import CODEX_BUILTIN_MODELS
 
-# claude is NOT in the matrix: it is excluded from the Anthropic surface (D2).
+# claude is NOT in the matrix: it is served (ADR 0009) but its real CLI cannot run
+# in CI, so it is covered by test_anthropic_claude_exclusion via the fixture seam.
 PROVIDERS = ["copilot", "deepseek", "auggie", "codex"]
 
 # A real deepseek model id from litellm_config so the bare /v1/messages path can

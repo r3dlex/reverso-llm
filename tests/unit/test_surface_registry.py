@@ -2,9 +2,10 @@
 
 surface_registry is the ONLY first-party resolver and the single reader of
 config/litellm_config.yaml as data. These tests pin: correct backend resolution
-for known models, None for unknown models, fail-closed None for any claude model
-(including mixed-case and aliases), mixed-case backend routing, the SURFACE_BACKENDS
-claude exclusion, and the build-time cross-check (pass plus drift detection).
+for known models, None for unknown models, claude-family resolution to the claude
+backend (including mixed-case and aliases, ADR 0009), mixed-case backend routing,
+the SURFACE_BACKENDS claude inclusion, and the build-time cross-check (pass plus
+drift detection).
 """
 
 from __future__ import annotations
@@ -71,9 +72,14 @@ def test_codex_gpt_models_listed_with_backend_codex() -> None:
     }
 
 
-def test_claude_models_fail_closed_to_none() -> None:
-    # Every claude-family name, including aliases and mixed case, must resolve to
-    # None: the Anthropic surface excludes claude (D2 circularity), fail-closed.
+def test_resolve_anthropic_backend_claude_opus() -> None:
+    # ADR 0009 spec (a): the canonical claude id resolves to the claude backend.
+    assert resolve_anthropic_backend("claude-opus-4-8") == "claude"
+
+
+def test_claude_models_resolve_to_claude() -> None:
+    # Every claude-family name, including aliases and mixed case, resolves to the
+    # claude backend, now served on the Anthropic surface (ADR 0009).
     for model in (
         "claude",
         "claude-opus",
@@ -82,16 +88,15 @@ def test_claude_models_fail_closed_to_none() -> None:
         "claude-haiku-4-6",
         "Claude-Opus",
         "CLAUDE-SONNET",
-        "claude-opus-4.8",  # MODEL_ALIASES form
         "custom/claude-sonnet-4-6",
     ):
-        assert resolve_anthropic_backend(model) is None, model
+        assert resolve_anthropic_backend(model) == "claude", model
 
 
-def test_surface_backends_excludes_claude() -> None:
+def test_surface_backends_includes_claude() -> None:
     anthropic = SURFACE_BACKENDS["anthropic"]
-    assert anthropic == frozenset({"copilot", "deepseek", "auggie", "codex"})
-    assert "claude" not in anthropic
+    assert anthropic == frozenset({"copilot", "deepseek", "auggie", "codex", "claude"})
+    assert "claude" in anthropic
 
 
 def test_cross_check_passes_against_real_config() -> None:
@@ -123,9 +128,10 @@ def test_cross_check_detects_non_surface_backend(
 
     cross_check rebuilds the index from the config path (MINOR-2 robust rebuild).
     The registry derives backends from model-name prefixes, so we inject a bad
-    derivation by monkeypatching _backend_for_model_name to return 'claude' for
-    deepseek rows. The freshly-built index will contain {deepseek-v4-pro: 'claude'},
-    and the backend check must catch that 'claude' is not an Anthropic surface backend.
+    derivation by monkeypatching _backend_for_model_name to return a backend not
+    on the Anthropic surface ('mystery') for deepseek rows. The freshly-built
+    index will contain {deepseek-v4-pro: 'mystery'}, and the backend check must
+    catch that 'mystery' is not an Anthropic surface backend.
     """
     import reverso.protocols.surface_registry as _reg
 
@@ -144,7 +150,7 @@ def test_cross_check_detects_non_surface_backend(
 
     def _bad_backend(model_name: str) -> str | None:
         if "deepseek" in model_name.lower():
-            return "claude"
+            return "mystery"
         return original(model_name)
 
     monkeypatch.setattr(_reg, "_backend_for_model_name", _bad_backend)
@@ -152,10 +158,12 @@ def test_cross_check_detects_non_surface_backend(
         cross_check_anthropic_models(config)
 
 
-def test_build_index_skips_claude_rows() -> None:
-    # The index built from the real config must never carry a claude row.
+def test_build_index_maps_claude_rows_to_claude_backend() -> None:
+    # The index built from the real config carries claude rows mapping to claude.
     index = _build_model_index()
-    assert all("claude" not in name for name in index)
+    claude_rows = {name: backend for name, backend in index.items() if "claude" in name}
+    assert claude_rows, "expected claude rows in the index (ADR 0009)"
+    assert all(backend == "claude" for backend in claude_rows.values())
     assert all(backend in SURFACE_BACKENDS["anthropic"] for backend in index.values())
 
 
@@ -212,11 +220,18 @@ def test_qualified_mismatch_fails_closed() -> None:
     assert resolve_anthropic_backend("codex/deepseek-v4-pro") is None
 
 
-def test_qualified_non_surface_or_claude_prefix_fails_closed() -> None:
+def test_qualified_non_surface_prefix_fails_closed() -> None:
     assert resolve_anthropic_backend("openai/gpt-5.5") is None
     assert resolve_anthropic_backend("unknown/whatever") is None
+    # claude is now a served surface backend (ADR 0009), but a claude prefix on a
+    # NON-claude model is still a mismatch conflict and fails closed.
     assert resolve_anthropic_backend("claude/gpt-5.5") is None
-    assert resolve_anthropic_backend("claude/claude-opus-4-8") is None
+
+
+def test_qualified_claude_prefix_now_served() -> None:
+    # ADR 0009: claude joined the Anthropic surface, so a claude/<claude-model>
+    # qualified id resolves to the claude backend (was fail-closed pre-merge).
+    assert resolve_anthropic_backend("claude/claude-opus-4-8") == "claude"
 
 
 def test_qualified_malformed_fails_closed() -> None:
@@ -241,6 +256,8 @@ def test_canonical_model_id_strips_valid_qualifier() -> None:
     # the resolver routes them (no divergence -> no prefix leak to the adapter).
     assert canonical_model_id("Codex/GPT-5.5") == "GPT-5.5"
     assert canonical_model_id("CUSTOM/codex/gpt-5.5") == "gpt-5.5"
+    # claude is now a served surface backend (ADR 0009), so its qualifier strips too.
+    assert canonical_model_id("claude/claude-opus-4-8") == "claude-opus-4-8"
 
 
 @pytest.mark.parametrize(
@@ -267,9 +284,8 @@ def test_resolve_and_canonical_agree_no_prefix_leak(model: str) -> None:
 def test_canonical_model_id_leaves_bare_and_invalid_unchanged() -> None:
     assert canonical_model_id("gpt-5.5") == "gpt-5.5"
     assert canonical_model_id("deepseek-v4-pro") == "deepseek-v4-pro"
-    # Non-surface / claude qualifiers are left intact (they 404 at resolution).
+    # A non-surface qualifier is left intact (it 404s at resolution).
     assert canonical_model_id("openai/gpt-5.5") == "openai/gpt-5.5"
-    assert canonical_model_id("claude/claude-opus-4-8") == "claude/claude-opus-4-8"
     assert canonical_model_id(None) is None
 
 
