@@ -79,6 +79,19 @@ async def test_qualified_mismatch_is_404() -> None:
 
 
 @pytest.mark.asyncio
+async def test_mixed_case_custom_prefix_adapter_sees_bare_model() -> None:
+    # Regression for the resolve/canonical normalization divergence: an upper-case
+    # CUSTOM/ qualifier routed to codex but previously leaked the full prefix to the
+    # adapter. The adapter must now receive the bare, slash-free upstream id.
+    adapters = {b: _RecordingAdapter(b) for b in ANTHROPIC_BACKENDS}
+    async with _client_with(adapters) as client:
+        resp = await client.post("/v1/messages", json=_body("CUSTOM/codex/gpt-5.5"))
+    assert resp.status_code == 200
+    assert adapters["codex"].seen_models == ["gpt-5.5"]
+    assert all("/" not in m for a in adapters.values() for m in a.seen_models)
+
+
+@pytest.mark.asyncio
 async def test_claude_qualified_is_404() -> None:
     adapters = {b: _RecordingAdapter(b) for b in ANTHROPIC_BACKENDS}
     async with _client_with(adapters) as client:

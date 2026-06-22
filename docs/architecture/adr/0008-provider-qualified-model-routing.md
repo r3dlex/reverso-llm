@@ -44,11 +44,16 @@ to put the provider up front: `codex/gpt-5.5`, `deepseek/deepseek-v4-pro`,
    present it routes through `_resolve_qualified`, which fails closed unless:
    - the provider is a member of `SURFACE_BACKENDS["anthropic"]`, and
    - the bare model is non-empty, and
-   - the bare model is not independently indexed to a *different* backend (a
+   - when the bare model is indexed, it is indexed to *this* provider (a
      contradiction such as `deepseek/gpt-5.5` fails closed rather than silently
      honoring either side).
-   When the bare model is unknown to the index (the `copilot`/`auggie` rowless case) the
-   explicit provider is trusted — that is the entire point of naming it up front.
+   When the bare model is unknown to the index, the explicit provider is trusted **only
+   for a rowless backend**: `copilot`/`auggie` own no index taxonomy, so naming the
+   provider up front is the only way to reach them. A backend that *does* own a taxonomy
+   (`deepseek`/`codex`) must name a model it actually serves; an unknown bare model behind
+   a known-backend prefix (`codex/totally-made-up`, or `codex/ gpt-5.5` with stray
+   whitespace) fails closed exactly as the bare-id path would, so the qualifier never
+   becomes a fail-open bypass of the index.
 
 2. **claude stays fail-closed.** The claude-family check runs on the whole normalized id
    before the split, so `claude/...` (and any id containing `claude`) resolves to None.
@@ -56,10 +61,14 @@ to put the provider up front: `codex/gpt-5.5`, `deepseek/deepseek-v4-pro`,
 
 3. **The prefix is a routing hint, not part of the upstream model id.** A new
    `canonical_model_id` strips a valid `provider/` qualifier back to the bare model
-   (original casing preserved). `anthropic_app` canonicalizes `payload["model"]` in place
-   immediately after backend resolution, so the downstream adapter (codex `codex exec`,
-   deepseek http, ...) receives `gpt-5.5`, never `codex/gpt-5.5`. Non-surface and claude
-   qualifiers are left intact (they 404 at resolution anyway).
+   (original casing preserved). It makes its provider decision through the **same**
+   `_normalize_model` + `_split_provider_qualified` the resolver uses, so the two can
+   never diverge: every qualified id the resolver routes (including mixed-case
+   `Codex/GPT-5.5` and an upper-case `CUSTOM/codex/gpt-5.5`) is stripped to its bare model
+   here. `anthropic_app` canonicalizes `payload["model"]` in place immediately after
+   backend resolution, so the downstream adapter (codex `codex exec`, deepseek http, ...)
+   receives `gpt-5.5`, never `codex/gpt-5.5`. Non-surface and claude qualifiers are left
+   intact (they 404 at resolution anyway).
 
 4. **Bare ids are unchanged.** No `/` means the existing name-family / index resolution
    path runs exactly as before; this ADR is additive and back-compatible.
@@ -78,7 +87,10 @@ to put the provider up front: `codex/gpt-5.5`, `deepseek/deepseek-v4-pro`,
   provider/model contradictions all 404, with no adapter ever dispatched (verified by
   `tests/integration/test_anthropic_provider_qualified.py`).
 - The prefix never leaks to a provider call, so a qualified request is byte-identical to
-  the equivalent bare request at the adapter boundary.
+  the equivalent bare request at the adapter boundary. This holds across normalization
+  forms (mixed case, `CUSTOM/`) because `canonical_model_id` and `resolve_anthropic_backend`
+  share one normalizer; the coupling is pinned by a parametrized resolve/canonical test and
+  an end-to-end assertion that no adapter ever receives a slash-bearing model id.
 - A future genuine name collision is handled by the existing mismatch rule without
   further surface changes; only a new shared-name policy (if ever desired) would revisit
   this ADR.
