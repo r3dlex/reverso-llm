@@ -99,7 +99,7 @@ claude CLI itself), so the Anthropic surface must never route to it. Milestone 2
   `/copilot/v1/messages`, `/auggie/v1/messages`. These mirror the Responses-surface prefixes and
   bypass model-to-backend auto-resolution for that request.
 - An unknown model returns HTTP 404 with a `not_found_error`. (Originally a `claude` model
-  also 404'd here as a hard negative case for the D2 circularity reason; reversed by ADR 0008 —
+  also 404'd here as a hard negative case for the D2 circularity reason; reversed by ADR 0008 -
   claude now resolves to the claude backend and is served 200.)
 - A missing `anthropic-version` header defaults to `"2023-06-01"` and is echoed back on the
   response. A missing version header is never a 400.
@@ -191,7 +191,7 @@ gated-error on auggie while it is native on copilot and translated on deepseek.
   `/v1/messages/count_tokens` response is an estimate and is labeled as such in the docs; it is
   not represented as exact provider tokenization.
 - **unknown model**: HTTP 404 `not_found_error` (D3). (A `claude` model originally also 404'd
-  here for the D2 circularity reason; reversed by ADR 0008 — claude is now served 200 via the
+  here for the D2 circularity reason; reversed by ADR 0008 - claude is now served 200 via the
   local claude CLI.)
 
 ## Consequences
