@@ -143,6 +143,39 @@ def _build_model_index(path: Path | None = None) -> dict[str, str]:
 _MODEL_INDEX: dict[str, str] = _build_model_index()
 
 
+def _split_provider_qualified(normalized: str) -> tuple[str | None, str]:
+    """Split a normalized id into (provider, bare_model) on the first '/'.
+
+    Returns ``(None, normalized)`` when the id carries no '/' separator, i.e. it is
+    a bare model name routed by name family rather than an explicit provider
+    prefix. The ``custom/`` prefix is already removed by ``_normalize_model``, so
+    any remaining '/' is a provider qualifier (model ids on this surface never
+    contain a slash of their own).
+    """
+    head, sep, tail = normalized.partition("/")
+    if not sep:
+        return None, normalized
+    return head, tail
+
+
+def _resolve_qualified(provider: str, bare: str) -> str | None:
+    """Resolve a fully-qualified ``provider/model`` id, provider prefix authoritative.
+
+    The provider prefix lets a caller put the provider up front to disambiguate
+    when two backends would otherwise share a model name. Fail-closed: the provider
+    must be an Anthropic-surface backend and the bare model must be non-empty. When
+    the bare model is independently indexed to a DIFFERENT backend the qualified id
+    is a conflict and resolves to None; when the bare model is unknown to the index
+    (e.g. copilot/auggie carry no config rows) the explicit provider is trusted.
+    """
+    if not bare or provider not in SURFACE_BACKENDS["anthropic"]:
+        return None
+    indexed = _MODEL_INDEX.get(bare)
+    if indexed is not None and indexed != provider:
+        return None
+    return provider
+
+
 def resolve_anthropic_backend(model: str | None) -> str | None:
     """Resolve a requested model to an Anthropic-surface backend, or None.
 
@@ -150,18 +183,46 @@ def resolve_anthropic_backend(model: str | None) -> str | None:
     even mixed-case or aliased). Model names are normalized (stripped, lowercased,
     custom/ prefix dropped) so mixed-case ids route correctly. A resolved backend
     is always a member of SURFACE_BACKENDS["anthropic"].
+
+    A fully-qualified ``provider/model`` id routes by its explicit provider prefix
+    (provider up front), so callers can disambiguate conflicting model names; the
+    prefix must be an Anthropic-surface backend and must not contradict a bare model
+    that is independently indexed to a different backend. Bare ids keep name-family
+    resolution unchanged.
     """
     if not isinstance(model, str) or not model.strip():
         return None
     normalized = _normalize_model(model)
     if _is_claude_model(normalized):
         return None
+    provider, bare = _split_provider_qualified(normalized)
+    if provider is not None:
+        return _resolve_qualified(provider, bare)
     backend = _MODEL_INDEX.get(normalized)
     if backend is None:
         return None
     if backend not in SURFACE_BACKENDS["anthropic"]:
         return None
     return backend
+
+
+def canonical_model_id(model: str | None) -> str | None:
+    """Strip a valid ``provider/`` qualifier, returning the bare upstream model id.
+
+    The provider prefix is a routing hint for resolve_anthropic_backend, NOT part of
+    the model id the downstream adapter expects. When ``model`` is a fully-qualified
+    ``provider/model`` whose provider is an Anthropic-surface backend, the bare model
+    (original casing, qualifier removed) is returned. Otherwise the input is returned
+    unchanged. claude is never an Anthropic-surface backend, so a ``claude/`` prefix
+    is left intact (it 404s at resolution anyway).
+    """
+    if not isinstance(model, str):
+        return model
+    stripped = model.strip().removeprefix("custom/")
+    head, sep, tail = stripped.partition("/")
+    if sep and head.strip().lower() in SURFACE_BACKENDS["anthropic"]:
+        return tail
+    return model
 
 
 def _display_name_for_model(model_id: str) -> str:
