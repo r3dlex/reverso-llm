@@ -19,7 +19,7 @@ from conftest import FixtureAdapter
 from reverso.protocols.anthropic_app import build_anthropic_app
 from reverso.protocols.adapter import ResponsesRequest
 
-ANTHROPIC_BACKENDS = ["copilot", "deepseek", "auggie", "codex"]
+ANTHROPIC_BACKENDS = ["copilot", "deepseek", "auggie", "codex", "claude"]
 
 
 class _RecordingAdapter(FixtureAdapter):
@@ -92,9 +92,23 @@ async def test_mixed_case_custom_prefix_adapter_sees_bare_model() -> None:
 
 
 @pytest.mark.asyncio
-async def test_claude_qualified_is_404() -> None:
+async def test_claude_qualified_routes_to_claude_and_adapter_sees_bare_model() -> None:
+    # claude is now a SERVED Anthropic-surface backend (ADR 0009, superseding the
+    # ADR 0006 claude-exclusion). A qualified claude/ id must route to the claude
+    # adapter (200), and canonicalization must strip the claude/ prefix so the
+    # adapter sees the bare upstream model id.
     adapters = {b: _RecordingAdapter(b) for b in ANTHROPIC_BACKENDS}
     async with _client_with(adapters) as client:
         resp = await client.post("/v1/messages", json=_body("claude/claude-opus-4-8"))
+    assert resp.status_code == 200
+    assert adapters["claude"].seen_models == ["claude-opus-4-8"]
+
+
+@pytest.mark.asyncio
+async def test_claude_qualified_mismatch_is_404() -> None:
+    adapters = {b: _RecordingAdapter(b) for b in ANTHROPIC_BACKENDS}
+    async with _client_with(adapters) as client:
+        # prefix says claude but gpt-5.5 is a codex model: conflict, fail closed.
+        resp = await client.post("/v1/messages", json=_body("claude/gpt-5.5"))
     assert resp.status_code == 404
     assert all(not a.seen_models for a in adapters.values())
