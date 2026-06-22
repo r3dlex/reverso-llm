@@ -88,11 +88,12 @@ class CompositionRoot:
         if scope.get("type") == "http":
             path = str(scope.get("path", ""))
             # The Anthropic Messages surface is checked BEFORE the Responses
-            # split so /v1/messages and /<profile>/v1/messages (including the
-            # claimed /claude/v1/messages, which the Anthropic app answers with
-            # its own not_found_error 404) route to the Anthropic app and never
-            # reach the legacy LiteLLM app. Responses (/v1/responses, /v1/models)
-            # routing is left byte-unchanged.
+            # split so /v1/messages and /<profile>/v1/messages (including
+            # /claude/v1/messages, now served first-party by the Anthropic app
+            # via the claude CLI under subscription OAuth — ADR 0008, superseding
+            # ADR 0006 D2) route to the Anthropic app and never reach the legacy
+            # LiteLLM app. Responses (/v1/responses, /v1/models) routing is left
+            # byte-unchanged.
             if route_is_anthropic_surface(path):
                 await self._anthropic_app(scope, receive, send)
                 return

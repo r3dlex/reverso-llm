@@ -1,12 +1,12 @@
 """Unit tests for the Anthropic Messages app routing/dispatch (ADR 0006 D3, G002).
 
 Routing and dispatch are fully implemented in G002; the create handler is a
-clearly-marked stub. These tests pin: unknown non-claude model -> 404
-not_found_error; /claude/v1/messages -> 404 with the Anthropic envelope (asserted
-through the CompositionRoot so it is NOT delegated to the legacy app); mixed-case
-claude -> 404; /deepseek and /copilot prefixes reach the named backend (stub ok);
-missing anthropic-version succeeds and echoes the default; the build rejects a
-claude adapter.
+clearly-marked stub. These tests pin: unknown model -> 404 not_found_error;
+/claude/v1/messages -> served by the claude backend (asserted through the
+CompositionRoot so it is NOT delegated to the legacy app); mixed-case claude
+auto-routes to the claude backend; /deepseek and /copilot prefixes reach the
+named backend (stub ok); missing anthropic-version succeeds and echoes the
+default; the build accepts a claude adapter (ADR 0008).
 """
 
 from __future__ import annotations
@@ -59,6 +59,7 @@ def _stub_adapters() -> dict[str, Any]:
         "copilot": _StubAdapter(),
         "deepseek": _StubAdapter(),
         "auggie": _StubAdapter(),
+        "claude": _StubAdapter(),
     }
 
 
@@ -155,13 +156,17 @@ async def test_unknown_non_claude_model_returns_404_not_found() -> None:
 
 
 @pytest.mark.asyncio
-async def test_mixed_case_claude_model_returns_404() -> None:
+async def test_mixed_case_claude_model_auto_routes_to_claude_backend() -> None:
     app = build_anthropic_app(_stub_adapters())
     status, _headers, body = await _drive(
         app, "POST", "/v1/messages", b'{"model":"Claude-Opus"}'
     )
-    assert status == 404
-    assert body is not None and body["error"]["type"] == "not_found_error"
+    # A claude model now resolves to the claude backend (ADR 0008): the stub
+    # adapter returns a valid (empty-content) Anthropic message body, not a 404.
+    assert status == 200
+    assert body is not None
+    assert body["type"] == "message"
+    assert body["role"] == "assistant"
 
 
 @pytest.mark.asyncio
@@ -215,9 +220,10 @@ async def test_explicit_anthropic_version_is_echoed() -> None:
     assert headers.get(b"anthropic-version") == b"2099-01-01"
 
 
-def test_build_rejects_claude_adapter() -> None:
-    with pytest.raises(ValueError, match="claude"):
-        AnthropicMessagesApp({"claude": _StubAdapter()})
+def test_build_accepts_claude_adapter() -> None:
+    # claude is now a permitted Anthropic-surface backend (ADR 0008).
+    app = AnthropicMessagesApp({"claude": _StubAdapter()})
+    assert "claude" in app._adapters
 
 
 def test_build_rejects_unknown_backend() -> None:
@@ -225,15 +231,16 @@ def test_build_rejects_unknown_backend() -> None:
         AnthropicMessagesApp({"mystery": _StubAdapter()})
 
 
-# --- through the CompositionRoot (claude exclusion not delegated to legacy) --
+# --- through the CompositionRoot (claude served first-party, not delegated) --
 
 
 @pytest.mark.asyncio
-async def test_uppercase_claude_prefix_claimed_and_returns_anthropic_404() -> None:
-    """/CLAUDE/v1/messages is claimed by the Anthropic surface, never legacy (MINOR-1).
+async def test_uppercase_claude_prefix_claimed_and_served_first_party() -> None:
+    """/CLAUDE/v1/messages is claimed and served by the Anthropic surface (MINOR-1).
 
     Profile segments are normalized to lowercase before the prefix membership
-    check, so /CLAUDE and /Claude are treated identically to /claude.
+    check, so /CLAUDE and /Claude are treated identically to /claude and reach
+    the claude backend (ADR 0008), never the legacy app.
     """
     legacy_calls: list[str] = []
 
@@ -250,10 +257,10 @@ async def test_uppercase_claude_prefix_claimed_and_returns_anthropic_404() -> No
         status, _headers, body = await _drive(
             root, "POST", path, b'{"model":"claude-opus"}'
         )
-        assert status == 404, f"{path} must return 404"
+        assert status == 200, f"{path} must be served (200)"
         assert body is not None
-        assert body["type"] == "error"
-        assert body["error"]["type"] == "not_found_error"
+        assert body["type"] == "message"
+        assert body["role"] == "assistant"
     assert legacy_calls == [], (
         "mixed-case /CLAUDE/v1/messages must not reach the legacy app; "
         f"observed {legacy_calls!r}"
@@ -261,8 +268,8 @@ async def test_uppercase_claude_prefix_claimed_and_returns_anthropic_404() -> No
 
 
 @pytest.mark.asyncio
-async def test_claude_prefix_returns_anthropic_404_not_delegated_to_legacy() -> None:
-    """POST /claude/v1/messages -> Anthropic not_found_error 404, never legacy."""
+async def test_claude_prefix_served_first_party_not_delegated_to_legacy() -> None:
+    """POST /claude/v1/messages -> served by the claude backend, never legacy."""
     legacy_calls: list[str] = []
 
     async def _legacy_tripwire(scope: Any, receive: Any, send: Any) -> None:
@@ -277,10 +284,10 @@ async def test_claude_prefix_returns_anthropic_404_not_delegated_to_legacy() -> 
     status, _headers, body = await _drive(
         root, "POST", "/claude/v1/messages", b'{"model":"claude-opus"}'
     )
-    assert status == 404
+    assert status == 200
     assert body is not None
-    assert body["type"] == "error"
-    assert body["error"]["type"] == "not_found_error"
+    assert body["type"] == "message"
+    assert body["role"] == "assistant"
     assert legacy_calls == [], (
         "/claude/v1/messages must be answered by the Anthropic app, never "
         f"delegated to the legacy LiteLLM app; observed {legacy_calls!r}"

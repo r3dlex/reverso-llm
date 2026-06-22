@@ -423,8 +423,10 @@ stack routes by path prefix only and has no model map of its own; the only model
 reads that file via `yaml.safe_load` as DATA only and never imports the legacy app, so the ADR
 0002 D2 quarantine is preserved. Surface-scoped exposure is data, held in a `SURFACE_BACKENDS`
 table. For Milestone 1 the Anthropic-surface backends are `copilot`, `deepseek`, and `auggie`;
-`claude` is excluded because Claude Code talking to a claude backend is circular. Milestone 2 adds
-`codex-cli` as a single one-row addition.
+`claude` was excluded because Claude Code talking to a claude backend is circular (superseded by
+ADR 0008: claude is now served first-party via the local claude CLI, with `ANTHROPIC_BASE_URL`/
+`ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_API_KEY` scrubbed from the subprocess env to prevent the loop).
+Milestone 2 adds `codex-cli` as a single one-row addition.
 
 ### 13.4 Routing, version, and error behavior
 

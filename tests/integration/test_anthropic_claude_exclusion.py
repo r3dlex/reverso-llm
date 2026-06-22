@@ -1,22 +1,20 @@
-"""Negative conformance suite: claude is NEVER reachable on the Anthropic surface.
+"""Conformance suite: claude IS served on the Anthropic surface (ADR 0008).
 
-ADR 0006 D2 excludes claude from the Anthropic Messages surface (Claude Code
-talking to a claude backend through Reverso is circular: the claude backend is the
-claude CLI itself). This module consolidates the claude-exclusion conformance into
-ONE durable suite asserting, through the real CompositionRoot and the real
-AnthropicMessagesApp, that NO Anthropic-surface route or listed model ever resolves
-to a claude backend:
+ADR 0008 supersedes ADR 0006 D2: claude is now SERVED on the inbound Anthropic
+Messages surface via the local claude CLI under subscription OAuth. The
+circularity concern is mitigated because Reverso's process env carries no
+ANTHROPIC_BASE_URL and the claude adapter scrubs routing/auth env from the
+spawned CLI's child env (see tests/unit/test_claude_oauth_gate.py for the scrub).
+This module asserts, through the real CompositionRoot and the real
+AnthropicMessagesApp, that claude routes resolve to the claude backend:
 
   - POST /claude/v1/messages (and its mixed-case /CLAUDE, /Claude variants) ->
-    Anthropic not_found_error 404, answered first-party and NEVER delegated to the
-    legacy LiteLLM app.
-  - /claude/v1/messages/count_tokens -> the same not_found_error 404 (the pinned
-    claude prefix is claimed but never served on either Messages-family path).
+    served first-party by the claude backend, NEVER delegated to the legacy app.
+  - /claude/v1/messages/count_tokens -> a 200 input_tokens sizing response.
   - a claude model id on the BARE /v1/messages and on bare /v1/messages/count_tokens
-    -> not_found_error 404 (auto-resolution fails closed for the claude family).
-  - GET /v1/models contains no claude model id (the registry index excludes it).
-  - build_anthropic_adapters never constructs a ClaudeAdapter and rejects a claude
-    adapter if one is injected.
+    -> served by the claude backend (auto-resolution maps it to claude).
+  - GET /v1/models contains the claude model ids (the registry indexes them).
+  - build_anthropic_adapters constructs a ClaudeAdapter and the app accepts it.
 
 No real provider, process, or credential is touched; the Responses gateway and the
 Anthropic app are built over the deterministic FixtureAdapter seam (UNCHANGED).
@@ -39,10 +37,10 @@ from reverso.protocols.responses_app import build_app
 from reverso.protocols.surface_registry import list_anthropic_surface_models
 from reverso.proxy.compose import CompositionRoot
 
-ANTHROPIC_BACKENDS = ["copilot", "deepseek", "auggie", "codex"]
+ANTHROPIC_BACKENDS = ["copilot", "deepseek", "auggie", "codex", "claude"]
 RESPONSES_PROVIDERS = ["claude", "copilot", "auggie", "deepseek"]
 
-# A claude model id; the family marker is what the fail-closed resolver detects.
+# A claude model id; the family marker is what the resolver detects.
 _CLAUDE_MODEL = "claude-opus-4-8"
 
 
@@ -74,14 +72,14 @@ def _anthropic_client() -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:64946")
 
 
-def _assert_anthropic_404(resp: httpx.Response) -> None:
-    assert resp.status_code == 404
+def _assert_anthropic_message(resp: httpx.Response) -> None:
+    assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["type"] == "error"
-    assert body["error"]["type"] == "not_found_error"
+    assert body["type"] == "message"
+    assert body["role"] == "assistant"
 
 
-# --- /claude/v1/messages prefix (incl mixed case), never legacy -------------
+# --- /claude/v1/messages prefix (incl mixed case), served first-party -------
 
 
 @pytest.mark.asyncio
@@ -89,14 +87,14 @@ def _assert_anthropic_404(resp: httpx.Response) -> None:
     "path",
     ["/claude/v1/messages", "/CLAUDE/v1/messages", "/Claude/v1/messages"],
 )
-async def test_claude_messages_prefix_returns_anthropic_404_not_legacy(
+async def test_claude_messages_prefix_served_first_party_not_legacy(
     path: str,
 ) -> None:
-    """The claude Messages prefix (any casing) is a first-party Anthropic 404."""
+    """The claude Messages prefix (any casing) is served first-party, never legacy."""
     root, legacy_calls = _build_root()
     async with _root_client(root) as client:
         resp = await client.post(path, json={"model": _CLAUDE_MODEL, "messages": []})
-    _assert_anthropic_404(resp)
+    _assert_anthropic_message(resp)
     assert legacy_calls == [], (
         f"{path} must be answered by the Anthropic app, never the legacy app; "
         f"observed {legacy_calls!r}"
@@ -104,15 +102,19 @@ async def test_claude_messages_prefix_returns_anthropic_404_not_legacy(
 
 
 @pytest.mark.asyncio
-async def test_claude_count_tokens_prefix_returns_anthropic_404_not_legacy() -> None:
-    """The claude count_tokens prefix is also claimed and 404s first-party."""
+async def test_claude_count_tokens_prefix_served_first_party_not_legacy() -> None:
+    """The claude count_tokens prefix is served first-party with a sizing response."""
     root, legacy_calls = _build_root()
     async with _root_client(root) as client:
         resp = await client.post(
             "/claude/v1/messages/count_tokens",
-            json={"model": _CLAUDE_MODEL, "messages": []},
+            json={
+                "model": _CLAUDE_MODEL,
+                "messages": [{"role": "user", "content": "hi"}],
+            },
         )
-    _assert_anthropic_404(resp)
+    assert resp.status_code == 200, resp.text
+    assert set(resp.json()) == {"input_tokens"}
     assert legacy_calls == [], (
         "/claude/v1/messages/count_tokens must be answered first-party, never the "
         f"legacy app; observed {legacy_calls!r}"
@@ -123,8 +125,8 @@ async def test_claude_count_tokens_prefix_returns_anthropic_404_not_legacy() -> 
 
 
 @pytest.mark.asyncio
-async def test_claude_model_on_bare_messages_returns_404() -> None:
-    """A claude model id on bare /v1/messages fails closed with a 404."""
+async def test_claude_model_on_bare_messages_served() -> None:
+    """A claude model id on bare /v1/messages auto-routes to the claude backend."""
     async with _anthropic_client() as client:
         resp = await client.post(
             "/v1/messages",
@@ -133,12 +135,12 @@ async def test_claude_model_on_bare_messages_returns_404() -> None:
                 "messages": [{"role": "user", "content": "hi"}],
             },
         )
-    _assert_anthropic_404(resp)
+    _assert_anthropic_message(resp)
 
 
 @pytest.mark.asyncio
-async def test_claude_model_on_bare_count_tokens_returns_404() -> None:
-    """A claude model id on bare /v1/messages/count_tokens fails closed with a 404."""
+async def test_claude_model_on_bare_count_tokens_served() -> None:
+    """A claude model id on bare /v1/messages/count_tokens sizes a 200 response."""
     async with _anthropic_client() as client:
         resp = await client.post(
             "/v1/messages/count_tokens",
@@ -147,60 +149,57 @@ async def test_claude_model_on_bare_count_tokens_returns_404() -> None:
                 "messages": [{"role": "user", "content": "hi"}],
             },
         )
-    _assert_anthropic_404(resp)
+    assert resp.status_code == 200, resp.text
+    assert set(resp.json()) == {"input_tokens"}
 
 
-# --- /v1/models lists no claude model ---------------------------------------
+# --- /v1/models lists the claude models -------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_models_listing_contains_no_claude_model() -> None:
-    """GET /v1/models on the Anthropic surface lists no claude model id."""
+async def test_models_listing_contains_claude_models() -> None:
+    """GET /v1/models on the Anthropic surface lists the claude model ids."""
     async with _anthropic_client() as client:
         resp = await client.get("/v1/models")
     assert resp.status_code == 200
     ids = [row["id"] for row in resp.json()["data"]]
     assert ids, "expected at least one listed model"
-    assert all(
-        "claude" not in model_id.lower() for model_id in ids
-    ), f"no claude model may appear on the Anthropic surface listing; got {ids!r}"
+    assert any(
+        "claude" in model_id.lower() for model_id in ids
+    ), f"claude models must appear on the Anthropic surface listing; got {ids!r}"
 
 
-def test_surface_registry_set_contains_no_claude_model() -> None:
-    """The surface_registry authority itself indexes no claude model (fail-closed)."""
-    ids = [row["id"] for row in list_anthropic_surface_models()]
-    assert all("claude" not in model_id.lower() for model_id in ids)
+def test_surface_registry_set_contains_claude_models() -> None:
+    """The surface_registry authority indexes claude rows mapping to the claude backend."""
+    rows = list_anthropic_surface_models()
+    claude_rows = [row for row in rows if "claude" in row["id"].lower()]
+    assert claude_rows, "expected claude rows in the surface_registry listing"
+    assert all(row["backend"] == "claude" for row in claude_rows)
 
 
-# --- build_anthropic_adapters never constructs ClaudeAdapter ----------------
+# --- build_anthropic_adapters constructs ClaudeAdapter ----------------------
 
 
-def test_build_anthropic_adapters_excludes_claude() -> None:
-    """The real adapter factory builds only the surface backends, never claude."""
+def test_build_anthropic_adapters_includes_claude() -> None:
+    """The real adapter factory builds the surface backends, including claude."""
     adapters = build_anthropic_adapters()
-    assert "claude" not in adapters
+    assert "claude" in adapters
     assert set(adapters) == set(ANTHROPIC_BACKENDS)
-    for adapter in adapters.values():
-        assert type(adapter).__name__ != "ClaudeAdapter"
 
 
-def test_build_anthropic_adapters_never_imports_claude_adapter() -> None:
-    """No constructed adapter is a ClaudeAdapter instance.
-
-    Imports ClaudeAdapter only to compare types here (the negative assertion);
-    build_anthropic_adapters must never instantiate it.
-    """
+def test_build_anthropic_adapters_constructs_claude_adapter() -> None:
+    """The claude entry is a ClaudeAdapter instance (ADR 0008)."""
     from reverso.protocols.adapters.claude import ClaudeAdapter
 
     adapters = build_anthropic_adapters()
-    assert not any(isinstance(adapter, ClaudeAdapter) for adapter in adapters.values())
+    assert isinstance(adapters["claude"], ClaudeAdapter)
 
 
-def test_anthropic_app_rejects_injected_claude_adapter() -> None:
-    """Injecting a claude adapter is a hard ValueError (claude is excluded, D2)."""
+def test_anthropic_app_accepts_injected_claude_adapter() -> None:
+    """Injecting a claude adapter is now permitted (claude is served, ADR 0008)."""
 
     class _StubAdapter:
         pass
 
-    with pytest.raises(ValueError, match="claude"):
-        AnthropicMessagesApp({"claude": _StubAdapter()})
+    app = AnthropicMessagesApp({"claude": _StubAdapter()})
+    assert "claude" in app._adapters

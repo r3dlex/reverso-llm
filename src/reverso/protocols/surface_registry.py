@@ -11,7 +11,9 @@ import-graph guard (tests/unit/test_litellm_quarantine.py) asserts that invarian
 Surface-scoped exposure is data, held in ``SURFACE_BACKENDS`` keyed by surface, so
 a backend can be present on the Responses surface yet absent from the Anthropic
 surface without any code branch. Milestone 2 adds ``codex-cli`` to the Anthropic
-surface as one row.
+surface as one row. ADR 0008 adds ``claude``: claude-family ids are now SERVED on
+the Anthropic surface via the local claude CLI (subscription OAuth), superseding
+ADR 0006 D2's exclusion.
 """
 
 from __future__ import annotations
@@ -24,17 +26,20 @@ import yaml
 
 from reverso.protocols.model_exposure import codex_builtin_model_backends
 
-# Surface-scoped backend exposure as DATA (ADR 0006 D2). The Anthropic surface
-# exposes copilot, deepseek, and auggie; claude is EXCLUDED because Claude Code
-# talking to a claude backend through Reverso is circular (the claude backend is
-# the claude CLI itself). Milestone 2 adds "codex-cli" here as a single row.
+# Surface-scoped backend exposure as DATA (ADR 0006 D2, superseded by ADR 0008).
+# The Anthropic surface exposes copilot, deepseek, auggie, codex, and claude.
+# claude is now SERVED on this surface (ADR 0008): the circularity concern (a
+# claude backend that re-enters Reverso) is mitigated because Reverso runs as a
+# server whose process env carries no ANTHROPIC_BASE_URL AND the claude adapter
+# scrubs routing/auth env from the spawned CLI's child env, so the claude CLI
+# always reaches api.anthropic.com under the subscription OAuth, never Reverso.
 SURFACE_BACKENDS: dict[str, frozenset[str]] = {
-    "anthropic": frozenset({"copilot", "deepseek", "auggie", "codex"}),
+    "anthropic": frozenset({"copilot", "deepseek", "auggie", "codex", "claude"}),
 }
 
-# Model-name substrings/prefixes that identify the claude family. The Anthropic
-# surface must never route to claude (fail-closed), so any model whose normalized
-# name names claude resolves to None regardless of casing or aliasing.
+# Model-name substring that identifies the claude family. A normalized model id
+# naming claude maps to the "claude" backend (ADR 0008); detection is casing- and
+# alias-insensitive so every claude-family id routes to the claude CLI.
 _CLAUDE_MARKER = "claude"
 
 # Which backend each litellm_config model_name maps to, by the model id naming
@@ -85,14 +90,14 @@ def _is_claude_model(normalized: str) -> bool:
 def _backend_for_model_name(model_name: str) -> str | None:
     """Map a litellm_config model_name to its first-party backend, or None.
 
-    claude-family rows are intentionally unmapped: the Anthropic surface excludes
-    claude, and copilot has no rows in the legacy config (it is a first-party-only
-    backend), so copilot is not derivable from the config and is exposed by the
-    SURFACE_BACKENDS table rather than the config rows.
+    claude-family rows map to the "claude" backend, now served on the Anthropic
+    surface (ADR 0008). copilot has no rows in the legacy config (it is a
+    first-party-only backend), so copilot is not derivable from the config and is
+    exposed by the SURFACE_BACKENDS table rather than the config rows.
     """
     normalized = _normalize_model(model_name)
     if _is_claude_model(normalized):
-        return None
+        return "claude"
     if normalized.startswith(_DEEPSEEK_PREFIX):
         return "deepseek"
     if normalized.startswith(_AUGGIE_PREFIX):
@@ -116,8 +121,8 @@ def _build_model_index(path: Path | None = None) -> dict[str, str]:
     """Build {normalized_model_name: backend} from the litellm_config data.
 
     Only rows that resolve to an Anthropic-surface-eligible backend are indexed;
-    claude rows are skipped (fail-closed) and copilot is added below as a
-    first-party backend that has no legacy config rows.
+    claude rows now map to the "claude" backend (ADR 0008) and copilot is exposed
+    via SURFACE_BACKENDS as a first-party backend that has no legacy config rows.
     """
     index: dict[str, str] = {}
     for row in _load_model_list(path):
@@ -146,16 +151,15 @@ _MODEL_INDEX: dict[str, str] = _build_model_index()
 def resolve_anthropic_backend(model: str | None) -> str | None:
     """Resolve a requested model to an Anthropic-surface backend, or None.
 
-    Returns None for an unknown model AND for any claude-family model (fail-closed,
-    even mixed-case or aliased). Model names are normalized (stripped, lowercased,
-    custom/ prefix dropped) so mixed-case ids route correctly. A resolved backend
-    is always a member of SURFACE_BACKENDS["anthropic"].
+    Returns None for an unknown model. A claude-family model now resolves to the
+    "claude" backend via _MODEL_INDEX (ADR 0008), no longer fail-closed. Model
+    names are normalized (stripped, lowercased, custom/ prefix dropped) so
+    mixed-case ids route correctly. A resolved backend is always a member of
+    SURFACE_BACKENDS["anthropic"].
     """
     if not isinstance(model, str) or not model.strip():
         return None
     normalized = _normalize_model(model)
-    if _is_claude_model(normalized):
-        return None
     backend = _MODEL_INDEX.get(normalized)
     if backend is None:
         return None
@@ -190,8 +194,8 @@ def list_anthropic_surface_models() -> list[dict[str, str]]:
 
     Returns one row per model exposed on the Anthropic surface, derived from the
     SAME litellm_config-backed ``_MODEL_INDEX`` that ``resolve_anthropic_backend``
-    routes through, so the listing and the router never disagree. claude is never
-    present (the index already excludes the claude family, fail-closed). Each row
+    routes through, so the listing and the router never disagree. claude rows are
+    now present and map to the "claude" backend (ADR 0008). Each row
     is ``{"id": <model>, "display_name": <derived label>, "backend": <backend>}``;
     the result is sorted by id for a deterministic, stable listing.
     """

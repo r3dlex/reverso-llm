@@ -20,26 +20,24 @@ rejection (G005) is enforced before dispatch. The two auxiliary endpoints (G006)
 are implemented: POST /v1/messages/count_tokens returns a documented word-count
 APPROXIMATION of input_tokens (not a real tokenizer), and the bare GET /v1/models
 returns the Anthropic-shaped listing of the surface_registry Anthropic-surface
-model set (never a claude model).
+model set (now including claude rows, ADR 0008).
 
-Routing (ADR 0006 D3):
+Routing (ADR 0006 D3, ADR 0008):
   - POST /v1/messages: resolve the requested model to a backend through the
-    single authority (surface_registry). An unknown model OR any claude model
-    returns HTTP 404 with the Anthropic not_found_error envelope (claude is
-    excluded for the D2 circularity reason).
-  - POST /v1/messages/count_tokens: resolve the backend the same way (unknown OR
-    claude model -> 404), then return {"input_tokens": N} as a documented
-    word-count approximation. No capability gating is applied (it is a pre-flight
-    sizing call, not a served feature).
+    single authority (surface_registry). A claude model now resolves to the
+    claude backend and is SERVED via the local claude CLI (ADR 0008); only an
+    unknown model returns HTTP 404 with the Anthropic not_found_error envelope.
+  - POST /v1/messages/count_tokens: resolve the backend the same way (unknown
+    model -> 404), then return {"input_tokens": N} as a documented word-count
+    approximation. No capability gating is applied (it is a pre-flight sizing
+    call, not a served feature).
   - GET /v1/models: the BARE path only. Returns the Anthropic-shaped listing of
     the Anthropic-surface model set; no per-profile /<provider>/v1/models is
     claimed here (that listing belongs to the Responses gateway).
-  - Per-profile prefixes /copilot, /deepseek, /auggie pin the named backend on the
-    Messages family and bypass model auto-resolution.
-  - /claude/v1/messages[/count_tokens] is claimed by this surface so a
-    claude-pointed client gets an Anthropic-shaped 404, but resolution still
-    yields None and the request is served the not_found_error 404 here, never
-    delegated to legacy.
+  - Per-profile prefixes /copilot, /deepseek, /auggie, /claude pin the named
+    backend on the Messages family and bypass model auto-resolution.
+  - /claude/v1/messages[/count_tokens] resolves to the claude backend and is
+    served first-party via the claude CLI (ADR 0008), never delegated to legacy.
   - A missing anthropic-version header defaults to "2023-06-01" and is echoed on
     the response; it is never a 400.
 """
@@ -84,11 +82,10 @@ DEFAULT_ANTHROPIC_VERSION = "2023-06-01"
 _MODELS_CREATED_AT = "2026-06-20T00:00:00Z"
 
 # The Anthropic-surface backends with optional per-profile path prefixes. claude
-# is intentionally a prefix this surface CLAIMS (route_is_anthropic_surface) but
-# never a backend it serves: a /claude/v1/messages request is routed here and
-# returns the Anthropic not_found_error 404 rather than reaching the legacy app.
+# is now part of SURFACE_BACKENDS["anthropic"] and is served first-party via the
+# claude CLI (ADR 0008), so /claude/v1/messages reaches the claude backend.
 _ANTHROPIC_SURFACE_BACKENDS = SURFACE_BACKENDS["anthropic"]
-_PROFILE_PREFIXES = frozenset(_ANTHROPIC_SURFACE_BACKENDS | {"claude"})
+_PROFILE_PREFIXES = frozenset(_ANTHROPIC_SURFACE_BACKENDS)
 
 # The Anthropic local paths this surface serves. G002 routed only /v1/messages;
 # G006 adds /v1/messages/count_tokens (a pre-flight sizing POST) and the bare
@@ -116,8 +113,8 @@ class AnthropicRoute:
 
     ``kind`` is one of messages / count_tokens / models. ``profile`` is None for
     the bare auto-routing paths, or the named backend
-    (copilot/deepseek/auggie/claude) for a /<profile>/v1/... path. /v1/models is
-    a bare-only listing (no profile, GET).
+    (copilot/deepseek/auggie/codex/claude) for a /<profile>/v1/... path.
+    /v1/models is a bare-only listing (no profile, GET).
     """
 
     kind: str
@@ -130,8 +127,8 @@ def split_anthropic_path(path: str) -> AnthropicRoute | None:
 
     Matches the bare /v1/messages and /v1/messages/count_tokens auto-routing
     paths, the per-profile /<profile>/v1/messages[/count_tokens] paths for this
-    surface's prefixes (copilot, deepseek, auggie, and the claimed-but-never-served
-    claude), and the bare GET listing /v1/models. /v1/models is bare-only: the
+    surface's prefixes (copilot, deepseek, auggie, codex, and the now-served
+    claude, ADR 0008), and the bare GET listing /v1/models. /v1/models is bare-only: the
     per-profile /<provider>/v1/models listing belongs to the Responses gateway and
     is intentionally NOT claimed here.
     """
@@ -168,8 +165,8 @@ def route_is_anthropic_surface(path: str) -> bool:
 
     The composition root calls this BEFORE the Responses split so /v1/messages,
     /v1/messages/count_tokens, the bare /v1/models, and the per-profile
-    /<profile>/v1/messages[/count_tokens] paths (including the claimed claude
-    prefix) route here. The bare /v1/models is claimed here, so it no longer falls
+    /<profile>/v1/messages[/count_tokens] paths (including the now-served claude
+    prefix, ADR 0008) route here. The bare /v1/models is claimed here, so it no longer falls
     through to the legacy app; the per-profile /<provider>/v1/models stays with the
     Responses gateway (split_anthropic_path does not match it).
     """
@@ -330,18 +327,14 @@ def _safe_backend_error_message(exc: Exception) -> str:
 class AnthropicMessagesApp:
     """ASGI app routing first-party Anthropic Messages traffic (G002 skeleton).
 
-    ``adapters`` maps Anthropic-surface backend names (copilot/deepseek/auggie) to
-    objects satisfying the frozen ProviderAdapter Protocol. The constructor
-    REJECTS a claude adapter: claude is excluded from the Anthropic surface (ADR
-    0006 D2), so it must never be injectable as a backend here.
+    ``adapters`` maps Anthropic-surface backend names
+    (copilot/deepseek/auggie/codex/claude) to objects satisfying the frozen
+    ProviderAdapter Protocol. claude is now a permitted backend, served via the
+    local claude CLI (ADR 0008); only backends absent from SURFACE_BACKENDS are
+    rejected.
     """
 
     def __init__(self, adapters: dict[str, ProviderAdapter]) -> None:
-        if "claude" in adapters:
-            raise ValueError(
-                "claude is excluded from the Anthropic surface (ADR 0006 D2); "
-                "the Anthropic app must not be given a claude adapter"
-            )
         unknown = set(adapters) - _ANTHROPIC_SURFACE_BACKENDS
         if unknown:
             raise ValueError(
@@ -412,10 +405,11 @@ class AnthropicMessagesApp:
 
         backend = self._resolve_backend(route, model)
         if backend is None:
-            # Unknown model OR a claude model (auto path), or the claimed
-            # /claude/v1/messages[/count_tokens] prefix: not_found_error 404. This
-            # is consistent across /v1/messages and /v1/messages/count_tokens so a
-            # pre-flight sizing call fails the same way the real call would.
+            # Unknown model (auto path) or a pinned prefix with no matching
+            # adapter: not_found_error 404. This is consistent across
+            # /v1/messages and /v1/messages/count_tokens so a pre-flight sizing
+            # call fails the same way the real call would. claude ids now resolve
+            # to the claude backend (ADR 0008) and are served, not 404'd.
             await _send_error(
                 send,
                 404,
@@ -661,8 +655,8 @@ class AnthropicMessagesApp:
         """Return the Anthropic-shaped /v1/models listing (AC8).
 
         Derived from the single surface_registry authority's Anthropic-surface
-        model set, so the listing and the router never disagree and no claude
-        model is ever present (the registry index excludes the claude family). The
+        model set, so the listing and the router never disagree; claude rows are
+        now present and map to the claude backend (ADR 0008). The
         shape mirrors the Anthropic Models API: a ``data`` array of
         {"type":"model","id","display_name","created_at"} rows plus first_id /
         last_id / has_more. ``created_at`` is a fixed surface epoch (the models are
@@ -698,14 +692,12 @@ class AnthropicMessagesApp:
         """Resolve the backend for a route, or None to yield a 404.
 
         Per-profile prefixes pin the named backend and bypass model resolution,
-        EXCEPT /claude which is claimed by this surface but never served (returns
-        None -> 404). The bare /v1/messages path auto-resolves the requested
-        model through the single authority, which fails closed for claude and
-        unknown models.
+        including /claude which now resolves to the claude backend when a claude
+        adapter is present (ADR 0008). The bare /v1/messages path auto-resolves the
+        requested model through the single authority, which now resolves claude
+        ids to the claude backend and still fails closed for unknown models.
         """
         if route.profile is not None:
-            if route.profile == "claude":
-                return None
             if route.profile in self._adapters:
                 return route.profile
             return None
@@ -716,16 +708,17 @@ class AnthropicMessagesApp:
 
 
 def build_anthropic_adapters() -> dict[str, ProviderAdapter]:
-    """Construct ONLY the Anthropic-surface backends (never a ClaudeAdapter).
+    """Construct the Anthropic-surface backends, including the claude adapter.
 
-    Mirrors reverso.proxy.compose.build_adapters but constructs only copilot,
-    deepseek, auggie, and codex; claude is excluded from the Anthropic surface
-    (ADR 0006 D2). codex is Anthropic-surface-ONLY (it is deliberately absent from
-    compose.build_adapters, the mirror of claude being Responses-surface-only,
+    Mirrors reverso.proxy.compose.build_adapters and constructs copilot,
+    deepseek, auggie, codex, and claude. claude is now served on the Anthropic
+    surface via the local claude CLI (ADR 0008, superseding ADR 0006 D2). codex
+    is Anthropic-surface-ONLY (deliberately absent from compose.build_adapters,
     ADR 0007). Adapters are imported here (not at module top) so the registry can
     be built without importing every provider's transitive dependencies until boot.
     """
     from reverso.protocols.adapters.auggie import AuggieAdapter
+    from reverso.protocols.adapters.claude import ClaudeAdapter
     from reverso.protocols.adapters.codex import CodexAdapter
     from reverso.protocols.adapters.copilot import CopilotAdapter
     from reverso.protocols.adapters.deepseek import DeepSeekAdapter
@@ -735,6 +728,7 @@ def build_anthropic_adapters() -> dict[str, ProviderAdapter]:
         "deepseek": DeepSeekAdapter(),
         "auggie": AuggieAdapter(),
         "codex": CodexAdapter(),
+        "claude": ClaudeAdapter(),
     }
 
 

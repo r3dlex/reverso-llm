@@ -1,8 +1,8 @@
 """CompositionRoot mounting integration for the Anthropic surface (ADR 0006, G002).
 
 Asserts, through the real composition root over an httpx ASGITransport:
-  - POST /claude/v1/messages returns the Anthropic not_found_error 404 envelope
-    and is NOT delegated to the legacy LiteLLM app (claude exclusion, D2);
+  - POST /claude/v1/messages is served first-party by the claude backend and is
+    NOT delegated to the legacy LiteLLM app (claude served, ADR 0008);
   - POST /v1/responses routing is byte-unchanged: it still reaches the first-party
     Responses gateway (FixtureAdapter), never the Anthropic app or legacy app.
 """
@@ -20,7 +20,7 @@ from reverso.protocols.responses_app import build_app
 from reverso.proxy.compose import CompositionRoot
 
 RESPONSES_PROVIDERS = ["claude", "copilot", "auggie", "deepseek"]
-ANTHROPIC_BACKENDS = ["copilot", "deepseek", "auggie"]
+ANTHROPIC_BACKENDS = ["copilot", "deepseek", "auggie", "claude"]
 
 
 def _build_root() -> tuple[CompositionRoot, list[str]]:
@@ -46,16 +46,16 @@ def _client(root: CompositionRoot) -> httpx.AsyncClient:
 
 
 @pytest.mark.asyncio
-async def test_claude_messages_returns_anthropic_404_not_legacy() -> None:
+async def test_claude_messages_served_first_party_not_legacy() -> None:
     root, legacy_calls = _build_root()
     async with _client(root) as client:
         resp = await client.post(
             "/claude/v1/messages", json={"model": "claude-opus", "messages": []}
         )
-    assert resp.status_code == 404
+    assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["type"] == "error"
-    assert body["error"]["type"] == "not_found_error"
+    assert body["type"] == "message"
+    assert body["role"] == "assistant"
     assert legacy_calls == [], (
         "/claude/v1/messages must be answered by the Anthropic app, never the "
         f"legacy LiteLLM app; observed {legacy_calls!r}"
