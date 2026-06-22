@@ -64,6 +64,7 @@ from reverso.protocols.anthropic_translate import (
 from reverso.protocols.replay import build_prompt, estimate_usage, new_message_id
 from reverso.protocols.surface_registry import (
     SURFACE_BACKENDS,
+    canonical_model_id,
     list_anthropic_surface_models,
     resolve_anthropic_backend,
 )
@@ -424,6 +425,14 @@ class AnthropicMessagesApp:
                 anthropic_version=anthropic_version,
             )
             return
+
+        # A fully-qualified provider/model id routed by its prefix above; the
+        # downstream adapter expects the BARE upstream model id, so canonicalize the
+        # payload model in place before any translation reads payload["model"].
+        if payload is not None:
+            canonical = canonical_model_id(model)
+            if canonical is not None and canonical != payload.get("model"):
+                payload["model"] = canonical
 
         # count_tokens is a pre-flight SIZING call: it resolves the backend (so an
         # unknown/claude model 404s exactly as /v1/messages would) but does NOT

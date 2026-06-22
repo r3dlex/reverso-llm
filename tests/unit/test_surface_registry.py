@@ -17,6 +17,7 @@ import pytest
 from reverso.protocols.surface_registry import (
     SURFACE_BACKENDS,
     _build_model_index,
+    canonical_model_id,
     cross_check_anthropic_models,
     list_anthropic_surface_models,
     resolve_anthropic_backend,
@@ -180,6 +181,96 @@ def test_import_safe_without_gpt_config_rows(tmp_path: Path) -> None:
     )
     # No RuntimeError: codex ids exempt from config-existence, deepseek present.
     cross_check_anthropic_models(config)
+
+
+def test_qualified_provider_routes_by_prefix() -> None:
+    # A provider/model id resolves by its explicit prefix when the bare model is
+    # served by that same backend (provider up front, no conflict).
+    assert resolve_anthropic_backend("codex/gpt-5.5") == "codex"
+    assert resolve_anthropic_backend("codex/gpt-4.1") == "codex"
+    assert resolve_anthropic_backend("deepseek/deepseek-v4-pro") == "deepseek"
+    assert resolve_anthropic_backend("deepseek/deepseek-chat") == "deepseek"
+
+
+def test_qualified_prefix_trusted_only_for_rowless_backends() -> None:
+    # copilot and auggie carry no config rows (rowless), so an arbitrary bare model
+    # behind their prefix is trusted (provider-up-front intent).
+    assert resolve_anthropic_backend("copilot/anything-goes") == "copilot"
+    assert resolve_anthropic_backend("auggie/auggie-default") == "auggie"
+    # deepseek and codex DO own a taxonomy, so an unknown bare model fails closed
+    # exactly as the bare-id path would (no fail-open behind a known-backend prefix).
+    assert resolve_anthropic_backend("codex/totally-made-up") is None
+    assert resolve_anthropic_backend("deepseek/totally-made-up") is None
+    # whitespace inside the bare model is not a served codex id -> fail closed.
+    assert resolve_anthropic_backend("codex/ gpt-5.5") is None
+
+
+def test_qualified_mismatch_fails_closed() -> None:
+    # The prefix names one backend but the bare model is indexed to another: a
+    # conflict that must fail closed rather than silently honor either side.
+    assert resolve_anthropic_backend("deepseek/gpt-5.5") is None
+    assert resolve_anthropic_backend("codex/deepseek-v4-pro") is None
+
+
+def test_qualified_non_surface_or_claude_prefix_fails_closed() -> None:
+    assert resolve_anthropic_backend("openai/gpt-5.5") is None
+    assert resolve_anthropic_backend("unknown/whatever") is None
+    assert resolve_anthropic_backend("claude/gpt-5.5") is None
+    assert resolve_anthropic_backend("claude/claude-opus-4-8") is None
+
+
+def test_qualified_malformed_fails_closed() -> None:
+    assert resolve_anthropic_backend("codex/") is None
+    assert resolve_anthropic_backend("/gpt-5.5") is None
+    assert resolve_anthropic_backend("/") is None
+
+
+def test_qualified_mixed_case_and_custom_prefix() -> None:
+    assert resolve_anthropic_backend("Codex/GPT-5.5") == "codex"
+    assert resolve_anthropic_backend("  deepseek/Deepseek-V4-Pro  ") == "deepseek"
+    assert resolve_anthropic_backend("custom/codex/gpt-5.5") == "codex"
+
+
+def test_canonical_model_id_strips_valid_qualifier() -> None:
+    # The bare upstream id (original casing) is returned, qualifier removed.
+    assert canonical_model_id("codex/gpt-5.5") == "gpt-5.5"
+    assert canonical_model_id("deepseek/deepseek-v4-pro") == "deepseek-v4-pro"
+    assert canonical_model_id("copilot/Some-Model") == "Some-Model"
+    assert canonical_model_id("custom/codex/gpt-5.5") == "gpt-5.5"
+    # Mixed case and an upper-case custom/ prefix must canonicalize the same way
+    # the resolver routes them (no divergence -> no prefix leak to the adapter).
+    assert canonical_model_id("Codex/GPT-5.5") == "GPT-5.5"
+    assert canonical_model_id("CUSTOM/codex/gpt-5.5") == "gpt-5.5"
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        "codex/gpt-5.5",
+        "deepseek/deepseek-v4-pro",
+        "Codex/GPT-5.5",
+        "CUSTOM/codex/gpt-5.5",
+        "copilot/any-model",
+        "auggie/auggie-default",
+    ],
+)
+def test_resolve_and_canonical_agree_no_prefix_leak(model: str) -> None:
+    """Coupling invariant (ADR 0008): whenever the resolver routes a qualified id,
+    canonical_model_id strips the qualifier so the adapter never sees the prefix.
+    """
+    if resolve_anthropic_backend(model) is not None:
+        canonical = canonical_model_id(model)
+        assert canonical is not None
+        assert "/" not in canonical, (model, canonical)
+
+
+def test_canonical_model_id_leaves_bare_and_invalid_unchanged() -> None:
+    assert canonical_model_id("gpt-5.5") == "gpt-5.5"
+    assert canonical_model_id("deepseek-v4-pro") == "deepseek-v4-pro"
+    # Non-surface / claude qualifiers are left intact (they 404 at resolution).
+    assert canonical_model_id("openai/gpt-5.5") == "openai/gpt-5.5"
+    assert canonical_model_id("claude/claude-opus-4-8") == "claude/claude-opus-4-8"
+    assert canonical_model_id(None) is None
 
 
 def test_lint_coverage_codex_routing_not_a_silent_no_op(
