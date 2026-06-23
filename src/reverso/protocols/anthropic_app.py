@@ -434,6 +434,10 @@ class AnthropicMessagesApp:
         # apply per-backend capability gating. Gating rejects feature x backend
         # cells that cannot be SERVED; sizing a prompt does not serve anything, so
         # a client may legitimately size a request before deciding to send it.
+        # NOTE: this returns BEFORE strip_degradable_features below, so the payload
+        # here is intentionally un-stripped; that is safe ONLY because count_tokens
+        # does not gate (no 400 risk) and the translator drops cache_control anyway.
+        # If gating is ever added here, move the strip above this branch.
         if route.kind == _KIND_COUNT_TOKENS:
             if payload is None:
                 await _send_error(
