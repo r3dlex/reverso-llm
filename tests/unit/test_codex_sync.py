@@ -217,7 +217,7 @@ def test_default_model_for_prefers_deepseek_v4_pro() -> None:
     assert codex_sync._default_model_for("copilot", ("gpt-4o", "gpt-5.5")) == "gpt-4o"
 
 
-def test_render_profiles_block_emits_one_profile_per_live_prefix(
+def test_profile_files_emit_one_file_per_live_prefix(
     tmp_path: Path,
 ) -> None:
     pm = [
@@ -227,32 +227,28 @@ def test_render_profiles_block_emits_one_profile_per_live_prefix(
         codex_sync.ProviderModels("deepseek", ("deepseek-v3", "deepseek-v4-pro")),
     ]
     catalog_dir = tmp_path / "reverso"
-    block = codex_sync._render_profiles_block(pm, catalog_dir)
+    files = codex_sync._reverso_profile_files(pm, tmp_path, catalog_dir)
 
-    assert block.startswith(codex_sync.PROFILES_BEGIN)
-    assert block.rstrip().endswith(codex_sync.PROFILES_END)
-    # One inline table per prefix, GATEWAY_PREFIXES order.
-    order = [
-        block.index("[profiles.claude]"),
-        block.index("[profiles.copilot]"),
-        block.index("[profiles.auggie]"),
-        block.index("[profiles.deepseek]"),
+    assert [path.name for path in files] == [
+        "claude.config.toml",
+        "copilot.config.toml",
+        "auggie.config.toml",
+        "deepseek.config.toml",
     ]
-    assert order == sorted(order)
-    assert 'model_provider = "reverso_claude"' in block
-    assert 'model_provider = "reverso_copilot"' in block
-    assert 'model_provider = "reverso_deepseek"' in block
-    # Default models pinned per spec.
-    assert 'model = "claude-fable-5"' in block
-    assert 'model = "gpt-5.5"' in block
-    assert 'model = "deepseek-v4-pro"' in block
-    # Per-provider catalog pointers.
-    assert f'model_catalog_json = "{catalog_dir / "copilot.json"}"' in block
-    # No legacy per-model overlay tables.
-    assert "[model_providers.reverso_" not in block
+    parsed = {
+        path.stem.removesuffix(".config"): tomllib.loads(text)
+        for path, text in files.items()
+    }
+    assert parsed["claude"]["model_provider"] == "reverso_claude"
+    assert parsed["copilot"]["model_provider"] == "reverso_copilot"
+    assert parsed["deepseek"]["model_provider"] == "reverso_deepseek"
+    assert parsed["claude"]["model"] == "claude-fable-5"
+    assert parsed["copilot"]["model"] == "gpt-5.5"
+    assert parsed["deepseek"]["model"] == "deepseek-v4-pro"
+    assert parsed["copilot"]["model_catalog_json"] == str(catalog_dir / "copilot.json")
 
 
-def test_render_profiles_block_skips_prefixes_without_models(
+def test_reverso_profile_files_skip_prefixes_without_models(
     tmp_path: Path,
 ) -> None:
     pm = [
@@ -261,11 +257,8 @@ def test_render_profiles_block_skips_prefixes_without_models(
         codex_sync.ProviderModels("auggie", ()),
         codex_sync.ProviderModels("deepseek", ()),
     ]
-    block = codex_sync._render_profiles_block(pm, tmp_path)
-    assert "[profiles.copilot]" in block
-    assert "[profiles.claude]" not in block
-    assert "[profiles.auggie]" not in block
-    assert "[profiles.deepseek]" not in block
+    files = codex_sync._reverso_profile_files(pm, tmp_path, tmp_path)
+    assert {path.name for path in files} == {"copilot.config.toml"}
 
 
 def test_sync_writes_profiles_for_each_live_prefix(tmp_path: Path) -> None:
@@ -278,15 +271,145 @@ def test_sync_writes_profiles_for_each_live_prefix(tmp_path: Path) -> None:
     )
 
     assert result.changed is True
-    text = target.read_text(encoding="utf-8")
-    parsed = tomllib.loads(text)
-    profiles = parsed["profiles"]
     for prefix in ("claude", "copilot", "auggie", "deepseek"):
-        assert profiles[prefix]["model_provider"] == f"reverso_{prefix}"
-        assert profiles[prefix]["model_catalog_json"] == str(
-            catalog_dir / f"{prefix}.json"
-        )
-        assert profiles[prefix]["model"]
+        profile = tomllib.loads((tmp_path / f"{prefix}.config.toml").read_text())
+        assert profile["model_provider"] == f"reverso_{prefix}"
+        assert profile["model_catalog_json"] == str(catalog_dir / f"{prefix}.json")
+        assert profile["model"]
+    openai = tomllib.loads((tmp_path / "openai.config.toml").read_text())
+    minimax = tomllib.loads((tmp_path / "minimax.config.toml").read_text())
+    assert openai == {"model": "gpt-5.5", "model_provider": "openai"}
+    assert minimax["model_provider"] == "minimax"
+    assert minimax["model"] == "MiniMax-M3"
+
+
+def test_sync_archives_only_known_generated_variant_profiles(tmp_path: Path) -> None:
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+    stale = [
+        tmp_path / "deepseek-gpt54.config.toml",
+        tmp_path / "deepseek-mini.config.toml",
+        tmp_path / "deepseek-spark.config.toml",
+        tmp_path / "minimax-gpt54.config.toml",
+        tmp_path / "minimax-mini.config.toml",
+        tmp_path / "minimax-spark.config.toml",
+    ]
+    for path in stale:
+        path.write_text('model = "old"\n', encoding="utf-8")
+    user_owned = tmp_path / "deepseek-custom.config.toml"
+    user_owned.write_text('model = "keep-me"\n', encoding="utf-8")
+
+    result = codex_sync.sync(
+        target=target, fetcher=_make_fetcher(), catalog_dir=tmp_path / "reverso"
+    )
+
+    assert {
+        path.name.split(codex_sync.BACKUP_SUFFIX_PREFIX)[0]
+        for path in result.archived_profiles
+    } == {path.name for path in stale}
+    assert all(not path.exists() for path in stale)
+    assert user_owned.exists()
+    archive_dir = tmp_path / codex_sync.PROFILE_ARCHIVE_DIR
+    assert archive_dir.is_dir()
+
+
+def test_sync_preserves_unmarked_direct_provider_profiles(tmp_path: Path) -> None:
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+    openai_profile = tmp_path / "openai.config.toml"
+    minimax_profile = tmp_path / "minimax.config.toml"
+    openai_text = 'model = "custom-openai"\nmodel_provider = "openai"\napproval_policy = "never"\n'
+    minimax_text = 'model = "custom-minimax"\nmodel_provider = "minimax"\nmodel_context_window = 123456\n'
+    openai_profile.write_text(openai_text, encoding="utf-8")
+    minimax_profile.write_text(minimax_text, encoding="utf-8")
+
+    result = codex_sync.sync(
+        target=target, fetcher=_make_fetcher(), catalog_dir=tmp_path / "reverso"
+    )
+
+    assert result.changed is True
+    assert openai_profile.read_text(encoding="utf-8") == openai_text
+    assert minimax_profile.read_text(encoding="utf-8") == minimax_text
+    assert openai_profile not in result.profiles
+    assert minimax_profile not in result.profiles
+    assert not any(
+        path.name.startswith("openai.config.toml") for path in result.profile_backups
+    )
+    assert not any(
+        path.name.startswith("minimax.config.toml") for path in result.profile_backups
+    )
+
+
+def test_sync_updates_managed_direct_provider_profiles(tmp_path: Path) -> None:
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+    openai_profile = tmp_path / "openai.config.toml"
+    minimax_profile = tmp_path / "minimax.config.toml"
+    openai_profile.write_text(
+        codex_sync.PROFILE_MANAGED_MARKER
+        + '\nmodel = "old"\nmodel_provider = "openai"\n',
+        encoding="utf-8",
+    )
+    minimax_profile.write_text(
+        codex_sync.PROFILE_MANAGED_MARKER
+        + '\nmodel = "old"\nmodel_provider = "minimax"\n',
+        encoding="utf-8",
+    )
+
+    result = codex_sync.sync(
+        target=target, fetcher=_make_fetcher(), catalog_dir=tmp_path / "reverso"
+    )
+
+    openai = tomllib.loads(openai_profile.read_text(encoding="utf-8"))
+    minimax = tomllib.loads(minimax_profile.read_text(encoding="utf-8"))
+    assert openai == {"model": "gpt-5.5", "model_provider": "openai"}
+    assert minimax["model"] == "MiniMax-M3"
+    assert minimax["model_provider"] == "minimax"
+    assert result.profile_backups
+
+
+def test_sync_archives_stale_managed_reverso_profile_and_catalog(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+    catalog_dir = tmp_path / "reverso"
+    catalog_dir.mkdir()
+    stale_profile = tmp_path / "claude.config.toml"
+    stale_catalog = catalog_dir / "claude.json"
+    stale_profile.write_text(
+        codex_sync._render_profile_file(
+            model="claude-old",
+            model_provider="reverso_claude",
+            catalog_path=stale_catalog,
+        ),
+        encoding="utf-8",
+    )
+    stale_catalog.write_text('{"models": []}\n', encoding="utf-8")
+    user_profile = tmp_path / "auggie.config.toml"
+    user_profile.write_text(
+        'model = "custom-auggie"\nmodel_provider = "reverso_auggie"\n',
+        encoding="utf-8",
+    )
+
+    result = codex_sync.sync(
+        target=target,
+        fetcher=_make_fetcher(
+            {"copilot": ["gpt-5.5"], "deepseek": ["deepseek-v4-pro"]}
+        ),
+        catalog_dir=catalog_dir,
+    )
+
+    assert not stale_profile.exists()
+    assert not stale_catalog.exists()
+    assert user_profile.exists()
+    archived_names = {
+        path.name.split(codex_sync.BACKUP_SUFFIX_PREFIX)[0]
+        for path in result.archived_profiles
+    }
+    assert "claude.config.toml" in archived_names
+    assert "claude.json" in archived_names
+    assert "auggie.config.toml" not in archived_names
 
 
 def test_sync_default_config_exposes_no_reverso_models_globally(
@@ -305,8 +428,9 @@ def test_sync_default_config_exposes_no_reverso_models_globally(
     assert codex_sync.NUX_BEGIN not in text
     assert codex_sync.CATALOG_BEGIN not in text
     assert "[tui.model_availability_nux]" not in text
-    assert "model_catalog_json" not in text[: text.index(codex_sync.PROFILES_BEGIN)]
-    assert "model_catalog_json" not in text[text.index(codex_sync.PROFILES_END) :]
+    assert "model_catalog_json" not in text
+    assert "[profiles." not in text
+    assert codex_sync.PROFILES_BEGIN not in text
     # The default codex model stays plain.
     assert parsed["model"] == "gpt-5.5"
 
@@ -361,9 +485,10 @@ def test_sync_strips_legacy_clutter_blocks(tmp_path: Path) -> None:
     # Legacy per-model overlay tables gone.
     assert "[model_providers.reverso_copilot__gpt-5_5]" not in text
     assert "[model_providers.reverso_claude__claude-fable-5]" not in text
-    # New profiles present and valid.
     parsed = tomllib.loads(text)
-    assert parsed["profiles"]["copilot"]["model_provider"] == "reverso_copilot"
+    assert "[profiles." not in text
+    profile = tomllib.loads((tmp_path / "copilot.config.toml").read_text())
+    assert profile["model_provider"] == "reverso_copilot"
     # Hand-managed base provider table preserved.
     assert "[model_providers.reverso_copilot]" in text
     assert parsed["model_providers"]["reverso_copilot"]["base_url"].endswith(
@@ -405,7 +530,7 @@ def test_sync_preserves_user_selected_model(tmp_path: Path) -> None:
     assert 'model = "gpt-5.5"' not in top_level
 
 
-def test_sync_writes_block_and_creates_backup(tmp_path: Path) -> None:
+def test_sync_strips_legacy_block_and_creates_config_backup(tmp_path: Path) -> None:
     target = tmp_path / "config.toml"
     target.write_text(_baseline_config_text(), encoding="utf-8")
     fetcher = _make_fetcher()
@@ -418,12 +543,13 @@ def test_sync_writes_block_and_creates_backup(tmp_path: Path) -> None:
     assert result.backup is not None
     assert result.backup.exists()
     new_text = target.read_text(encoding="utf-8")
-    assert codex_sync.PROFILES_BEGIN in new_text
-    assert codex_sync.PROFILES_END in new_text
-    assert "[profiles.claude]" in new_text
-    assert "[profiles.copilot]" in new_text
-    assert "[profiles.auggie]" in new_text
-    assert "[profiles.deepseek]" in new_text
+    assert codex_sync.PROFILES_BEGIN not in new_text
+    assert codex_sync.PROFILES_END not in new_text
+    assert "[profiles." not in new_text
+    assert (tmp_path / "claude.config.toml").exists()
+    assert (tmp_path / "copilot.config.toml").exists()
+    assert (tmp_path / "auggie.config.toml").exists()
+    assert (tmp_path / "deepseek.config.toml").exists()
 
 
 def test_sync_is_idempotent_no_diff_no_backup(tmp_path: Path) -> None:
@@ -493,11 +619,11 @@ def test_sync_keeps_only_five_newest_backups(tmp_path: Path) -> None:
     backups = sorted(
         p
         for p in target.parent.iterdir()
-        if p.name.startswith(target.name + codex_sync.BACKUP_SUFFIX_PREFIX)
+        if p.name.startswith("claude.config.toml" + codex_sync.BACKUP_SUFFIX_PREFIX)
     )
     assert len(backups) == codex_sync.BACKUPS_KEPT
 
-    expected_minutes = list(range(7 - codex_sync.BACKUPS_KEPT, 7))
+    expected_minutes = list(range(2, 7))
     expected_stamps = [
         (base_ts + datetime.timedelta(minutes=m)).strftime("%Y%m%dT%H%M%SZ")
         for m in expected_minutes
@@ -518,7 +644,8 @@ def test_sync_no_existing_file_creates_target_no_backup(tmp_path: Path) -> None:
     assert result.backup is None
     assert target.exists()
     text = target.read_text(encoding="utf-8")
-    assert codex_sync.PROFILES_BEGIN in text
+    assert codex_sync.PROFILES_BEGIN not in text
+    assert (tmp_path / "fresh" / "claude.config.toml").exists()
 
 
 def test_sync_default_catalog_dir_is_config_parent_reverso(tmp_path: Path) -> None:
@@ -667,7 +794,7 @@ def test_main_writes_when_not_dry_run(
     rc = codex_sync.main([])
     assert rc == 0
     new_text = target.read_text(encoding="utf-8")
-    assert codex_sync.PROFILES_BEGIN in new_text
+    assert codex_sync.PROFILES_BEGIN not in new_text
     report = json.loads(capsys.readouterr().out)
     assert report["changed"] is True
     assert report["catalog_dir"] == str(tmp_path / "reverso")
@@ -676,6 +803,14 @@ def test_main_writes_when_not_dry_run(
         "claude.json",
         "copilot.json",
         "deepseek.json",
+    ]
+    assert sorted(Path(p).name for p in report["profiles"]) == [
+        "auggie.config.toml",
+        "claude.config.toml",
+        "copilot.config.toml",
+        "deepseek.config.toml",
+        "minimax.config.toml",
+        "openai.config.toml",
     ]
 
 
@@ -708,11 +843,12 @@ def test_no_secret_material_written_anywhere(tmp_path: Path) -> None:
         )
 
     pm = codex_sync.fetch_all(codex_sync.GATEWAY_PREFIXES, fetcher)
-    profiles_block = codex_sync._render_profiles_block(pm, Path("/codex/reverso"))
-    assert "api_key" not in profiles_block
-    assert "env_key" not in profiles_block
-    assert "secret" not in profiles_block.lower()
-    assert sensitive not in profiles_block
+    profiles = codex_sync._profile_files(pm, Path("/codex"), Path("/codex/reverso"))
+    profile_text = "\n".join(profiles.values())
+    assert "api_key" not in profile_text
+    assert "env_key" not in profile_text
+    assert "secret" not in profile_text.lower()
+    assert sensitive not in profile_text
 
 
 def test_resolve_helpers_prefer_explicit_then_env(
@@ -759,7 +895,7 @@ def test_toml_table_key_replaces_invalid_characters() -> None:
     assert codex_sync._toml_table_key("") == "model"
 
 
-def test_sync_with_no_models_writes_empty_profiles_block(tmp_path: Path) -> None:
+def test_sync_with_no_models_writes_direct_profiles_only(tmp_path: Path) -> None:
     target = tmp_path / "config.toml"
     target.write_text(_baseline_config_text(), encoding="utf-8")
     empty = _make_fetcher({"claude": [], "copilot": [], "auggie": [], "deepseek": []})
@@ -768,11 +904,15 @@ def test_sync_with_no_models_writes_empty_profiles_block(tmp_path: Path) -> None
         target=target, fetcher=empty, catalog_dir=tmp_path / "reverso"
     )
     text = target.read_text(encoding="utf-8")
-    assert codex_sync.PROFILES_BEGIN in text
+    assert codex_sync.PROFILES_BEGIN not in text
     assert "[profiles." not in text
     assert codex_sync.NUX_BEGIN not in text
     assert "[tui.model_availability_nux]" not in text
     assert result.catalogs == []
+    assert {p.name for p in result.profiles} == {
+        "openai.config.toml",
+        "minimax.config.toml",
+    }
     tomllib.loads(text)
 
 
@@ -845,12 +985,12 @@ def test_main_returns_3_on_runtime_error(
     assert "refusing to write" in err
 
 
-def test_render_profiles_block_dedupes_to_one_table_per_prefix(
+def test_reverso_profile_files_dedupes_to_one_file_per_prefix(
     tmp_path: Path,
 ) -> None:
     pm = [codex_sync.ProviderModels("copilot", ("gpt-5.5", "gpt-4o"))]
-    block = codex_sync._render_profiles_block(pm, tmp_path)
-    assert block.count("[profiles.copilot]") == 1
+    files = codex_sync._reverso_profile_files(pm, tmp_path, tmp_path)
+    assert list(files) == [tmp_path / "copilot.config.toml"]
 
 
 def test_sync_handles_crlf_config(tmp_path: Path) -> None:
@@ -866,7 +1006,9 @@ def test_sync_handles_crlf_config(tmp_path: Path) -> None:
     assert first.changed is True
     text = target.read_bytes().decode("utf-8")
     parsed = tomllib.loads(text)
-    assert parsed["profiles"]["claude"]["model_provider"] == "reverso_claude"
+    assert parsed["model"] == "gpt-5.5"
+    profile = tomllib.loads((tmp_path / "claude.config.toml").read_text())
+    assert profile["model_provider"] == "reverso_claude"
 
     second = codex_sync.sync(
         target=target, fetcher=_make_fetcher(), catalog_dir=catalog_dir
@@ -885,9 +1027,8 @@ def test_renderers_escape_hostile_model_ids(tmp_path: Path) -> None:
         fetcher=_make_fetcher({"claude": [hostile]}),
         catalog_dir=catalog_dir,
     )
-    text = target.read_text(encoding="utf-8")
-    full = tomllib.loads(text)
-    assert full["profiles"]["claude"]["model"] == hostile
+    profile = tomllib.loads((tmp_path / "claude.config.toml").read_text())
+    assert profile["model"] == hostile
 
     claude = json.loads((catalog_dir / "claude.json").read_text(encoding="utf-8"))
     assert claude["models"][0]["slug"] == hostile
