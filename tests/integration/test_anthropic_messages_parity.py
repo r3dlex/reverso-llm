@@ -36,8 +36,11 @@ capability ceiling fixed by responses_parity_surface.json:
   - codex:   tools.function partial (text-only ceiling, NO tool_use OUTPUT, the
              mirror of auggie: `codex exec` emits no structured function-call
              output, only command_execution observations), input.image
-             unsupported, thinking/caching unsupported.
-  - thinking and caching.cache_control are unsupported on ALL four backends.
+             unsupported, thinking unsupported.
+  - thinking is unsupported on ALL four backends.
+  - caching.cache_control is DEGRADED (stripped) on ALL four backends: a request
+    carrying it succeeds (200) instead of being rejected, since prompt caching is
+    a transparent optimization no backend on this surface honors.
 """
 
 from __future__ import annotations
@@ -415,10 +418,20 @@ async def test_thinking_unsupported_on_all(provider: str) -> None:
     await _assert_unsupported(provider, _thinking_body(provider), "thinking")
 
 
-# cache_control is unsupported on ALL three backends.
+# cache_control is DEGRADED (stripped) on ALL four backends: the SAME payload that
+# used to 400 now succeeds, since the surface strips cache_control before gating.
 @pytest.mark.asyncio
 @pytest.mark.parametrize("provider", PROVIDERS)
-async def test_cache_control_unsupported_on_all(provider: str) -> None:
-    await _assert_unsupported(
-        provider, _cache_control_body(provider), "caching.cache_control"
+async def test_cache_control_degraded_on_all(provider: str) -> None:
+    async with _build_client() as client:
+        resp = await client.post(
+            f"{_prefix(provider)}/messages", json=_cache_control_body(provider)
+        )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["type"] == "message"
+    assert body["role"] == "assistant"
+    text = "".join(
+        block["text"] for block in body["content"] if block["type"] == "text"
     )
+    assert text, "a text turn must surface a non-empty text content block"

@@ -8,6 +8,8 @@ cache_control / image cases that the integration suite drives end to end.
 
 from __future__ import annotations
 
+from copy import deepcopy
+
 import pytest
 
 from reverso.protocols.anthropic_feature_gate import (
@@ -18,6 +20,7 @@ from reverso.protocols.anthropic_feature_gate import (
     AnthropicFeatureRejected,
     extract_anthropic_features,
     gate_anthropic_features,
+    strip_degradable_features,
 )
 
 ANTHROPIC_BACKENDS = ["copilot", "deepseek", "auggie"]
@@ -395,3 +398,147 @@ def test_cap_feature_at_depth_beyond_cap_is_not_detected() -> None:
     image_block = {"type": "image", "source": {"type": "base64", "data": "x"}}
     payload = _tool_result_with_feature_at_depth(_MAX_BLOCK_DEPTH + 1, image_block)
     assert FEATURE_IMAGE not in extract_anthropic_features(payload)
+
+
+# --- strip_degradable_features (cache_control degradation, ADR 0006) ---------
+#
+# cache_control is a transparent caching optimization no backend honors, so the
+# surface DEGRADES it by stripping it in place before gating instead of hard
+# rejecting. These tests pin that strip everywhere cache_control can appear, that
+# it composes with the (unchanged) gate so caching.cache_control is no longer
+# extracted, and that it leaves semantic features (thinking, image) untouched.
+
+
+def test_strip_removes_cache_control_from_message_block() -> None:
+    payload = {
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "hi",
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
+            }
+        ]
+    }
+    strip_degradable_features(payload)
+    assert "cache_control" not in payload["messages"][0]["content"][0]
+    assert FEATURE_CACHE_CONTROL not in extract_anthropic_features(payload)
+
+
+def test_strip_removes_cache_control_from_system_block() -> None:
+    payload = {
+        "system": [
+            {"type": "text", "text": "rules", "cache_control": {"type": "ephemeral"}}
+        ],
+        "messages": [{"role": "user", "content": "hi"}],
+    }
+    strip_degradable_features(payload)
+    assert "cache_control" not in payload["system"][0]
+    assert FEATURE_CACHE_CONTROL not in extract_anthropic_features(payload)
+
+
+def test_strip_removes_cache_control_from_tool_definition() -> None:
+    payload = {
+        "messages": [{"role": "user", "content": "hi"}],
+        "tools": [
+            {
+                "name": "get_weather",
+                "input_schema": {"type": "object"},
+                "cache_control": {"type": "ephemeral"},
+            }
+        ],
+    }
+    strip_degradable_features(payload)
+    assert "cache_control" not in payload["tools"][0]
+    assert FEATURE_CACHE_CONTROL not in extract_anthropic_features(payload)
+    # The tools feature itself is untouched (only cache_control is degraded).
+    assert FEATURE_TOOLS in extract_anthropic_features(payload)
+
+
+def test_strip_removes_cache_control_nested_in_tool_result() -> None:
+    payload = {
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "toolu_1",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "result",
+                                "cache_control": {"type": "ephemeral"},
+                            }
+                        ],
+                    }
+                ],
+            }
+        ]
+    }
+    strip_degradable_features(payload)
+    inner = payload["messages"][0]["content"][0]["content"][0]
+    assert "cache_control" not in inner
+    assert FEATURE_CACHE_CONTROL not in extract_anthropic_features(payload)
+
+
+def test_strip_leaves_payload_without_cache_control_unchanged() -> None:
+    payload = {
+        "messages": [
+            {
+                "role": "user",
+                "content": [{"type": "text", "text": "hi"}],
+            }
+        ],
+        "system": [{"type": "text", "text": "rules"}],
+        "tools": [{"name": "get_weather", "input_schema": {"type": "object"}}],
+    }
+    expected = deepcopy(payload)
+    strip_degradable_features(payload)
+    assert payload == expected
+
+
+def test_strip_is_depth_capped_does_not_raise() -> None:
+    """Stripping a payload nested beyond _MAX_BLOCK_DEPTH must not raise.
+
+    Mirrors the scanner's depth guard so a crafted deep payload cannot exhaust
+    the Python call stack via the strip traversal.
+    """
+    from reverso.protocols.anthropic_feature_gate import _MAX_BLOCK_DEPTH  # noqa: PLC0415
+
+    payload = _tool_result_with_feature_at_depth(
+        _MAX_BLOCK_DEPTH + 5,
+        {"type": "text", "text": "leaf", "cache_control": {"type": "ephemeral"}},
+    )
+    strip_degradable_features(payload)  # must not raise RecursionError
+
+
+def test_strip_does_not_remove_thinking_or_image() -> None:
+    """Only cache_control is degraded; semantic features stay so the gate still sees them."""
+    payload = {
+        "thinking": {"type": "enabled", "budget_tokens": 1024},
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {"type": "base64", "data": "x"},
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
+            }
+        ],
+    }
+    strip_degradable_features(payload)
+    image_block = payload["messages"][0]["content"][0]
+    assert "cache_control" not in image_block
+    assert image_block["type"] == "image"
+    found = extract_anthropic_features(payload)
+    assert FEATURE_CACHE_CONTROL not in found
+    assert FEATURE_IMAGE in found
+    assert FEATURE_THINKING in found
