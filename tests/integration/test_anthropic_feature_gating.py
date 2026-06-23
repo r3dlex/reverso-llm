@@ -5,9 +5,10 @@ the UNCHANGED FixtureAdapter, and pin the ADR 0006 capability ceiling end to end
 image is native on copilot but a 400 invalid_request_error on deepseek/auggie;
 extended thinking (param OR content block) is a 400 on every backend;
 cache_control on a message / system / tool-definition / nested tool_result block
-is a 400 on every backend; tools degrade (auggie text-only, copilot/deepseek emit
-tool_use); and a streaming request that requests an unsupported feature is
-rejected with a 400 JSON body BEFORE the stream opens (never a 200 event-stream).
+is DEGRADED (stripped) on every backend so the request succeeds (200) instead of
+being rejected; tools degrade (auggie text-only, copilot/deepseek emit tool_use);
+and a streaming request that requests an unsupported feature is rejected with a
+400 JSON body BEFORE the stream opens (never a 200 event-stream).
 Error envelopes are secret-free and name the feature and backend.
 """
 
@@ -172,7 +173,9 @@ async def test_thinking_content_block_rejected_on_all_backends(backend: str) -> 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("backend", ANTHROPIC_BACKENDS)
-async def test_cache_control_on_message_block_rejected(backend: str) -> None:
+async def test_cache_control_degraded_on_message_block(backend: str) -> None:
+    # cache_control is a transparent caching optimization: the surface strips it
+    # (degrades) before gating, so this SAME payload that used to 400 now succeeds.
     async with _build_client() as client:
         resp = await client.post(
             _prefix(backend),
@@ -193,13 +196,15 @@ async def test_cache_control_on_message_block_rejected(backend: str) -> None:
                 ],
             },
         )
-    assert resp.status_code == 400
-    _assert_invalid_request(resp.json(), backend, "caching.cache_control")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["type"] == "message"
+    assert body["role"] == "assistant"
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("backend", ANTHROPIC_BACKENDS)
-async def test_cache_control_on_system_block_rejected(backend: str) -> None:
+async def test_cache_control_degraded_on_system_block(backend: str) -> None:
     async with _build_client() as client:
         resp = await client.post(
             _prefix(backend),
@@ -216,13 +221,15 @@ async def test_cache_control_on_system_block_rejected(backend: str) -> None:
                 "messages": [{"role": "user", "content": "hi"}],
             },
         )
-    assert resp.status_code == 400
-    _assert_invalid_request(resp.json(), backend, "caching.cache_control")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["type"] == "message"
+    assert body["role"] == "assistant"
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("backend", ANTHROPIC_BACKENDS)
-async def test_cache_control_on_tool_definition_rejected(backend: str) -> None:
+async def test_cache_control_degraded_on_tool_definition(backend: str) -> None:
     async with _build_client() as client:
         resp = await client.post(
             _prefix(backend),
@@ -239,13 +246,15 @@ async def test_cache_control_on_tool_definition_rejected(backend: str) -> None:
                 ],
             },
         )
-    assert resp.status_code == 400
-    _assert_invalid_request(resp.json(), backend, "caching.cache_control")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["type"] == "message"
+    assert body["role"] == "assistant"
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("backend", ANTHROPIC_BACKENDS)
-async def test_cache_control_nested_in_tool_result_rejected(backend: str) -> None:
+async def test_cache_control_degraded_nested_in_tool_result(backend: str) -> None:
     async with _build_client() as client:
         resp = await client.post(
             _prefix(backend),
@@ -272,8 +281,10 @@ async def test_cache_control_nested_in_tool_result_rejected(backend: str) -> Non
                 ],
             },
         )
-    assert resp.status_code == 400
-    _assert_invalid_request(resp.json(), backend, "caching.cache_control")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["type"] == "message"
+    assert body["role"] == "assistant"
 
 
 # --- tools degradation (regression guard) -----------------------------------
@@ -363,14 +374,15 @@ async def _assert_streaming_gate_400(
 
 
 @pytest.mark.asyncio
-async def test_streaming_cache_control_rejected_with_json_400_not_event_stream() -> (
-    None
-):
+async def test_streaming_cache_control_degraded_emits_event_stream() -> None:
+    """cache_control is degraded (stripped), so a streaming request with it
+    produces a 200 text/event-stream (NOT a JSON 400) just like a request
+    without cache_control."""
     async with _build_client() as client:
-        await _assert_streaming_gate_400(
-            client,
+        async with client.stream(
+            "POST",
             _prefix("deepseek"),
-            {
+            json={
                 "model": _BACKEND_MODEL["deepseek"],
                 "max_tokens": 64,
                 "stream": True,
@@ -387,9 +399,11 @@ async def test_streaming_cache_control_rejected_with_json_400_not_event_stream()
                     }
                 ],
             },
-            "deepseek",
-            "caching.cache_control",
-        )
+        ) as resp:
+            assert resp.status_code == 200
+            assert "text/event-stream" in resp.headers["content-type"]
+            async for _ in resp.aiter_text():
+                pass
 
 
 @pytest.mark.asyncio
