@@ -33,7 +33,7 @@ This document is the final per-provider Responses-API feature matrix that the re
 2. B2 incremental claude streaming via the injectable `stream_cli_runner: Callable[[str, str], AsyncIterator[str]]` in `ClaudeAdapter`, default implementation over `asyncio.create_subprocess_exec` calling `claude --print --output-format stream-json --verbose --include-partial-messages ...`. Documented buffered fallback on preflight failure.
 3. B3 in-memory `ResponseStore` boundary (no disk persistence). A1 returned NO-PERSIST, so `src/reverso/protocols/store.py` keeps the thread-safe in-memory implementation; the boundary is captured here once for all four providers.
 4. B4 per-provider parity translation: deepseek translation for `text.format` and `max_output_tokens` via `_translate_extras` plus `extra` carry-through for sampling and `parallel_tool_calls`; copilot verbatim forwarding verified for the misc surface; claude and auggie remain CLI-buffered for everything outside the message text path.
-5. B5 model selection via the `reverso-codex-sync` console script (`src/reverso/codex_sync.py`), which writes sentinel-fenced managed blocks into `~/.codex/config.toml` (per-model `model_providers` overlays plus `tui.model_availability_nux` entries) with UTC-timestamped backups, atomic temp-file + `os.replace` writes, and unrelated-key byte-faithful preservation.
+5. B5 model selection via the `reverso-codex-sync` console script (`src/reverso/codex_sync.py`), which writes provider-name profile files beside `~/.codex/config.toml`, strips legacy managed blocks from the base config, writes provider-scoped catalogs, and preserves unrelated base-config keys byte-for-byte.
 
 The classification cells below are sourced from `src/reverso/protocols/data/responses_parity_surface.json`. The fast-path gate is the source of truth; the table is informational and must match the JSON.
 
@@ -178,11 +178,13 @@ A1 (`.omc/research/codex-resume-probe.md`) returned NO-PERSIST: `codex exec resu
 Codex 0.139.0 has no native mechanism to feed its TUI `/model` picker from a custom `model_provider`'s `/v1/models` endpoint (`.omc/research/codex-model-picker.md`). B5 ships the SYNC-TOOL workaround:
 
 - `reverso-codex-sync` console script (`src/reverso/codex_sync.py`).
-- GETs `http://127.0.0.1:64946/<prefix>/v1/models` for each of the four reverso prefixes and writes two sentinel-fenced managed blocks into `~/.codex/config.toml`:
-  - `# BEGIN REVERSO MODELS PROFILES (managed by reverso-codex-sync)` / `# END ...`: one `[model_providers.reverso_<prefix>__<sanitized_model>]` table per `(prefix, model)` pair, each carrying `base_url`, `wire_api = "responses"`, and `model`.
-  - `# BEGIN REVERSO MODELS NUX (managed by reverso-codex-sync)` / `# END ...`: a `[tui.model_availability_nux]` block with one entry per unique model id, value `4`, so the TUI picker surfaces the synced ids.
-- Idempotent: a second invocation with the same fetcher output produces no diff and creates no backup. `_replace_managed_block` is a fixed point on its own output.
-- Backup discipline: a UTC-timestamped backup (`config.toml.reverso-sync.YYYYMMDDTHHMMSSZ`) is taken before each rewrite. `_rotate_backups` keeps the 5 newest.
+- GETs `http://127.0.0.1:64946/<prefix>/v1/models` for each of the four Reverso prefixes and writes provider-name profile files beside `~/.codex/config.toml`: `claude.config.toml`, `copilot.config.toml`, `auggie.config.toml`, and `deepseek.config.toml`.
+- Each generated Reverso profile pins `model`, `model_provider = "reverso_<prefix>"`, and a provider-scoped `model_catalog_json`. The per-provider catalogs live under `~/.codex/reverso/<prefix>.json` by default and use bare model slugs because collisions cannot occur inside a provider-scoped picker.
+- The base `config.toml` is kept clean: the tool strips legacy global catalog, NUX, and managed `[profiles.*]` blocks, and does not generate a root `model_catalog_json` or global model-list exposure.
+- Direct `openai.config.toml` and `minimax.config.toml` profiles are direct Codex provider profiles, not Reverso routes. MiniMax remains direct Codex-only.
+- Exact known stale generated variant profiles (`deepseek-gpt54`, `deepseek-mini`, `deepseek-spark`, `minimax-gpt54`, `minimax-mini`, `minimax-spark`) are archived under `Archive/reverso-codex-sync/`; other profile files are preserved.
+- Idempotent: a second invocation with the same fetcher output produces no config diff and creates no backup. Deleted or stale provider catalog files are regenerated because provider profiles reference them.
+- Backup discipline: a UTC-timestamped backup (`config.toml.reverso-sync.YYYYMMDDTHHMMSSZ`) is taken before each base config rewrite, and changed profile files receive their own timestamped sibling backups. `_rotate_backups` keeps the 5 newest per file.
 - Atomic write: the new content is composed in a temp file IN THE SAME DIRECTORY as `config.toml` and `os.replace`-d into place. Unrelated keys outside the sentinel-fenced blocks are byte-faithfully preserved (raw text round-trip, no `tomllib` re-emit).
 - No secrets: the tool only reads `/v1/models` model ids and never sees provider credentials.
 
@@ -213,7 +215,7 @@ The 400 body emitted for any unsupported feature on any provider is:
 
 - **auggie streaming**: BUFFER per spec Round 4. Lifting to STREAM would require either an auggie CLI streaming output mode (not present in 0.28.0) or an ACP-client rewrite of the auggie adapter, neither of which is in scope for this matrix.
 - **`POST /v1/responses/{id}/cancel`**: not implemented for any provider. Returns the gateway's standard 404 rather than a 400 `unsupported_feature` because the route itself is unregistered; this matches Codex's existing behavior for unknown routes.
-- **Codex 0.139.0 TUI `/model` picker**: feeds from the static `[tui.model_availability_nux]` table; no live polling. The B5 sync tool is the documented workaround until Codex grows a native polling mechanism.
+- **Codex TUI `/model` picker**: feeds from static config and profile catalog files, not live provider polling. The B5 sync tool is the documented workaround until Codex grows a native polling mechanism.
 - **`previous_response_id` across gateway restarts**: drops to a stored-id miss. Codex resume already survives via its client-side transcript; other Responses-API clients must replay input items. The deepseek D1 incremental streaming path additionally relaxes the store-before-drain invariant on its own branch (see ADR 0004 and the in-memory boundary section above); a client that aborts between the last delta and `response.completed` does not find the envelope in the store. This is bounded to non-codex clients.
 
 Phase D removed the previously-recorded deepseek streaming carve-out: the adapter now consumes upstream `stream=true` chunks via `replay.replay_incremental`, so the `stream.incremental_deltas` row is `translated` and the streaming-status section above carries the full description. See ADR 0004 for the architecture and the relaxed store-before-drain trade.

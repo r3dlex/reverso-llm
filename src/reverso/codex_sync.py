@@ -7,11 +7,11 @@ ONLY when the matching profile is selected with ``codex -p <prefix>``.
 Per A2 decision (.omc/research/codex-model-picker.md), Codex 0.139.0 has no
 native mechanism to feed ``/model`` from a custom provider's ``/v1/models``
 endpoint. This script bridges that gap by GET-ing each reverso provider's
-``/v1/models`` and idempotently writing one ``[profiles.<prefix>]`` table per
-gateway prefix into ``~/.codex/config.toml`` under a sentinel-marked managed
-section. Each profile pins ``model``, ``model_provider``, and a per-provider
-``model_catalog_json`` so the ``/model`` picker is scoped to that provider only
-when the profile is active. The DEFAULT config exposes NO reverso models.
+``/v1/models`` and idempotently writing one provider-name profile file per
+gateway prefix beside ``~/.codex/config.toml``. Each profile pins ``model``,
+``model_provider``, and a per-provider ``model_catalog_json`` so the
+``/model`` picker is scoped to that provider only when the profile is active.
+The DEFAULT config exposes NO reverso models.
 
 The implementation operates on the raw TOML text rather than parsing and
 serializing, because round-tripping through ``tomllib`` would drop comments and
@@ -46,6 +46,22 @@ logger = logging.getLogger(__name__)
 
 GATEWAY_BASE_URL = "http://127.0.0.1:64946"
 GATEWAY_PREFIXES: tuple[str, ...] = ("claude", "copilot", "auggie", "deepseek")
+DIRECT_CODEX_PROFILE_DEFAULTS: dict[str, tuple[str, str]] = {
+    "openai": (CODEX_DEFAULT_MODEL, "openai"),
+    "minimax": ("MiniMax-M3", "minimax"),
+}
+STALE_VARIANT_PROFILE_STEMS: frozenset[str] = frozenset(
+    {
+        "deepseek-gpt54",
+        "deepseek-mini",
+        "deepseek-spark",
+        "minimax-gpt54",
+        "minimax-mini",
+        "minimax-spark",
+    }
+)
+PROFILE_ARCHIVE_DIR = Path("Archive") / "reverso-codex-sync"
+PROFILE_MANAGED_MARKER = "# Managed by reverso-codex-sync."
 
 # DeepSeek's preferred default model when the gateway lists it.
 DEEPSEEK_PREFERRED_DEFAULT = "deepseek-v4-pro"
@@ -194,31 +210,68 @@ def _catalog_path_for(catalog_dir: Path, prefix: str) -> Path:
     return catalog_dir / f"{prefix}.json"
 
 
-def _render_profiles_block(
-    provider_models: list[ProviderModels],
-    catalog_dir: Path | None = None,
-) -> str:
-    """Render the managed profiles block between PROFILES_BEGIN/END sentinels.
+def _profile_path_for(config_dir: Path, prefix: str) -> Path:
+    """Return the Codex provider profile path for ``prefix``."""
+    return config_dir / f"{prefix}.config.toml"
 
-    One ``[profiles.<prefix>]`` inline table is emitted per gateway prefix that
-    has live models. Each profile pins ``model`` (the provider default), routes
-    through the hand-managed ``model_provider = "reverso_<prefix>"`` base table,
-    and scopes the ``/model`` picker to a per-provider ``model_catalog_json``.
-    The hand-managed base provider tables are never emitted or modified here.
-    """
-    lines: list[str] = [PROFILES_BEGIN]
+
+def _render_profile_file(
+    *,
+    model: str,
+    model_provider: str,
+    catalog_path: Path | None = None,
+    model_context_window: int | None = None,
+) -> str:
+    """Render one provider-name Codex profile file."""
+    lines = [
+        PROFILE_MANAGED_MARKER,
+        f"model = {_toml_string(model)}",
+        f"model_provider = {_toml_string(model_provider)}",
+    ]
+    if catalog_path is not None:
+        lines.append(f"model_catalog_json = {_toml_string(str(catalog_path))}")
+    if model_context_window is not None:
+        lines.append(f"model_context_window = {model_context_window}")
+    return "\n".join(lines) + "\n"
+
+
+def _reverso_profile_files(
+    provider_models: list[ProviderModels],
+    config_dir: Path,
+    catalog_dir: Path,
+) -> dict[Path, str]:
+    """Return Reverso-routed provider profile files keyed by path."""
+    files: dict[Path, str] = {}
     for entry in _live_provider_models(provider_models):
-        default_model = _default_model_for(entry.prefix, entry.models)
-        lines.append("")
-        lines.append(f"[profiles.{entry.prefix}]")
-        lines.append(f"model = {_toml_string(default_model)}")
-        lines.append(f"model_provider = {_toml_string(f'reverso_{entry.prefix}')}")
-        if catalog_dir is not None:
-            catalog_path = _catalog_path_for(catalog_dir, entry.prefix)
-            lines.append(f"model_catalog_json = {_toml_string(str(catalog_path))}")
-    lines.append("")
-    lines.append(PROFILES_END)
-    return "\n".join(lines)
+        files[_profile_path_for(config_dir, entry.prefix)] = _render_profile_file(
+            model=_default_model_for(entry.prefix, entry.models),
+            model_provider=f"reverso_{entry.prefix}",
+            catalog_path=_catalog_path_for(catalog_dir, entry.prefix),
+        )
+    return files
+
+
+def _direct_profile_files(config_dir: Path) -> dict[Path, str]:
+    """Return direct Codex provider profile files keyed by path."""
+    files: dict[Path, str] = {}
+    for prefix, (model, model_provider) in DIRECT_CODEX_PROFILE_DEFAULTS.items():
+        files[_profile_path_for(config_dir, prefix)] = _render_profile_file(
+            model=model,
+            model_provider=model_provider,
+            model_context_window=512000 if prefix == "minimax" else None,
+        )
+    return files
+
+
+def _profile_files(
+    provider_models: list[ProviderModels],
+    config_dir: Path,
+    catalog_dir: Path,
+) -> dict[Path, str]:
+    """Return every provider-name profile file managed by the sync tool."""
+    files = _reverso_profile_files(provider_models, config_dir, catalog_dir)
+    files.update(_direct_profile_files(config_dir))
+    return files
 
 
 def _catalog_model_entries(entry: ProviderModels) -> list[CatalogModelEntry]:
@@ -612,6 +665,150 @@ def _write_per_provider_catalogs(
     return written
 
 
+def _is_managed_profile_text(text: str) -> bool:
+    """Return whether profile text is owned by this sync tool."""
+    return (
+        text.startswith(PROFILE_MANAGED_MARKER + "\n")
+        or text.strip() == PROFILE_MANAGED_MARKER
+    )
+
+
+def _is_direct_profile_path(path: Path) -> bool:
+    """Return whether ``path`` is one of the direct Codex profile files."""
+    return path.name in {
+        f"{prefix}.config.toml" for prefix in DIRECT_CODEX_PROFILE_DEFAULTS
+    }
+
+
+def _unique_archive_path(
+    archive_dir: Path,
+    source_name: str,
+    *,
+    now: datetime.datetime | None = None,
+) -> Path:
+    """Return a unique archive path under ``archive_dir`` for ``source_name``."""
+    stamp = _utc_timestamp(now)
+    archive_path = archive_dir / f"{source_name}{BACKUP_SUFFIX_PREFIX}{stamp}"
+    suffix = 0
+    while archive_path.exists():
+        suffix += 1
+        archive_path = archive_dir / (
+            f"{source_name}{BACKUP_SUFFIX_PREFIX}{stamp}.{suffix}"
+        )
+    return archive_path
+
+
+def _archive_file(
+    path: Path,
+    archive_dir: Path,
+    *,
+    now: datetime.datetime | None = None,
+) -> Path:
+    """Move ``path`` into ``archive_dir`` and return its new location."""
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    archive_path = _unique_archive_path(archive_dir, path.name, now=now)
+    shutil.move(str(path), archive_path)
+    return archive_path
+
+
+def _write_profile_files(
+    profile_files: dict[Path, str],
+    *,
+    now: datetime.datetime | None = None,
+    keep_backups: int = BACKUPS_KEPT,
+) -> tuple[list[Path], list[Path], list[Path], bool]:
+    """Write changed profile files and return paths, backups, rotations, changed."""
+    written: list[Path] = []
+    backups: list[Path] = []
+    rotated: list[Path] = []
+    changed = False
+    for path, text in profile_files.items():
+        old_text = path.read_text(encoding="utf-8") if path.exists() else None
+        if old_text == text:
+            written.append(path)
+            continue
+        if (
+            old_text is not None
+            and _is_direct_profile_path(path)
+            and not _is_managed_profile_text(old_text)
+        ):
+            # Direct OpenAI/MiniMax profiles may be user-owned. Create them on
+            # first run and keep managing files with our marker, but never
+            # overwrite an unmarked direct provider profile.
+            continue
+        changed = True
+        backup = _make_backup(path, now=now)
+        if backup is not None:
+            backups.append(backup)
+        _atomic_write(path, text)
+        rotated.extend(_rotate_backups(path, keep=keep_backups))
+        written.append(path)
+    return written, backups, rotated, changed
+
+
+def _archive_stale_variant_profiles(
+    config_dir: Path,
+    *,
+    now: datetime.datetime | None = None,
+) -> list[Path]:
+    """Archive only known generated variant profile files.
+
+    The sync used to leave provider variant profiles behind. The archive path is
+    intentionally narrow and exact-match only so user-owned profiles are not
+    touched.
+    """
+    archived: list[Path] = []
+    archive_dir = config_dir / PROFILE_ARCHIVE_DIR
+    for stem in sorted(STALE_VARIANT_PROFILE_STEMS):
+        path = _profile_path_for(config_dir, stem)
+        if not path.exists():
+            continue
+        archived.append(_archive_file(path, archive_dir, now=now))
+    return archived
+
+
+def _archive_stale_managed_reverso_profiles(
+    config_dir: Path,
+    catalog_dir: Path,
+    live_prefixes: set[str],
+    *,
+    now: datetime.datetime | None = None,
+) -> list[Path]:
+    """Archive managed Reverso profile/catalog files for no-longer-live prefixes.
+
+    Only files carrying this tool's profile marker are moved. Unmarked
+    hand-written profile files are preserved even when their prefix is absent
+    from the current gateway listing.
+    """
+    archived: list[Path] = []
+    archive_dir = config_dir / PROFILE_ARCHIVE_DIR
+    for prefix in GATEWAY_PREFIXES:
+        if prefix in live_prefixes:
+            continue
+        profile_path = _profile_path_for(config_dir, prefix)
+        if not profile_path.exists():
+            continue
+        profile_text = profile_path.read_text(encoding="utf-8")
+        if not _is_managed_profile_text(profile_text):
+            continue
+        catalog_path = _catalog_path_for(catalog_dir, prefix)
+        try:
+            parsed = _parse_toml(profile_text, f"existing profile {profile_path.name}")
+        except RuntimeError:
+            parsed = {}
+        profile_catalog = (
+            parsed.get("model_catalog_json") if isinstance(parsed, dict) else None
+        )
+        if isinstance(profile_catalog, str):
+            candidate = Path(profile_catalog)
+            if candidate.parent == catalog_dir:
+                catalog_path = candidate
+        archived.append(_archive_file(profile_path, archive_dir, now=now))
+        if catalog_path.exists():
+            archived.append(_archive_file(catalog_path, archive_dir, now=now))
+    return archived
+
+
 @dataclass
 class SyncResult:
     """Outcome of one ``sync`` invocation, used by tests and the CLI."""
@@ -623,6 +820,9 @@ class SyncResult:
     provider_models: list[ProviderModels]
     catalog_dir: Path | None = None
     catalogs: list[Path] = field(default_factory=list)
+    profiles: list[Path] = field(default_factory=list)
+    profile_backups: list[Path] = field(default_factory=list)
+    archived_profiles: list[Path] = field(default_factory=list)
 
 
 def sync(
@@ -637,11 +837,11 @@ def sync(
 ) -> SyncResult:
     """Synchronize ``target`` against live gateway models.
 
-    Writes one ``[profiles.<prefix>]`` table per gateway prefix with live
-    models and one per-provider catalog JSON under ``catalog_dir`` (default
-    ``<target.parent>/reverso``). The default config exposes no reverso models;
-    they are only selectable via ``codex -p <prefix>``. Any legacy global
-    catalog or NUX managed block is stripped.
+    Writes one ``<prefix>.config.toml`` profile file per gateway prefix with
+    live models and one per-provider catalog JSON under ``catalog_dir``
+    (default ``<target.parent>/reverso``). The default config exposes no
+    reverso models; they are only selectable via ``codex -p <prefix>``. Any
+    legacy global catalog, NUX, or profiles managed block is stripped.
 
     The function is idempotent: a second call with the same fetcher output
     produces no diff and creates no backup.
@@ -661,30 +861,56 @@ def sync(
 
     old_text = target.read_text(encoding="utf-8") if target.exists() else ""
 
-    profiles_block = _render_profiles_block(provider_models, catalog_dir)
+    profile_files = _profile_files(provider_models, target.parent, catalog_dir)
+    live_prefixes = {entry.prefix for entry in _live_provider_models(provider_models)}
 
     new_text = _ensure_default_model(old_text)
     # Strip the legacy global catalog and NUX managed blocks; neither is
-    # written any more. Profiles carry per-provider catalog pointers instead.
+    # written any more. Profile files carry per-provider catalog pointers
+    # instead.
     new_text = _merge_catalog_config_block(new_text, None)
     new_text = _strip_managed_block(new_text, NUX_BEGIN, NUX_END)
-    new_text = _replace_managed_block(
-        new_text, PROFILES_BEGIN, PROFILES_END, profiles_block
-    )
+    new_text = _strip_managed_block(new_text, PROFILES_BEGIN, PROFILES_END)
+
+    for path, text in profile_files.items():
+        _parse_toml(text, f"rendered profile {path.name}")
 
     if new_text == old_text:
         # The catalogs are regenerated even when the config text is unchanged:
         # the profiles reference these paths, so deleted or stale catalog files
         # must come back on every sync, not only on config diffs.
         catalogs = _write_per_provider_catalogs(provider_models, catalog_dir)
+        (
+            profiles,
+            profile_backups,
+            profile_rotated,
+            profiles_changed,
+        ) = _write_profile_files(
+            profile_files,
+            now=now,
+            keep_backups=keep_backups,
+        )
+        archived_profiles = _archive_stale_variant_profiles(target.parent, now=now)
+        archived_profiles.extend(
+            _archive_stale_managed_reverso_profiles(
+                target.parent,
+                catalog_dir,
+                live_prefixes,
+                now=now,
+            )
+        )
+        changed = profiles_changed or bool(archived_profiles)
         return SyncResult(
             target=target,
-            changed=False,
+            changed=changed,
             backup=None,
-            rotated=[],
+            rotated=profile_rotated,
             provider_models=provider_models,
             catalog_dir=catalog_dir,
             catalogs=catalogs,
+            profiles=profiles,
+            profile_backups=profile_backups,
+            archived_profiles=archived_profiles,
         )
 
     # Fail-closed invariant: validation MUST precede backup and write so a
@@ -692,6 +918,25 @@ def sync(
     _parse_toml(new_text, "rendered config")
 
     catalogs = _write_per_provider_catalogs(provider_models, catalog_dir)
+    (
+        profiles,
+        profile_backups,
+        profile_rotated,
+        _profiles_changed,
+    ) = _write_profile_files(
+        profile_files,
+        now=now,
+        keep_backups=keep_backups,
+    )
+    archived_profiles = _archive_stale_variant_profiles(target.parent, now=now)
+    archived_profiles.extend(
+        _archive_stale_managed_reverso_profiles(
+            target.parent,
+            catalog_dir,
+            live_prefixes,
+            now=now,
+        )
+    )
 
     backup = _make_backup(target, now=now)
     _atomic_write(target, new_text)
@@ -700,10 +945,13 @@ def sync(
         target=target,
         changed=True,
         backup=backup,
-        rotated=rotated,
+        rotated=rotated + profile_rotated,
         provider_models=provider_models,
         catalog_dir=catalog_dir,
         catalogs=catalogs,
+        profiles=profiles,
+        profile_backups=profile_backups,
+        archived_profiles=archived_profiles,
     )
 
 
@@ -811,6 +1059,9 @@ def main(argv: list[str] | None = None) -> int:
         "rotated": [str(p) for p in result.rotated],
         "catalog_dir": str(result.catalog_dir) if result.catalog_dir else None,
         "catalogs": [str(p) for p in result.catalogs],
+        "profiles": [str(p) for p in result.profiles],
+        "profile_backups": [str(p) for p in result.profile_backups],
+        "archived_profiles": [str(p) for p in result.archived_profiles],
         "providers": {pm.prefix: list(pm.models) for pm in result.provider_models},
     }
     sys.stdout.write(json.dumps(report, indent=2) + "\n")

@@ -91,7 +91,7 @@ env_key = "MINIMAX_ANTHROPIC_API_KEY"
 wire_api = "responses"
 ```
 
-Example `~/.codex/minimax.config.toml`:
+Example direct `~/.codex/minimax.config.toml`:
 
 ```toml
 model = "MiniMax-M3"
@@ -99,21 +99,33 @@ model_provider = "minimax"
 model_context_window = 512000
 ```
 
-Reverso profile files keep GPT-level model names. Example `~/.codex/deepseek.config.toml`:
+`reverso-codex-sync` writes one provider-name profile file per Reverso-routed
+provider beside `~/.codex/config.toml`: `claude.config.toml`,
+`copilot.config.toml`, `auggie.config.toml`, and `deepseek.config.toml`. Each
+file pins the Reverso provider and points Codex at a provider-scoped catalog. Reverso profile files keep GPT-level model names where those names are the Codex-facing contract for a provider.
+Example generated `~/.codex/deepseek.config.toml`:
 
 ```toml
+model = "deepseek-v4-pro"
 model_provider = "reverso_deepseek"
-model = "gpt-5.5"
+model_catalog_json = "/Users/you/.codex/reverso/deepseek.json"
 ```
 
-Example `~/.codex/claude.config.toml`:
+Example generated `~/.codex/claude.config.toml`:
 
 ```toml
+model = "claude-fable-5"
 model_provider = "reverso_claude"
-model = "gpt-5.5"
+model_catalog_json = "/Users/you/.codex/reverso/claude.json"
 ```
 
-The DeepSeek and Claude profiles keep GPT-level names because Reverso resolves them to the concrete provider model id for that prefix. On the first-party `/deepseek/v1` path the DeepSeek adapter performs this resolution itself (it no longer goes through the legacy `ProfileRoutingMiddleware`), so existing `model = "gpt-5.5"` profiles keep working unchanged. Real DeepSeek ids (for example `deepseek-v4-pro`) also pass through unchanged if you prefer to set them directly.
+The DeepSeek and Claude adapters still accept GPT-level names because Reverso
+resolves them to the concrete provider model id for that prefix. The generated
+provider-name profile files may pin real provider model ids so the provider
+catalog remains scoped to that profile. On the first-party `/deepseek/v1` path
+the DeepSeek adapter performs this resolution itself (it no longer goes through
+the legacy `ProfileRoutingMiddleware`), so existing hand-written `model =
+"gpt-5.5"` profiles keep working unchanged.
 
 Auggie does not use GPT-level aliases. Its models come from `auggie model list`, so set the Auggie profile `model` to a real Auggie model id. Discover the available ids with `curl http://127.0.0.1:64946/auggie/v1/models`. Example `~/.codex/auggie.config.toml`:
 
@@ -126,9 +138,21 @@ Auggie indexing caveat: the Phase 1 spike could not prove a global per-invocatio
 
 DeepSeek first-party modes: because `/deepseek/v1` no longer inherits the legacy LiteLLM `drop_params` stripping, `response_format` (JSON mode) reaches DeepSeek unchanged and `reasoning_content` (thinking mode) is preserved on the response and carried forward across a `previous_response_id` chain.
 
-Reverso profile routing keeps Codex metadata stable for DeepSeek and Claude by letting Codex see GPT model names while Reverso rewrites requests after they enter a provider profile path. Do not put provider model ids in Reverso profile files. Use `model = "gpt-5.5"`, `model = "gpt-5.4"`, `model = "gpt-5.4-mini"`, or `model = "gpt-5.3-codex-spark"` in Reverso profile files and select the provider with `model_provider`. MiniMax is the exception because it is direct Codex-only and should use `model = "MiniMax-M3"`.
+Reverso profile routing keeps Codex metadata stable for hand-written DeepSeek
+and Claude profiles by accepting GPT-level names after they enter a provider
+profile path. The generated sync profiles use provider-scoped catalogs and pin
+their default to a model id returned by that provider's `/v1/models`. MiniMax
+is direct Codex-only and should use `model = "MiniMax-M3"`.
 
-`reverso-codex-sync` also feeds Codex's static `/model` picker. It always keeps built-in GPT (Codex) defaults selectable as bare model ids and inserts top-level `model = "gpt-5.5"` only when the user has not already selected another model. Reverso provider models are additive: possible collisions are selector/catalog-qualified as `copilot/<model>`, `auggie/<model>`, or `agy/<model>`, while MiniMax, DeepSeek, GPT (Codex), and Claude (Claude Code) remain bare. This prevents Reverso-discovered models from superseding the built-in Codex provider names.
+`reverso-codex-sync` also feeds Codex's static `/model` picker. It always keeps
+built-in GPT (Codex) defaults selectable as bare model ids and inserts
+top-level `model = "gpt-5.5"` into the base config only when the user has not
+already selected another model. Reverso provider models are isolated to their
+provider profile files and provider-scoped catalogs; the base `config.toml`
+does not get generated `[profiles.*]`, root `model_catalog_json`, NUX, or
+global Reverso model-list entries. The sync tool also preserves direct
+`openai.config.toml` and `minimax.config.toml` as Codex-provider profiles, not
+Reverso routes.
 
 | Codex profile model | DeepSeek Reverso profile | Claude Reverso profile | MiniMax direct Codex | Direct Codex /v1 |
 |---|---|---|---|---|
@@ -190,7 +214,7 @@ launchctl unload ~/Library/LaunchAgents/com.andres.codex-litellm-minimax.plist
 launchctl unload ~/Library/LaunchAgents/com.andres.codex-litellm-deepseek.plist
 ```
 
-Update `~/.codex/config.toml`: point DeepSeek and Claude profiles at `reverso_deepseek` or `reverso_claude` instead of legacy gateway providers. Configure MiniMax as the direct `minimax` Codex provider with `model = "MiniMax-M3"`. Keep Reverso profile `model` values as GPT names so Codex loads its own model metadata and Reverso handles provider model ids internally.
+Update `~/.codex/config.toml`: point DeepSeek and Claude profiles at `reverso_deepseek` or `reverso_claude` instead of legacy gateway providers. Configure MiniMax as the direct `minimax` Codex provider with `model = "MiniMax-M3"`. Hand-written DeepSeek and Claude Reverso profiles may keep GPT alias `model` values so Codex loads its own model metadata and Reverso resolves provider ids internally; generated provider-name profile files may pin provider-scoped model ids because their catalogs are scoped to that profile.
 
 **Do not remove the old plist files until Reverso has been running stably for at least a week.**
 
