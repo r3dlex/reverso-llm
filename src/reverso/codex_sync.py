@@ -37,43 +37,20 @@ from pathlib import Path
 
 import httpx
 
-from reverso.protocols.copilot_models import is_copilot_responses_model_id
-from reverso.protocols.model_exposure import (
-    CODEX_DEFAULT_MODEL,
-)
+from reverso.protocols import model_exposure
 
 logger = logging.getLogger(__name__)
 
 GATEWAY_BASE_URL = "http://127.0.0.1:64946"
-GATEWAY_PREFIXES: tuple[str, ...] = ("claude", "copilot", "auggie", "deepseek")
-DIRECT_CODEX_PROFILE_DEFAULTS: dict[str, tuple[str, str]] = {
-    "openai": (CODEX_DEFAULT_MODEL, "openai"),
-    "minimax": ("MiniMax-M3", "minimax"),
-}
-STALE_VARIANT_PROFILE_STEMS: frozenset[str] = frozenset(
-    {
-        "deepseek-gpt54",
-        "deepseek-mini",
-        "deepseek-spark",
-        "minimax-gpt54",
-        "minimax-mini",
-        "minimax-spark",
-    }
-)
 PROFILE_ARCHIVE_DIR = Path("Archive") / "reverso-codex-sync"
 PROFILE_MANAGED_MARKER = "# Managed by reverso-codex-sync."
-
-# DeepSeek's preferred default model when the gateway lists it.
-DEEPSEEK_PREFERRED_DEFAULT = "deepseek-v4-pro"
 
 
 def _codex_responses_compatible_models(prefix: str, model_ids: list[str]) -> list[str]:
     """Filter live listings to models Codex can call through Responses."""
-    if prefix != "copilot":
-        return model_ids
-    return [
-        model_id for model_id in model_ids if is_copilot_responses_model_id(model_id)
-    ]
+    return list(
+        model_exposure.codex_responses_compatible_model_ids(prefix, tuple(model_ids))
+    )
 
 
 PROFILES_BEGIN = "# BEGIN REVERSO MODELS PROFILES (managed by reverso-codex-sync)"
@@ -187,22 +164,15 @@ def _live_provider_models(
 ) -> list[ProviderModels]:
     """Return only the prefixes that have at least one live model.
 
-    Ordering follows GATEWAY_PREFIXES so the rendered profiles block is
-    deterministic regardless of fetch ordering.
+    Ordering follows model_exposure's Reverso-routed profile Interface so the
+    rendered profile files are deterministic regardless of fetch ordering.
     """
     by_prefix = {pm.prefix: pm for pm in provider_models if pm.models}
-    return [by_prefix[prefix] for prefix in GATEWAY_PREFIXES if prefix in by_prefix]
-
-
-def _default_model_for(prefix: str, models: tuple[str, ...]) -> str:
-    """Return the default model id pinned by a provider's profile.
-
-    DeepSeek prefers ``deepseek-v4-pro`` when present; every other provider
-    (and DeepSeek without it) uses the first model in its live listing.
-    """
-    if prefix == "deepseek" and DEEPSEEK_PREFERRED_DEFAULT in models:
-        return DEEPSEEK_PREFERRED_DEFAULT
-    return models[0]
+    return [
+        by_prefix[prefix]
+        for prefix in model_exposure.reverso_routed_codex_profile_prefixes()
+        if prefix in by_prefix
+    ]
 
 
 def _catalog_path_for(catalog_dir: Path, prefix: str) -> Path:
@@ -243,10 +213,16 @@ def _reverso_profile_files(
     """Return Reverso-routed provider profile files keyed by path."""
     files: dict[Path, str] = {}
     for entry in _live_provider_models(provider_models):
+        spec = model_exposure.reverso_codex_profile_spec(entry.prefix, entry.models)
+        catalog_path = (
+            _catalog_path_for(catalog_dir, entry.prefix)
+            if spec.uses_model_catalog
+            else None
+        )
         files[_profile_path_for(config_dir, entry.prefix)] = _render_profile_file(
-            model=_default_model_for(entry.prefix, entry.models),
-            model_provider=f"reverso_{entry.prefix}",
-            catalog_path=_catalog_path_for(catalog_dir, entry.prefix),
+            model=spec.model,
+            model_provider=spec.model_provider,
+            catalog_path=catalog_path,
         )
     return files
 
@@ -254,11 +230,11 @@ def _reverso_profile_files(
 def _direct_profile_files(config_dir: Path) -> dict[Path, str]:
     """Return direct Codex provider profile files keyed by path."""
     files: dict[Path, str] = {}
-    for prefix, (model, model_provider) in DIRECT_CODEX_PROFILE_DEFAULTS.items():
-        files[_profile_path_for(config_dir, prefix)] = _render_profile_file(
-            model=model,
-            model_provider=model_provider,
-            model_context_window=512000 if prefix == "minimax" else None,
+    for spec in model_exposure.direct_codex_profile_specs():
+        files[_profile_path_for(config_dir, spec.prefix)] = _render_profile_file(
+            model=spec.model,
+            model_provider=spec.model_provider,
+            model_context_window=spec.model_context_window,
         )
     return files
 
@@ -284,28 +260,19 @@ def _catalog_model_entries(entry: ProviderModels) -> list[CatalogModelEntry]:
     merged: list[CatalogModelEntry] = []
     seen_slugs: set[str] = set()
     for model_id in entry.models:
-        if model_id in seen_slugs:
+        slug = model_exposure.provider_scoped_catalog_slug(entry.prefix, model_id)
+        if slug in seen_slugs:
             continue
-        seen_slugs.add(model_id)
+        seen_slugs.add(slug)
         merged.append(
-            CatalogModelEntry(prefix=entry.prefix, slug=model_id, model_id=model_id)
+            CatalogModelEntry(prefix=entry.prefix, slug=slug, model_id=model_id)
         )
     return merged
 
 
 def _catalog_display_name(entry: CatalogModelEntry) -> str:
     """Return a human display name that makes routing ownership explicit."""
-    if entry.prefix == "codex":
-        return f"GPT (Codex) {entry.model_id}"
-    if entry.prefix == "minimax":
-        return f"MiniMax {entry.model_id}"
-    if entry.prefix == "oauth":
-        return f"OAuth {entry.model_id}"
-    if entry.prefix == "claude":
-        return f"Claude (Claude Code) {entry.model_id}"
-    if entry.prefix == "deepseek":
-        return f"DeepSeek {entry.model_id}"
-    return f"Reverso {entry.prefix} {entry.model_id}"
+    return model_exposure.catalog_display_name(entry.prefix, entry.model_id)
 
 
 def _generate_catalog_json(provider: ProviderModels) -> str:
@@ -313,9 +280,7 @@ def _generate_catalog_json(provider: ProviderModels) -> str:
     models: list[dict[str, t.Any]] = []
 
     for entry in _catalog_model_entries(provider):
-        context_window = 128000
-        if "500k" in entry.model_id.lower():
-            context_window = 500000
+        context_window = model_exposure.codex_catalog_context_window(entry.model_id)
 
         models.append(
             {
@@ -397,7 +362,7 @@ def _ensure_default_model(text: str) -> str:
     """Insert Codex's default model unless the user already selected one."""
     if _top_level_has_model_key(text):
         return text
-    line = f"model = {_toml_string(CODEX_DEFAULT_MODEL)}\n"
+    line = f"model = {_toml_string(model_exposure.CODEX_DEFAULT_MODEL)}\n"
     if not text:
         return line
     first_table = _TABLE_HEADER_LINE_RE.search(text)
@@ -659,6 +624,9 @@ def _write_per_provider_catalogs(
     """
     written: list[Path] = []
     for entry in _live_provider_models(provider_models):
+        spec = model_exposure.reverso_codex_profile_spec(entry.prefix, entry.models)
+        if not spec.uses_model_catalog:
+            continue
         path = _catalog_path_for(catalog_dir, entry.prefix)
         _atomic_write(path, _generate_catalog_json(entry))
         written.append(path)
@@ -676,7 +644,8 @@ def _is_managed_profile_text(text: str) -> bool:
 def _is_direct_profile_path(path: Path) -> bool:
     """Return whether ``path`` is one of the direct Codex profile files."""
     return path.name in {
-        f"{prefix}.config.toml" for prefix in DIRECT_CODEX_PROFILE_DEFAULTS
+        f"{spec.prefix}.config.toml"
+        for spec in model_exposure.direct_codex_profile_specs()
     }
 
 
@@ -759,7 +728,7 @@ def _archive_stale_variant_profiles(
     """
     archived: list[Path] = []
     archive_dir = config_dir / PROFILE_ARCHIVE_DIR
-    for stem in sorted(STALE_VARIANT_PROFILE_STEMS):
+    for stem in sorted(model_exposure.stale_codex_variant_profile_stems()):
         path = _profile_path_for(config_dir, stem)
         if not path.exists():
             continue
@@ -782,7 +751,7 @@ def _archive_stale_managed_reverso_profiles(
     """
     archived: list[Path] = []
     archive_dir = config_dir / PROFILE_ARCHIVE_DIR
-    for prefix in GATEWAY_PREFIXES:
+    for prefix in model_exposure.reverso_routed_codex_profile_prefixes():
         if prefix in live_prefixes:
             continue
         profile_path = _profile_path_for(config_dir, prefix)
@@ -828,7 +797,7 @@ class SyncResult:
 def sync(
     target: Path = DEFAULT_CONFIG_PATH,
     *,
-    prefixes: t.Iterable[str] = GATEWAY_PREFIXES,
+    prefixes: t.Iterable[str] | None = None,
     fetcher: ModelFetcher | None = None,
     base_url: str = GATEWAY_BASE_URL,
     now: datetime.datetime | None = None,
@@ -847,8 +816,13 @@ def sync(
     produces no diff and creates no backup.
     """
     fetch = fetcher if fetcher is not None else _default_fetcher(base_url)
+    sync_prefixes = (
+        tuple(prefixes)
+        if prefixes is not None
+        else model_exposure.reverso_routed_codex_profile_prefixes()
+    )
     provider_models = fetch_all(
-        prefixes,
+        sync_prefixes,
         fetch,
         skip_errors=fetcher is None,
     )
@@ -1034,7 +1008,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.dry_run:
         fetcher = _default_fetcher(base_url)
-        provider_models = fetch_all(GATEWAY_PREFIXES, fetcher, skip_errors=True)
+        provider_models = fetch_all(
+            model_exposure.reverso_routed_codex_profile_prefixes(),
+            fetcher,
+            skip_errors=True,
+        )
         report = {
             "target": str(target),
             "catalog_dir": str(catalog_dir),

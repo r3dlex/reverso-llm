@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from reverso import codex_sync
+from reverso.protocols import model_exposure
 
 
 def _fixture_payload() -> dict[str, list[str]]:
@@ -205,16 +206,23 @@ def test_sync_fails_closed_when_all_default_provider_fetches_fail(
 
 def test_default_model_for_prefers_deepseek_v4_pro() -> None:
     assert (
-        codex_sync._default_model_for("deepseek", ("deepseek-v3", "deepseek-v4-pro"))
+        model_exposure.codex_profile_default_model(
+            "deepseek", ("deepseek-v3", "deepseek-v4-pro")
+        )
         == "deepseek-v4-pro"
     )
     # Without the preferred id, first listed wins.
     assert (
-        codex_sync._default_model_for("deepseek", ("deepseek-v3", "deepseek-r1"))
+        model_exposure.codex_profile_default_model(
+            "deepseek", ("deepseek-v3", "deepseek-r1")
+        )
         == "deepseek-v3"
     )
     # Non-deepseek providers always use the first model.
-    assert codex_sync._default_model_for("copilot", ("gpt-4o", "gpt-5.5")) == "gpt-4o"
+    assert (
+        model_exposure.codex_profile_default_model("copilot", ("gpt-4o", "gpt-5.5"))
+        == "gpt-4o"
+    )
 
 
 def test_profile_files_emit_one_file_per_live_prefix(
@@ -281,6 +289,71 @@ def test_sync_writes_profiles_for_each_live_prefix(tmp_path: Path) -> None:
     assert openai == {"model": "gpt-5.5", "model_provider": "openai"}
     assert minimax["model_provider"] == "minimax"
     assert minimax["model"] == "MiniMax-M3"
+
+
+def test_sync_uses_model_exposure_profile_prefix_interface(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+    seen: list[str] = []
+
+    monkeypatch.setattr(
+        codex_sync.model_exposure,
+        "reverso_routed_codex_profile_prefixes",
+        lambda: ("copilot",),
+    )
+
+    def fetch(prefix: str) -> list[str]:
+        seen.append(prefix)
+        return ["gpt-5.5"]
+
+    result = codex_sync.sync(target=target, fetcher=fetch, catalog_dir=tmp_path / "rev")
+
+    assert seen == ["copilot"]
+    assert {path.name for path in result.profiles} == {
+        "copilot.config.toml",
+        "openai.config.toml",
+        "minimax.config.toml",
+    }
+    assert not (tmp_path / "claude.config.toml").exists()
+
+
+def test_sync_honors_model_exposure_catalog_policy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+
+    def without_catalog(
+        prefix: str, models: tuple[str, ...]
+    ) -> model_exposure.CodexProfileSpec:
+        return model_exposure.CodexProfileSpec(
+            prefix=prefix,
+            model=models[0],
+            model_provider=f"reverso_{prefix}",
+            uses_model_catalog=False,
+        )
+
+    monkeypatch.setattr(
+        codex_sync.model_exposure,
+        "reverso_codex_profile_spec",
+        without_catalog,
+    )
+
+    result = codex_sync.sync(
+        target=target,
+        fetcher=_make_fetcher({"copilot": ["gpt-5.5"]}),
+        prefixes=("copilot",),
+        catalog_dir=tmp_path / "rev",
+    )
+
+    profile = tomllib.loads((tmp_path / "copilot.config.toml").read_text())
+    assert "model_catalog_json" not in profile
+    assert result.catalogs == []
+    assert not (tmp_path / "rev" / "copilot.json").exists()
 
 
 def test_sync_archives_only_known_generated_variant_profiles(tmp_path: Path) -> None:
@@ -842,7 +915,9 @@ def test_no_secret_material_written_anywhere(tmp_path: Path) -> None:
             "user-owned line); sync itself never adds new secret content"
         )
 
-    pm = codex_sync.fetch_all(codex_sync.GATEWAY_PREFIXES, fetcher)
+    pm = codex_sync.fetch_all(
+        model_exposure.reverso_routed_codex_profile_prefixes(), fetcher
+    )
     profiles = codex_sync._profile_files(pm, Path("/codex"), Path("/codex/reverso"))
     profile_text = "\n".join(profiles.values())
     assert "api_key" not in profile_text
