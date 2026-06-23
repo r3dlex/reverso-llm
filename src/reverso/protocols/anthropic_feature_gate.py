@@ -19,7 +19,11 @@ Mapping from Anthropic request shapes to capability-table feature keys:
     structurally-impossible-M1).
   - ``cache_control`` carried on ANY message content block, system block, tool
     definition (``tools[].cache_control``), or nested tool_result inner content
-    block -> ``caching.cache_control`` (unsupported on all backends).
+    block -> ``caching.cache_control``. Unsupported on all backends, but it is a
+    transparent caching OPTIMIZATION, so the surface DEGRADES it (strips it via
+    ``strip_degradable_features`` before gating) instead of hard-rejecting, keeping
+    clients that always send it (e.g. Claude Code) usable. It therefore never
+    reaches the reject path below in normal flow.
   - ``tools`` / ``tool_use`` -> ``tools.function``. auggie classifies this as
     ``partial`` (text-only ceiling), NOT ``unsupported``, so it is ACCEPTED and
     degrades to text; copilot/deepseek accept it natively/translated. No backend
@@ -45,6 +49,7 @@ __all__ = [
     "FEATURE_TOOLS",
     "extract_anthropic_features",
     "gate_anthropic_features",
+    "strip_degradable_features",
 ]
 
 # Capability-table feature keys this gate maps onto. These MUST exist as rows in
@@ -171,6 +176,59 @@ def extract_anthropic_features(payload: dict[str, Any]) -> set[str]:
         found.add(FEATURE_THINKING)
 
     return found
+
+
+def _strip_cache_control_blocks(blocks: Any, *, depth: int = 0) -> None:
+    """Remove ``cache_control`` from each block in a content list, recursively.
+
+    Mirrors _scan_block_list's traversal (incl. nested tool_result content) but
+    deletes the key instead of recording it. Depth-capped like the scanner so a
+    crafted deep payload cannot exhaust the stack.
+    """
+    if depth > _MAX_BLOCK_DEPTH:
+        return
+    if not isinstance(blocks, list):
+        return
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        block.pop("cache_control", None)
+        if block.get("type") == "tool_result":
+            _strip_cache_control_blocks(block.get("content"), depth=depth + 1)
+
+
+def strip_degradable_features(payload: dict[str, Any]) -> None:
+    """Strip transparently-degradable features from an Anthropic payload IN PLACE.
+
+    Currently strips ``cache_control`` everywhere it can appear (message content
+    blocks including nested tool_result, ``system`` blocks, and tool definitions).
+    cache_control is a prompt-caching OPTIMIZATION: dropping it changes no response
+    semantics, only whether the provider caches. No backend on this surface can
+    honor it, so rather than hard-rejecting (a 400 on every request), the surface
+    silently DEGRADES by stripping it. Clients such as Claude Code attach
+    cache_control to essentially every request, so degrading is what keeps them
+    usable instead of failing each call. Semantic features (thinking, image) change
+    the response and are NOT degraded here; they remain hard-gated by
+    gate_anthropic_features. Call this BEFORE gating and translation so the stripped
+    payload is what both the gate and the downstream adapter observe.
+    """
+    if not isinstance(payload, dict):
+        return
+    messages = payload.get("messages")
+    if isinstance(messages, list):
+        for message in messages:
+            if isinstance(message, dict):
+                _strip_cache_control_blocks(message.get("content"))
+    system = payload.get("system")
+    if isinstance(system, list):
+        for block in system:
+            if isinstance(block, dict):
+                block.pop("cache_control", None)
+    tools = payload.get("tools")
+    if isinstance(tools, list):
+        for tool in tools:
+            if isinstance(tool, dict):
+                tool.pop("cache_control", None)
 
 
 def gate_anthropic_features(payload: dict[str, Any], backend: str) -> None:

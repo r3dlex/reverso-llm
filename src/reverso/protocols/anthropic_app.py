@@ -53,6 +53,7 @@ from reverso.protocols.adapter import ProviderAdapter
 from reverso.protocols.anthropic_feature_gate import (
     AnthropicFeatureRejected,
     gate_anthropic_features,
+    strip_degradable_features,
 )
 from reverso.protocols.anthropic_stream import responses_sse_to_anthropic
 from reverso.protocols.anthropic_translate import (
@@ -466,6 +467,12 @@ class AnthropicMessagesApp:
         # the streaming and non-streaming paths: a streaming request that requests
         # an unsupported feature is rejected here with a 400 JSON body, before any
         # text/event-stream header is committed (never a 200 event-stream).
+        # Degrade transparently-droppable features BEFORE gating and translation:
+        # cache_control is a prompt-caching optimization no backend can honor, so it
+        # is stripped (not 400'd) here, keeping clients like Claude Code that attach
+        # it to every request usable. The stripped payload is what the gate and the
+        # downstream adapter both observe. Semantic features stay hard-gated below.
+        strip_degradable_features(payload)
         try:
             gate_anthropic_features(payload, backend)
         except AnthropicFeatureRejected as rejected:
