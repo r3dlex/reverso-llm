@@ -71,3 +71,15 @@ names. Its Implementation keeps built in Codex GPT selectors bare, adds Reverso
 provider selectors without replacing built in names, and prefixes only collision
 prone provider families such as `copilot/`. This deepens the Seam across Codex
 sync, routing, and surface registry code while improving Leverage and Locality.
+
+## Profile sync Seam
+
+The Interface where Model selector policy crosses into Codex config files.
+`src/reverso/protocols/model_exposure.py` owns which provider prefixes are
+Reverso-routed, which provider profiles are direct Codex profiles, how provider
+catalog slugs are exposed, and which generated variant profile names are safe to
+archive. `src/reverso/codex_sync.py` is the file-writing Adapter at this Seam:
+it fetches live models, writes profile files and catalogs, and strips old base
+config clutter, but it does not own provider-prefix semantics. Runtime request
+routing remains with `surface_registry`; profile sync only prepares Codex's
+local selector files.
