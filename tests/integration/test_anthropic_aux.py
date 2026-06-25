@@ -20,7 +20,10 @@ import pytest
 from conftest import FixtureAdapter
 from reverso.protocols.anthropic_app import build_anthropic_app
 from reverso.protocols.responses_app import build_app
-from reverso.protocols.surface_registry import list_anthropic_surface_models
+from reverso.protocols.surface_registry import (
+    list_anthropic_discovery_aliases,
+    list_anthropic_surface_models,
+)
 from reverso.proxy.compose import CompositionRoot
 
 ANTHROPIC_BACKENDS = ["copilot", "deepseek", "auggie", "claude"]
@@ -146,12 +149,33 @@ async def test_models_includes_claude() -> None:
 
 @pytest.mark.asyncio
 async def test_models_match_surface_registry_set() -> None:
-    """The listed ids are exactly the surface_registry Anthropic-surface set."""
-    expected = {row["id"] for row in list_anthropic_surface_models()}
+    """The listed ids are exactly the bare surface set PLUS the discovery aliases.
+
+    The bare surface listing is the canonical set; the anthropic--<backend>-- aliases
+    are additive so non-claude backends pass Claude Code's /model discovery filter.
+    """
+    expected = {row["id"] for row in list_anthropic_surface_models()} | {
+        row["id"] for row in list_anthropic_discovery_aliases()
+    }
     async with _anthropic_client() as client:
         resp = await client.get("/v1/models")
     listed = {row["id"] for row in resp.json()["data"]}
     assert listed == expected
+
+
+@pytest.mark.asyncio
+async def test_models_discovery_aliases_pass_claude_code_filter() -> None:
+    """Every non-claude backend is selectable in /model: each has an id beginning with
+    'anthropic' (Claude Code's gateway discovery drops anything else)."""
+    async with _anthropic_client() as client:
+        resp = await client.get("/v1/models")
+    ids = [row["id"] for row in resp.json()["data"]]
+    discoverable = [m for m in ids if m.lower().startswith(("claude", "anthropic"))]
+    # codex/deepseek/copilot/auggie are reachable only via their anthropic-- aliases.
+    for backend in ("codex", "deepseek", "copilot", "auggie"):
+        assert any(
+            m.startswith(f"anthropic--{backend}--") for m in discoverable
+        ), f"{backend} has no discovery alias in /v1/models; got {discoverable!r}"
 
 
 # --- CompositionRoot coexistence (the key G006 risk) ------------------------

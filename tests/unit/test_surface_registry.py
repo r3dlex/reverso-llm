@@ -20,6 +20,7 @@ from reverso.protocols.surface_registry import (
     _build_model_index,
     canonical_model_id,
     cross_check_anthropic_models,
+    list_anthropic_discovery_aliases,
     list_anthropic_surface_models,
     resolve_anthropic_backend,
 )
@@ -223,6 +224,43 @@ def test_rowless_prefix_authoritative_over_indexed_id() -> None:
     assert resolve_anthropic_backend("auggie/gpt-5.5") == "auggie"
     # The bare (unqualified) id still routes to its indexed owner, unchanged.
     assert resolve_anthropic_backend("gpt-5.5") == "codex"
+
+
+def test_discovery_alias_resolves_and_canonicalizes() -> None:
+    # anthropic--<backend>--<bare> routes to <backend> and canonicalizes to <bare>, so a
+    # /model-picker pick of a non-claude backend reaches the right adapter.
+    cases = {
+        "anthropic--codex--gpt-5.5": ("codex", "gpt-5.5"),
+        "anthropic--deepseek--deepseek-v4-pro": ("deepseek", "deepseek-v4-pro"),
+        "anthropic--copilot--gpt-5.5": ("copilot", "gpt-5.5"),
+        "anthropic--auggie--opus4.7": ("auggie", "opus4.7"),
+        "anthropic--claude--claude-opus-4-8": ("claude", "claude-opus-4-8"),
+    }
+    for alias, (backend, bare) in cases.items():
+        assert resolve_anthropic_backend(alias) == backend, alias
+        assert canonical_model_id(alias) == bare, alias
+
+
+def test_discovery_alias_malformed_fails_closed() -> None:
+    # Non-surface backend, empty bare, or missing separator must not route.
+    assert resolve_anthropic_backend("anthropic--openai--gpt-5.5") is None
+    assert resolve_anthropic_backend("anthropic--codex--") is None
+    assert resolve_anthropic_backend("anthropic--codex") is None
+
+
+def test_discovery_aliases_listing_covers_non_claude_backends() -> None:
+    rows = list_anthropic_discovery_aliases()
+    ids = {row["id"] for row in rows}
+    backends = {row["backend"] for row in rows}
+    # Every alias id passes Claude Code's gateway-discovery filter...
+    assert all(rid.startswith("anthropic--") for rid in ids)
+    # ...covers each non-claude surface backend, and never aliases claude (bare claude
+    # ids already pass the filter, so aliasing them would only duplicate picker rows).
+    assert {"codex", "deepseek", "copilot", "auggie"} <= backends
+    assert "claude" not in backends
+    # Each alias round-trips through the resolver to its declared backend.
+    for row in rows:
+        assert resolve_anthropic_backend(row["id"]) == row["backend"]
 
 
 def test_qualified_mismatch_fails_closed() -> None:
