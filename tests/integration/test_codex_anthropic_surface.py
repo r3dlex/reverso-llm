@@ -8,9 +8,10 @@ credential is touched). They pin the G004 contract:
   backend via the single surface_registry authority and is served;
 - tools: codex classifies tools.function as PARTIAL (text-only ceiling, mirror of
   auggie): the field is accepted (200) but no tool_use OUTPUT block is emitted;
-- gating: image / thinking are UNSUPPORTED on codex and rejected with a 400
-  invalid_request_error before dispatch; cache_control is DEGRADED (stripped)
-  before gating, so a request carrying it succeeds (200) instead of 400.
+- gating: image is UNSUPPORTED on codex and rejected with a 400
+  invalid_request_error before dispatch; thinking and cache_control are DEGRADED
+  (stripped) before gating, so a request carrying either succeeds (200) instead
+  of 400.
 
 codex is Anthropic-surface-ONLY; the Responses-surface exclusion is covered
 separately (G006 test_codex_responses_exclusion). The FixtureAdapter is reused
@@ -110,7 +111,7 @@ async def test_codex_tools_text_only_ceiling() -> None:
     assert text, "codex must degrade to a non-empty text message"
 
 
-# --- gating: image / thinking are 400 invalid_request_error -----------------
+# --- gating: image is a 400; thinking + cache_control degrade to 200 ---------
 
 
 async def _assert_unsupported(payload: dict[str, Any], feature: str) -> None:
@@ -152,10 +153,20 @@ async def test_image_unsupported_on_codex() -> None:
 
 
 @pytest.mark.asyncio
-async def test_thinking_unsupported_on_codex() -> None:
+async def test_thinking_degraded_on_codex() -> None:
+    # codex cannot emit an extended-thinking trace, so the thinking param is
+    # stripped (degraded) before gating: this SAME payload that used to 400 now
+    # succeeds with a normal codex text turn. This is the gpt-5.5 "hello" case.
     payload = _messages_body("gpt-5.5", "think hard")
     payload["thinking"] = {"type": "enabled", "budget_tokens": 1024}
-    await _assert_unsupported(payload, "thinking")
+    async with _build_client() as client:
+        resp = await client.post("/v1/messages", json=payload)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["type"] == "message"
+    assert body["role"] == "assistant"
+    text = "".join(b["text"] for b in body["content"] if b["type"] == "text")
+    assert text, "a codex text turn must surface a non-empty text content block"
 
 
 @pytest.mark.asyncio

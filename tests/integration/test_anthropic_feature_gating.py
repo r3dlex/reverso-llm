@@ -3,10 +3,10 @@
 These drive the real AnthropicMessagesApp through httpx.ASGITransport, backed by
 the UNCHANGED FixtureAdapter, and pin the ADR 0006 capability ceiling end to end:
 image is native on copilot but a 400 invalid_request_error on deepseek/auggie;
-extended thinking (param OR content block) is a 400 on every backend;
-cache_control on a message / system / tool-definition / nested tool_result block
-is DEGRADED (stripped) on every backend so the request succeeds (200) instead of
-being rejected; tools degrade (auggie text-only, copilot/deepseek emit tool_use);
+extended thinking (param OR content block) and cache_control (on a message /
+system / tool-definition / nested tool_result block) are both DEGRADED (stripped)
+on every backend so the request succeeds (200) instead of being rejected;
+tools degrade (auggie text-only, copilot/deepseek emit tool_use);
 and a streaming request that requests an unsupported feature is rejected with a
 400 JSON body BEFORE the stream opens (never a 200 event-stream).
 Error envelopes are secret-free and name the feature and backend.
@@ -132,7 +132,10 @@ async def test_nested_image_in_tool_result_rejected(backend: str) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("backend", ANTHROPIC_BACKENDS)
-async def test_thinking_param_rejected_on_all_backends(backend: str) -> None:
+async def test_thinking_param_degraded_on_all_backends(backend: str) -> None:
+    # No backend can emit an extended-thinking trace, so the surface strips the
+    # thinking param (degrades) before gating: this SAME payload that used to 400
+    # now succeeds. Clients like Claude Code enable thinking on every request.
     async with _build_client() as client:
         resp = await client.post(
             _prefix(backend),
@@ -143,13 +146,48 @@ async def test_thinking_param_rejected_on_all_backends(backend: str) -> None:
                 "messages": [{"role": "user", "content": "think hard"}],
             },
         )
-    assert resp.status_code == 400
-    _assert_invalid_request(resp.json(), backend, "thinking")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["type"] == "message"
+    assert body["role"] == "assistant"
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("backend", ANTHROPIC_BACKENDS)
-async def test_thinking_content_block_rejected_on_all_backends(backend: str) -> None:
+async def test_thinking_content_block_degraded_on_all_backends(backend: str) -> None:
+    # A thinking block carried in history is stripped too, so a continuation turn
+    # does not re-trigger the gate. A text block keeps the message non-empty.
+    async with _build_client() as client:
+        resp = await client.post(
+            _prefix(backend),
+            json={
+                "model": _BACKEND_MODEL[backend],
+                "max_tokens": 64,
+                "messages": [
+                    {"role": "user", "content": "hi"},
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {"type": "thinking", "thinking": "step"},
+                            {"type": "text", "text": "answer"},
+                        ],
+                    },
+                    {"role": "user", "content": "more"},
+                ],
+            },
+        )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["type"] == "message"
+    assert body["role"] == "assistant"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend", ANTHROPIC_BACKENDS)
+async def test_thinking_nested_in_tool_result_degraded(backend: str) -> None:
+    # A thinking block nested inside tool_result content is extracted like a
+    # top-level one, so the strip must reach it too. Mirror of the nested-image
+    # rejection test, but thinking degrades (200) instead of 400.
     async with _build_client() as client:
         resp = await client.post(
             _prefix(backend),
@@ -158,14 +196,25 @@ async def test_thinking_content_block_rejected_on_all_backends(backend: str) -> 
                 "max_tokens": 64,
                 "messages": [
                     {
-                        "role": "assistant",
-                        "content": [{"type": "thinking", "thinking": "step"}],
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "toolu_1",
+                                "content": [
+                                    {"type": "thinking", "thinking": "nested"},
+                                    {"type": "text", "text": "out"},
+                                ],
+                            }
+                        ],
                     }
                 ],
             },
         )
-    assert resp.status_code == 400
-    _assert_invalid_request(resp.json(), backend, "thinking")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["type"] == "message"
+    assert body["role"] == "assistant"
 
 
 # --- cache_control ----------------------------------------------------------
@@ -428,23 +477,28 @@ async def test_streaming_image_rejected_json_400_not_event_stream(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("backend", ANTHROPIC_BACKENDS)
-async def test_streaming_thinking_rejected_json_400_not_event_stream(
+async def test_streaming_thinking_degraded_opens_event_stream(
     backend: str,
 ) -> None:
+    """thinking degrades on the streaming path too: the stream opens (200) rather
+    than the pre-stream 400 it used to raise. The streaming gate still rejects a
+    genuinely unsupported feature (image) -- see the image streaming test above."""
     async with _build_client() as client:
-        await _assert_streaming_gate_400(
-            client,
+        async with client.stream(
+            "POST",
             _prefix(backend),
-            {
+            json={
                 "model": _BACKEND_MODEL[backend],
                 "max_tokens": 64,
                 "stream": True,
                 "thinking": {"type": "enabled", "budget_tokens": 1024},
                 "messages": [{"role": "user", "content": "think hard"}],
             },
-            backend,
-            "thinking",
-        )
+        ) as resp:
+            assert resp.status_code == 200, await resp.aread()
+            assert "text/event-stream" in resp.headers["content-type"]
+            async for _ in resp.aiter_text():
+                pass
 
 
 @pytest.mark.asyncio

@@ -15,8 +15,13 @@ Mapping from Anthropic request shapes to capability-table feature keys:
     inner content list) -> ``input.image`` (native on copilot, unsupported on
     deepseek/auggie).
   - extended thinking: the ``thinking`` request param OR a thinking /
-    redacted_thinking content block -> ``thinking`` (unsupported on all backends,
-    structurally-impossible-M1).
+    redacted_thinking content block -> ``thinking`` (unsupported on all backends).
+    Like cache_control, the surface DEGRADES it (strips the request param and any
+    thinking / redacted_thinking content blocks via ``strip_degradable_features``
+    before gating) instead of hard-rejecting: no backend can produce an extended-
+    thinking trace, so declining it still yields a valid plain response, and
+    clients that always request thinking (e.g. Claude Code) stay usable. It
+    therefore never reaches the reject path below in normal flow.
   - ``cache_control`` carried on ANY message content block, system block, tool
     definition (``tools[].cache_control``), or nested tool_result inner content
     block -> ``caching.cache_control``. Unsupported on all backends, but it is a
@@ -88,6 +93,13 @@ def _has_cache_control(obj: Any) -> bool:
     return isinstance(obj, dict) and obj.get("cache_control") is not None
 
 
+def _is_thinking_block(block: Any) -> bool:
+    return isinstance(block, dict) and block.get("type") in (
+        "thinking",
+        "redacted_thinking",
+    )
+
+
 def _scan_block_list(blocks: Any, found: set[str], *, depth: int = 0) -> None:
     """Scan a list of Anthropic content blocks, accumulating feature keys.
 
@@ -98,6 +110,11 @@ def _scan_block_list(blocks: Any, found: set[str], *, depth: int = 0) -> None:
     ``depth`` is the current recursion depth; scanning stops silently at
     ``_MAX_BLOCK_DEPTH`` so a malformed deeply-nested payload cannot exhaust
     the Python call stack.
+
+    Keep this traversal in lockstep with ``_strip_degradable_blocks``: the strip
+    must reach every block this scanner can flag, or a detected feature could
+    survive the strip and 400 at the gate. A new recursion target added here must
+    be added there too.
     """
     if depth > _MAX_BLOCK_DEPTH:
         return
@@ -178,47 +195,82 @@ def extract_anthropic_features(payload: dict[str, Any]) -> set[str]:
     return found
 
 
-def _strip_cache_control_blocks(blocks: Any, *, depth: int = 0) -> None:
-    """Remove ``cache_control`` from each block in a content list, recursively.
+def _strip_degradable_blocks(blocks: Any, *, depth: int = 0) -> Any:
+    """Return a content list with degradable features removed, recursively.
 
-    Mirrors _scan_block_list's traversal (incl. nested tool_result content) but
-    deletes the key instead of recording it. Depth-capped like the scanner so a
-    crafted deep payload cannot exhaust the stack.
+    Mirrors _scan_block_list's traversal exactly (incl. descent into nested
+    tool_result inner content) so the strip neutralizes a feature everywhere the
+    scanner would detect it -- keeping strip and extract in lockstep:
+      - drops ``thinking`` / ``redacted_thinking`` blocks (filtered out), and
+      - pops ``cache_control`` from every surviving block.
+    Depth-capped like the scanner so a crafted deep payload cannot exhaust the
+    stack; beyond the cap the list is returned unchanged, matching the scanner
+    which also stops detecting there (so the gate cannot 400 on it either).
+    Non-list input is returned unchanged.
     """
-    if depth > _MAX_BLOCK_DEPTH:
-        return
-    if not isinstance(blocks, list):
-        return
+    if depth > _MAX_BLOCK_DEPTH or not isinstance(blocks, list):
+        return blocks
+    stripped: list[Any] = []
     for block in blocks:
         if not isinstance(block, dict):
+            stripped.append(block)
+            continue
+        if _is_thinking_block(block):
             continue
         block.pop("cache_control", None)
         if block.get("type") == "tool_result":
-            _strip_cache_control_blocks(block.get("content"), depth=depth + 1)
+            block["content"] = _strip_degradable_blocks(
+                block.get("content"), depth=depth + 1
+            )
+        stripped.append(block)
+    return stripped
 
 
 def strip_degradable_features(payload: dict[str, Any]) -> None:
     """Strip transparently-degradable features from an Anthropic payload IN PLACE.
 
-    Currently strips ``cache_control`` everywhere it can appear (message content
-    blocks including nested tool_result, ``system`` blocks, and tool definitions).
-    cache_control is a prompt-caching OPTIMIZATION: dropping it changes no response
-    semantics, only whether the provider caches. No backend on this surface can
-    honor it, so rather than hard-rejecting (a 400 on every request), the surface
-    silently DEGRADES by stripping it. Clients such as Claude Code attach
-    cache_control to essentially every request, so degrading is what keeps them
-    usable instead of failing each call. Semantic features (thinking, image) change
-    the response and are NOT degraded here; they remain hard-gated by
-    gate_anthropic_features. Call this BEFORE gating and translation so the stripped
-    payload is what both the gate and the downstream adapter observe.
+    Strips two features that no backend on this surface can honor and that degrade
+    cleanly rather than corrupting the response:
+
+      - ``cache_control`` everywhere it can appear (message content blocks including
+        nested tool_result, ``system`` blocks, and tool definitions). This is a
+        prompt-caching OPTIMIZATION: dropping it changes no response semantics, only
+        whether the provider caches.
+      - extended thinking: the top-level ``thinking`` request param and any
+        ``thinking`` / ``redacted_thinking`` content blocks in message history.
+        No backend can produce an extended-thinking trace, so declining the request
+        only loses a reasoning trace the backend could never have emitted; the
+        backend still returns a valid plain response.
+
+    Both are ``unsupported`` on every surface backend, so the strip is unconditional
+    (it does not need the resolved backend). If a backend ever classifies either as
+    native/partial, this would need to become backend-aware to avoid degrading a
+    feature that backend could actually serve. Clients such as Claude Code attach
+    cache_control and request thinking on essentially every call, so degrading is
+    what keeps them usable instead of failing each request with a 400. The remaining
+    semantic feature, ``input.image`` (native on copilot), is NOT degraded here:
+    dropping an image would discard real input and change the answer, so it stays
+    hard-gated by gate_anthropic_features. Call this BEFORE gating and translation so
+    the stripped payload is what both the gate and the downstream adapter observe.
     """
     if not isinstance(payload, dict):
         return
+    # Extended thinking is requested via this top-level param; declining it is the
+    # core fix for clients that always enable thinking (no backend can serve it).
+    payload.pop("thinking", None)
     messages = payload.get("messages")
     if isinstance(messages, list):
         for message in messages:
-            if isinstance(message, dict):
-                _strip_cache_control_blocks(message.get("content"))
+            if not isinstance(message, dict):
+                continue
+            content = message.get("content")
+            if isinstance(content, list):
+                # Strip cache_control AND thinking / redacted_thinking blocks at
+                # every depth (incl. nested tool_result content) so a continuation
+                # turn replaying history does not re-trigger either gate. An
+                # assistant turn carries its text alongside any thinking block, so
+                # filtering leaves the response content intact.
+                message["content"] = _strip_degradable_blocks(content)
     system = payload.get("system")
     if isinstance(system, list):
         for block in system:

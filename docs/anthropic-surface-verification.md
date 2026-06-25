@@ -176,7 +176,8 @@ Codex backend coverage (Milestone 2, ADR 0007):
   and to the text-only tool-ceiling group (NOT to the tool-output providers), with
   a gpt-* model id exercising bare-path auto-resolution to the codex backend.
 - `test_codex_anthropic_surface` - gpt-* model routing to the codex backend, the
-  text-only tool ceiling, the image / thinking / cache_control unsupported gates,
+  text-only tool ceiling, the image unsupported gate plus the thinking /
+  cache_control degradation (both stripped before gating so the request succeeds),
   and the codex streaming event order on the Anthropic surface.
 - the codex rows in `test_surface_registry` - `resolve_anthropic_backend` returns
   `codex` for the five gpt ids, the listing includes them sourced from the static

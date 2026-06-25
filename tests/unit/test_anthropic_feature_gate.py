@@ -400,13 +400,14 @@ def test_cap_feature_at_depth_beyond_cap_is_not_detected() -> None:
     assert FEATURE_IMAGE not in extract_anthropic_features(payload)
 
 
-# --- strip_degradable_features (cache_control degradation, ADR 0006) ---------
+# --- strip_degradable_features (cache_control + thinking degradation) --------
 #
-# cache_control is a transparent caching optimization no backend honors, so the
-# surface DEGRADES it by stripping it in place before gating instead of hard
-# rejecting. These tests pin that strip everywhere cache_control can appear, that
-# it composes with the (unchanged) gate so caching.cache_control is no longer
-# extracted, and that it leaves semantic features (thinking, image) untouched.
+# cache_control (a caching optimization) and extended thinking (a reasoning trace
+# no backend can emit) are both unsupported on every backend and degrade cleanly,
+# so the surface DEGRADES them by stripping in place before gating instead of hard
+# rejecting. These tests pin that strip everywhere each can appear, that it composes
+# with the (unchanged) gate so the feature is no longer extracted, and that it
+# leaves the one genuinely semantic feature (input.image) untouched.
 
 
 def test_strip_removes_cache_control_from_message_block() -> None:
@@ -517,8 +518,72 @@ def test_strip_is_depth_capped_does_not_raise() -> None:
     strip_degradable_features(payload)  # must not raise RecursionError
 
 
-def test_strip_does_not_remove_thinking_or_image() -> None:
-    """Only cache_control is degraded; semantic features stay so the gate still sees them."""
+def test_strip_removes_thinking_request_param() -> None:
+    payload = {
+        "thinking": {"type": "enabled", "budget_tokens": 1024},
+        "messages": [{"role": "user", "content": "hi"}],
+    }
+    strip_degradable_features(payload)
+    assert "thinking" not in payload
+    assert FEATURE_THINKING not in extract_anthropic_features(payload)
+
+
+def test_strip_removes_thinking_content_blocks() -> None:
+    payload = {
+        "messages": [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "deliberating"},
+                    {"type": "redacted_thinking", "data": "x"},
+                    {"type": "text", "text": "the answer"},
+                ],
+            }
+        ]
+    }
+    strip_degradable_features(payload)
+    blocks = payload["messages"][0]["content"]
+    # Thinking / redacted_thinking dropped; the assistant's text survives.
+    assert [b["type"] for b in blocks] == ["text"]
+    assert FEATURE_THINKING not in extract_anthropic_features(payload)
+
+
+def test_strip_removes_thinking_nested_in_tool_result() -> None:
+    """A thinking block nested in tool_result content is detected by extract, so the
+    strip must reach it too -- otherwise it survives and the gate still 400s."""
+    payload = {
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "toolu_1",
+                        "content": [
+                            {"type": "thinking", "thinking": "nested"},
+                            {
+                                "type": "text",
+                                "text": "out",
+                                "cache_control": {"type": "ephemeral"},
+                            },
+                        ],
+                    }
+                ],
+            }
+        ]
+    }
+    strip_degradable_features(payload)
+    inner = payload["messages"][0]["content"][0]["content"]
+    # thinking block dropped, cache_control popped, text survives.
+    assert [b["type"] for b in inner] == ["text"]
+    assert "cache_control" not in inner[0]
+    found = extract_anthropic_features(payload)
+    assert FEATURE_THINKING not in found
+    assert FEATURE_CACHE_CONTROL not in found
+
+
+def test_strip_degrades_thinking_but_keeps_image() -> None:
+    """thinking and cache_control degrade; input.image (genuinely semantic) stays."""
     payload = {
         "thinking": {"type": "enabled", "budget_tokens": 1024},
         "messages": [
@@ -540,5 +605,6 @@ def test_strip_does_not_remove_thinking_or_image() -> None:
     assert image_block["type"] == "image"
     found = extract_anthropic_features(payload)
     assert FEATURE_CACHE_CONTROL not in found
+    assert FEATURE_THINKING not in found
+    # image is real input that cannot be degraded without changing the answer.
     assert FEATURE_IMAGE in found
-    assert FEATURE_THINKING in found

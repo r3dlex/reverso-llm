@@ -37,10 +37,11 @@ capability ceiling fixed by responses_parity_surface.json:
              mirror of auggie: `codex exec` emits no structured function-call
              output, only command_execution observations), input.image
              unsupported, thinking unsupported.
-  - thinking is unsupported on ALL four backends.
-  - caching.cache_control is DEGRADED (stripped) on ALL four backends: a request
-    carrying it succeeds (200) instead of being rejected, since prompt caching is
-    a transparent optimization no backend on this surface honors.
+  - thinking and caching.cache_control are both DEGRADED (stripped) on ALL four
+    backends: a request carrying either succeeds (200) instead of being rejected.
+    cache_control is a transparent caching optimization; thinking is a reasoning
+    trace no backend on this surface can emit, so declining it loses nothing the
+    backend could have produced.
 """
 
 from __future__ import annotations
@@ -411,11 +412,23 @@ async def test_image_unsupported_on_non_copilot(provider: str) -> None:
     await _assert_unsupported(provider, _image_body(provider), "input.image")
 
 
-# extended thinking is unsupported on ALL three backends.
+# extended thinking is DEGRADED (stripped) on ALL backends: no backend can emit a
+# thinking trace, so the SAME payload that used to 400 now succeeds as a plain turn.
 @pytest.mark.asyncio
 @pytest.mark.parametrize("provider", PROVIDERS)
-async def test_thinking_unsupported_on_all(provider: str) -> None:
-    await _assert_unsupported(provider, _thinking_body(provider), "thinking")
+async def test_thinking_degraded_on_all(provider: str) -> None:
+    async with _build_client() as client:
+        resp = await client.post(
+            f"{_prefix(provider)}/messages", json=_thinking_body(provider)
+        )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["type"] == "message"
+    assert body["role"] == "assistant"
+    text = "".join(
+        block["text"] for block in body["content"] if block["type"] == "text"
+    )
+    assert text, "a text turn must surface a non-empty text content block"
 
 
 # cache_control is DEGRADED (stripped) on ALL four backends: the SAME payload that
