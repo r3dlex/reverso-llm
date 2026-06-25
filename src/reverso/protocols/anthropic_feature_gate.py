@@ -15,8 +15,13 @@ Mapping from Anthropic request shapes to capability-table feature keys:
     inner content list) -> ``input.image`` (native on copilot, unsupported on
     deepseek/auggie).
   - extended thinking: the ``thinking`` request param OR a thinking /
-    redacted_thinking content block -> ``thinking`` (unsupported on all backends,
-    structurally-impossible-M1).
+    redacted_thinking content block -> ``thinking`` (unsupported on all backends).
+    Like cache_control, the surface DEGRADES it (strips the request param and any
+    thinking / redacted_thinking content blocks via ``strip_degradable_features``
+    before gating) instead of hard-rejecting: no backend can produce an extended-
+    thinking trace, so declining it still yields a valid plain response, and
+    clients that always request thinking (e.g. Claude Code) stay usable. It
+    therefore never reaches the reject path below in normal flow.
   - ``cache_control`` carried on ANY message content block, system block, tool
     definition (``tools[].cache_control``), or nested tool_result inner content
     block -> ``caching.cache_control``. Unsupported on all backends, but it is a
@@ -86,6 +91,13 @@ _MAX_BLOCK_DEPTH = 8
 
 def _has_cache_control(obj: Any) -> bool:
     return isinstance(obj, dict) and obj.get("cache_control") is not None
+
+
+def _is_thinking_block(block: Any) -> bool:
+    return isinstance(block, dict) and block.get("type") in (
+        "thinking",
+        "redacted_thinking",
+    )
 
 
 def _scan_block_list(blocks: Any, found: set[str], *, depth: int = 0) -> None:
@@ -200,25 +212,48 @@ def _strip_cache_control_blocks(blocks: Any, *, depth: int = 0) -> None:
 def strip_degradable_features(payload: dict[str, Any]) -> None:
     """Strip transparently-degradable features from an Anthropic payload IN PLACE.
 
-    Currently strips ``cache_control`` everywhere it can appear (message content
-    blocks including nested tool_result, ``system`` blocks, and tool definitions).
-    cache_control is a prompt-caching OPTIMIZATION: dropping it changes no response
-    semantics, only whether the provider caches. No backend on this surface can
-    honor it, so rather than hard-rejecting (a 400 on every request), the surface
-    silently DEGRADES by stripping it. Clients such as Claude Code attach
-    cache_control to essentially every request, so degrading is what keeps them
-    usable instead of failing each call. Semantic features (thinking, image) change
-    the response and are NOT degraded here; they remain hard-gated by
-    gate_anthropic_features. Call this BEFORE gating and translation so the stripped
-    payload is what both the gate and the downstream adapter observe.
+    Strips two features that no backend on this surface can honor and that degrade
+    cleanly rather than corrupting the response:
+
+      - ``cache_control`` everywhere it can appear (message content blocks including
+        nested tool_result, ``system`` blocks, and tool definitions). This is a
+        prompt-caching OPTIMIZATION: dropping it changes no response semantics, only
+        whether the provider caches.
+      - extended thinking: the top-level ``thinking`` request param and any
+        ``thinking`` / ``redacted_thinking`` content blocks in message history.
+        No backend can produce an extended-thinking trace, so declining the request
+        only loses a reasoning trace the backend could never have emitted; the
+        backend still returns a valid plain response.
+
+    Both are ``unsupported`` on every surface backend, so the strip is unconditional
+    (it does not need the resolved backend). If a backend ever classifies either as
+    native/partial, this would need to become backend-aware to avoid degrading a
+    feature that backend could actually serve. Clients such as Claude Code attach
+    cache_control and request thinking on essentially every call, so degrading is
+    what keeps them usable instead of failing each request with a 400. The remaining
+    semantic feature, ``input.image`` (native on copilot), is NOT degraded here:
+    dropping an image would discard real input and change the answer, so it stays
+    hard-gated by gate_anthropic_features. Call this BEFORE gating and translation so
+    the stripped payload is what both the gate and the downstream adapter observe.
     """
     if not isinstance(payload, dict):
         return
+    # Extended thinking is requested via this top-level param; declining it is the
+    # core fix for clients that always enable thinking (no backend can serve it).
+    payload.pop("thinking", None)
     messages = payload.get("messages")
     if isinstance(messages, list):
         for message in messages:
-            if isinstance(message, dict):
-                _strip_cache_control_blocks(message.get("content"))
+            if not isinstance(message, dict):
+                continue
+            content = message.get("content")
+            _strip_cache_control_blocks(content)
+            if isinstance(content, list):
+                # Drop thinking / redacted_thinking blocks carried in history so a
+                # continuation turn does not re-trigger the thinking gate. An
+                # assistant turn always carries its text alongside, so this leaves
+                # the response content intact.
+                message["content"] = [b for b in content if not _is_thinking_block(b)]
     system = payload.get("system")
     if isinstance(system, list):
         for block in system:
