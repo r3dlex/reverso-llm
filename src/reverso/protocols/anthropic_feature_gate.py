@@ -110,6 +110,11 @@ def _scan_block_list(blocks: Any, found: set[str], *, depth: int = 0) -> None:
     ``depth`` is the current recursion depth; scanning stops silently at
     ``_MAX_BLOCK_DEPTH`` so a malformed deeply-nested payload cannot exhaust
     the Python call stack.
+
+    Keep this traversal in lockstep with ``_strip_degradable_blocks``: the strip
+    must reach every block this scanner can flag, or a detected feature could
+    survive the strip and 400 at the gate. A new recursion target added here must
+    be added there too.
     """
     if depth > _MAX_BLOCK_DEPTH:
         return
