@@ -41,19 +41,21 @@ to put the provider up front: `codex/gpt-5.5`, `deepseek/deepseek-v4-pro`,
 
 1. **`provider/model` is routed by its explicit prefix, prefix authoritative.**
    `resolve_anthropic_backend` splits a normalized id on the first `/`. When a prefix is
-   present it routes through `_resolve_qualified`, which fails closed unless:
-   - the provider is a member of `SURFACE_BACKENDS["anthropic"]`, and
-   - the bare model is non-empty, and
-   - when the bare model is indexed, it is indexed to *this* provider (a
-     contradiction such as `deepseek/gpt-5.5` fails closed rather than silently
-     honoring either side).
-   When the bare model is unknown to the index, the explicit provider is trusted **only
-   for a rowless backend**: `copilot`/`auggie` own no index taxonomy, so naming the
-   provider up front is the only way to reach them. A backend that *does* own a taxonomy
-   (`deepseek`/`codex`) must name a model it actually serves; an unknown bare model behind
-   a known-backend prefix (`codex/totally-made-up`, or `codex/ gpt-5.5` with stray
-   whitespace) fails closed exactly as the bare-id path would, so the qualifier never
-   becomes a fail-open bypass of the index.
+   present it routes through `_resolve_qualified`, which fails closed unless the provider
+   is a member of `SURFACE_BACKENDS["anthropic"]` and the bare model is non-empty. Beyond
+   that, the decision turns on whether the named provider owns an index taxonomy:
+   - **Rowless backend (`copilot`/`auggie`): the prefix is authoritative for ANY bare
+     id**, including one indexed to a rows-owning backend. A rowless backend owns no
+     taxonomy, so the index cannot know which models it serves; naming it up front is the
+     only way to reach it, and that is the whole point of the qualifier. This is what lets
+     `copilot/gpt-5.5` select GitHub Copilot's gpt-5.5 even though bare `gpt-5.5` is indexed
+     to `codex` -- the two are different upstream subscriptions that share a model name.
+   - **Rows-owning backend (`codex`/`deepseek`/`claude`): the bare model must be indexed to
+     *this* provider.** A bare id indexed to a different backend (`deepseek/gpt-5.5`) is a
+     conflict that fails closed, and an unknown bare id behind such a prefix
+     (`codex/totally-made-up`, or `codex/ gpt-5.5` with stray whitespace) fails closed
+     exactly as the bare-id path would, so the qualifier never becomes a fail-open bypass
+     of the index.
 
 2. **claude stays fail-closed.** The claude-family check runs on the whole normalized id
    before the split, so `claude/...` (and any id containing `claude`) resolves to None.
