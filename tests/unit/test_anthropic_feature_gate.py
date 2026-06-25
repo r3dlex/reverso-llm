@@ -548,6 +548,40 @@ def test_strip_removes_thinking_content_blocks() -> None:
     assert FEATURE_THINKING not in extract_anthropic_features(payload)
 
 
+def test_strip_removes_thinking_nested_in_tool_result() -> None:
+    """A thinking block nested in tool_result content is detected by extract, so the
+    strip must reach it too -- otherwise it survives and the gate still 400s."""
+    payload = {
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "toolu_1",
+                        "content": [
+                            {"type": "thinking", "thinking": "nested"},
+                            {
+                                "type": "text",
+                                "text": "out",
+                                "cache_control": {"type": "ephemeral"},
+                            },
+                        ],
+                    }
+                ],
+            }
+        ]
+    }
+    strip_degradable_features(payload)
+    inner = payload["messages"][0]["content"][0]["content"]
+    # thinking block dropped, cache_control popped, text survives.
+    assert [b["type"] for b in inner] == ["text"]
+    assert "cache_control" not in inner[0]
+    found = extract_anthropic_features(payload)
+    assert FEATURE_THINKING not in found
+    assert FEATURE_CACHE_CONTROL not in found
+
+
 def test_strip_degrades_thinking_but_keeps_image() -> None:
     """thinking and cache_control degrade; input.image (genuinely semantic) stays."""
     payload = {

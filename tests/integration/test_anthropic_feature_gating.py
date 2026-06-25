@@ -182,6 +182,41 @@ async def test_thinking_content_block_degraded_on_all_backends(backend: str) -> 
     assert body["role"] == "assistant"
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend", ANTHROPIC_BACKENDS)
+async def test_thinking_nested_in_tool_result_degraded(backend: str) -> None:
+    # A thinking block nested inside tool_result content is extracted like a
+    # top-level one, so the strip must reach it too. Mirror of the nested-image
+    # rejection test, but thinking degrades (200) instead of 400.
+    async with _build_client() as client:
+        resp = await client.post(
+            _prefix(backend),
+            json={
+                "model": _BACKEND_MODEL[backend],
+                "max_tokens": 64,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "toolu_1",
+                                "content": [
+                                    {"type": "thinking", "thinking": "nested"},
+                                    {"type": "text", "text": "out"},
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            },
+        )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["type"] == "message"
+    assert body["role"] == "assistant"
+
+
 # --- cache_control ----------------------------------------------------------
 
 

@@ -190,23 +190,35 @@ def extract_anthropic_features(payload: dict[str, Any]) -> set[str]:
     return found
 
 
-def _strip_cache_control_blocks(blocks: Any, *, depth: int = 0) -> None:
-    """Remove ``cache_control`` from each block in a content list, recursively.
+def _strip_degradable_blocks(blocks: Any, *, depth: int = 0) -> Any:
+    """Return a content list with degradable features removed, recursively.
 
-    Mirrors _scan_block_list's traversal (incl. nested tool_result content) but
-    deletes the key instead of recording it. Depth-capped like the scanner so a
-    crafted deep payload cannot exhaust the stack.
+    Mirrors _scan_block_list's traversal exactly (incl. descent into nested
+    tool_result inner content) so the strip neutralizes a feature everywhere the
+    scanner would detect it -- keeping strip and extract in lockstep:
+      - drops ``thinking`` / ``redacted_thinking`` blocks (filtered out), and
+      - pops ``cache_control`` from every surviving block.
+    Depth-capped like the scanner so a crafted deep payload cannot exhaust the
+    stack; beyond the cap the list is returned unchanged, matching the scanner
+    which also stops detecting there (so the gate cannot 400 on it either).
+    Non-list input is returned unchanged.
     """
-    if depth > _MAX_BLOCK_DEPTH:
-        return
-    if not isinstance(blocks, list):
-        return
+    if depth > _MAX_BLOCK_DEPTH or not isinstance(blocks, list):
+        return blocks
+    stripped: list[Any] = []
     for block in blocks:
         if not isinstance(block, dict):
+            stripped.append(block)
+            continue
+        if _is_thinking_block(block):
             continue
         block.pop("cache_control", None)
         if block.get("type") == "tool_result":
-            _strip_cache_control_blocks(block.get("content"), depth=depth + 1)
+            block["content"] = _strip_degradable_blocks(
+                block.get("content"), depth=depth + 1
+            )
+        stripped.append(block)
+    return stripped
 
 
 def strip_degradable_features(payload: dict[str, Any]) -> None:
@@ -247,13 +259,13 @@ def strip_degradable_features(payload: dict[str, Any]) -> None:
             if not isinstance(message, dict):
                 continue
             content = message.get("content")
-            _strip_cache_control_blocks(content)
             if isinstance(content, list):
-                # Drop thinking / redacted_thinking blocks carried in history so a
-                # continuation turn does not re-trigger the thinking gate. An
-                # assistant turn always carries its text alongside, so this leaves
-                # the response content intact.
-                message["content"] = [b for b in content if not _is_thinking_block(b)]
+                # Strip cache_control AND thinking / redacted_thinking blocks at
+                # every depth (incl. nested tool_result content) so a continuation
+                # turn replaying history does not re-trigger either gate. An
+                # assistant turn carries its text alongside any thinking block, so
+                # filtering leaves the response content intact.
+                message["content"] = _strip_degradable_blocks(content)
     system = payload.get("system")
     if isinstance(system, list):
         for block in system:
