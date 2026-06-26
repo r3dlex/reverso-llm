@@ -47,6 +47,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
@@ -216,6 +217,45 @@ def _workspace_from_headers(headers: list[tuple[bytes, bytes]]) -> str | None:
             if candidate and os.path.isabs(candidate) and os.path.isdir(candidate):
                 return candidate
             return None
+    return None
+
+
+# Claude Code embeds its launch directory in the system prompt of every request as
+# a "- Primary working directory: <path>" line (the harness environment block). The
+# leading "- " is optional and the match is case-insensitive and per-line.
+_PRIMARY_CWD_RE = re.compile(r"(?im)^\s*-?\s*primary working directory:\s*(.+?)\s*$")
+
+
+def _workspace_from_system_prompt(payload: dict[str, Any] | None) -> str | None:
+    """Resolve the caller's workspace from Claude Code's system-prompt cwd line.
+
+    Claude Code includes "- Primary working directory: <path>" in the system prompt
+    of every request, so parsing it lets the surface default the workspace to the
+    caller's launch directory WITHOUT any client config (no header, no shell reload):
+    the CLI-backed adapters (codex/claude) then spawn there instead of the daemon CWD.
+    The explicit x-reverso-workspace header takes precedence over this (it is checked
+    first in __call__). Returns the path ONLY when it is an existing absolute dir, so a
+    missing line or a stale path never sets a bogus subprocess cwd; otherwise None.
+    """
+    if not isinstance(payload, dict):
+        return None
+    system = payload.get("system")
+    if isinstance(system, str):
+        text = system
+    elif isinstance(system, list):
+        text = "\n".join(
+            block.get("text", "")
+            for block in system
+            if isinstance(block, dict) and isinstance(block.get("text"), str)
+        )
+    else:
+        return None
+    match = _PRIMARY_CWD_RE.search(text)
+    if not match:
+        return None
+    candidate = match.group(1).strip()
+    if candidate and os.path.isabs(candidate) and os.path.isdir(candidate):
+        return candidate
     return None
 
 
@@ -439,6 +479,16 @@ class AnthropicMessagesApp:
             )
             return
         payload = _parse_body(body)
+        # Default the workspace to Claude Code's launch dir (from the system-prompt
+        # "Primary working directory" line) when the caller sent no explicit
+        # x-reverso-workspace header. The header (set in __call__) wins; this only
+        # fills the gap so any Claude Code session spawns codex/claude in its launch
+        # dir by default. __call__'s finally still resets the contextvar (the reset
+        # token restores the pre-request value regardless of this set).
+        if CURRENT_PROFILE_WORKSPACE.get() is None:
+            system_workspace = _workspace_from_system_prompt(payload)
+            if system_workspace is not None:
+                CURRENT_PROFILE_WORKSPACE.set(system_workspace)
         model = _model_from_payload(payload)
 
         backend = self._resolve_backend(route, model)

@@ -7,7 +7,9 @@ directory instead of inheriting the daemon CWD. These tests drive
 AnthropicMessagesApp with a fake adapter whose create_response records the contextvar
 value observed at dispatch time, and assert it is set from an existing-absolute-dir
 header, None when the header is absent, and None when the header points at a
-non-existent path (validated away).
+non-existent path (validated away). They also cover the header-less default: the
+surface derives the workspace from Claude Code's "Primary working directory" system
+prompt line, with the explicit header taking precedence.
 """
 
 from __future__ import annotations
@@ -85,6 +87,22 @@ def _messages_body() -> dict[str, Any]:
     }
 
 
+def _messages_body_with_cwd_system(cwd: str) -> dict[str, Any]:
+    # Mirror Claude Code's system-prompt env block, which carries the launch dir as a
+    # "- Primary working directory: <path>" line among other environment details.
+    body = _messages_body()
+    body["system"] = [
+        {
+            "type": "text",
+            "text": (
+                "You are a helpful assistant.\n\n# Environment\n"
+                f" - Primary working directory: {cwd}\n - Platform: darwin\n"
+            ),
+        }
+    ]
+    return body
+
+
 @pytest.mark.asyncio
 async def test_workspace_header_sets_contextvar(tmp_path: Path) -> None:
     # An existing absolute dir in x-reverso-workspace is set on CURRENT_PROFILE_WORKSPACE
@@ -108,6 +126,53 @@ async def test_workspace_header_absent_is_none() -> None:
     adapter = _WorkspaceRecordingAdapter()
     async with _client(adapter) as client:
         resp = await client.post("/v1/messages", json=_messages_body())
+    assert resp.status_code == 200, resp.text
+    assert adapter.recorded == [None]
+    assert CURRENT_PROFILE_WORKSPACE.get() is None
+
+
+@pytest.mark.asyncio
+async def test_workspace_from_system_prompt_when_no_header(tmp_path: Path) -> None:
+    # No header, but the system prompt carries "Primary working directory: <dir>":
+    # the surface defaults the workspace to that launch dir (by-default behavior).
+    adapter = _WorkspaceRecordingAdapter()
+    async with _client(adapter) as client:
+        resp = await client.post(
+            "/v1/messages", json=_messages_body_with_cwd_system(str(tmp_path))
+        )
+    assert resp.status_code == 200, resp.text
+    assert adapter.recorded == [str(tmp_path)]
+    assert CURRENT_PROFILE_WORKSPACE.get() is None
+
+
+@pytest.mark.asyncio
+async def test_workspace_header_overrides_system_prompt(tmp_path: Path) -> None:
+    # When BOTH are present, the explicit header wins over the system-prompt cwd.
+    header_dir = tmp_path / "header"
+    system_dir = tmp_path / "system"
+    header_dir.mkdir()
+    system_dir.mkdir()
+    adapter = _WorkspaceRecordingAdapter()
+    async with _client(adapter) as client:
+        resp = await client.post(
+            "/v1/messages",
+            json=_messages_body_with_cwd_system(str(system_dir)),
+            headers={"x-reverso-workspace": str(header_dir)},
+        )
+    assert resp.status_code == 200, resp.text
+    assert adapter.recorded == [str(header_dir)]
+    assert CURRENT_PROFILE_WORKSPACE.get() is None
+
+
+@pytest.mark.asyncio
+async def test_workspace_from_system_prompt_nonexistent_is_none(tmp_path: Path) -> None:
+    # A system-prompt cwd that does not exist is validated away to None.
+    adapter = _WorkspaceRecordingAdapter()
+    async with _client(adapter) as client:
+        resp = await client.post(
+            "/v1/messages",
+            json=_messages_body_with_cwd_system(str(tmp_path / "missing")),
+        )
     assert resp.status_code == 200, resp.text
     assert adapter.recorded == [None]
     assert CURRENT_PROFILE_WORKSPACE.get() is None
