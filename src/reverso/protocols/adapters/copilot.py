@@ -21,7 +21,7 @@ import platform
 import subprocess
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, AsyncIterator
 
 import httpx
 
@@ -35,9 +35,27 @@ from reverso.protocols.adapter import (
 from reverso.protocols.auth import AuthResolution, redact_secret
 from reverso.protocols.copilot_models import (
     canonical_copilot_responses_model,
+    copilot_model_route,
+    is_copilot_chat_model_id,
     is_copilot_responses_model_id,
 )
 from reverso.protocols.feature_policy import UnsupportedFeature
+from reverso.protocols.openai_chat import (
+    build_messages_from_request,
+    chat_tool_choice,
+    chat_tools,
+    map_completion_output,
+    parse_stream_event,
+    prime_upstream_stream,
+    responses_usage,
+    usage_to_chat,
+)
+from reverso.protocols.replay import (
+    new_message_id,
+    new_response_id,
+    record_input_items,
+    replay_incremental,
+)
 from reverso.protocols.store import ResponseStore
 
 logger = logging.getLogger(__name__)
@@ -359,7 +377,10 @@ def _normalize_models(payload: dict) -> ModelList:
         if not isinstance(model, dict):
             continue
         model_id = model.get("id")
-        if not isinstance(model_id, str) or not is_copilot_responses_model_id(model_id):
+        if not isinstance(model_id, str) or not (
+            is_copilot_responses_model_id(model_id)
+            or is_copilot_chat_model_id(model_id)
+        ):
             continue
         normalized.append(
             {
@@ -411,12 +432,22 @@ class CopilotAdapter:
         payload["stream"] = stream
         return json.dumps(payload).encode("utf-8")
 
-    def _check_model(self, request: ResponsesRequest) -> None:
-        if not is_copilot_responses_model_id(request.model):
+    def _route(self, request: ResponsesRequest) -> str:
+        """Return the upstream shape for ``request.model`` or raise UnsupportedFeature.
+
+        gpt-* ids route to the verbatim /responses path; claude-*/gemini-* ids
+        route to the translated /chat/completions path. Any id neither
+        classifier accepts (including the injection payload that fails the
+        safe-char guard) raises UnsupportedFeature before any network call.
+        """
+        route = copilot_model_route(request.model)
+        if route is None:
             raise UnsupportedFeature("copilot", f"model:{request.model}")
+        return route
 
     async def create_response(self, request: ResponsesRequest) -> ResponseEnvelope:
-        self._check_model(request)
+        if self._route(request) == "chat":
+            return await self._create_response_chat(request)
         model = canonical_copilot_responses_model(request.model) or request.model
         bearer = await self._auth.bearer_token()
         api_base = await self._api_base_for_auth()
@@ -443,8 +474,12 @@ class CopilotAdapter:
             self._store.put_response(envelope, input_items=input_items)
         return envelope
 
-    async def stream_response(self, request: ResponsesRequest):
-        self._check_model(request)
+    def stream_response(self, request: ResponsesRequest):
+        if self._route(request) == "chat":
+            return self._stream_response_chat(request)
+        return self._stream_response_responses(request)
+
+    async def _stream_response_responses(self, request: ResponsesRequest):
         bearer = await self._auth.bearer_token()
         api_base = await self._api_base_for_auth()
         body = self._request_body(request, stream=True)
@@ -471,6 +506,216 @@ class CopilotAdapter:
                     event = self._parse_sse_block(tail)
                     if event is not None:
                         yield event
+
+    # --- chat/completions path (claude-*/gemini-*, ADR 0011) -----------------
+
+    def _chat_body(self, request: ResponsesRequest, *, stream: bool) -> dict[str, Any]:
+        """Build the Copilot /chat/completions body for a claude/gemini turn.
+
+        Unlike the verbatim /responses path this does NOT blanket-forward
+        ``request.extra``: /chat/completions rejects Responses-only keys
+        (include, background, instructions echoes, ...) with a 400, so only the
+        deepseek-vetted set is forwarded (model/messages/stream + tools and
+        tool_choice when present, plus stream_options on the streaming branch).
+        The bare model id is sent unchanged; routing already stripped the
+        ``copilot/`` prefix.
+        """
+        body: dict[str, Any] = {
+            "model": request.model,
+            "messages": build_messages_from_request(
+                instructions=request.instructions,
+                input_value=request.input,
+            ),
+            "stream": stream,
+        }
+        if stream:
+            # include_usage mirrors the deepseek streaming contract: without it
+            # the terminal chunk's usage is null and the completed envelope
+            # reports zero tokens.
+            body["stream_options"] = {"include_usage": True}
+        if request.tools is not None:
+            body["tools"] = chat_tools(request.tools)
+        if request.tool_choice is not None:
+            body["tool_choice"] = chat_tool_choice(request.tool_choice)
+        return body
+
+    def _map_chat_completion(
+        self, request: ResponsesRequest, raw: dict[str, Any]
+    ) -> ResponseEnvelope:
+        """Map a chat-completion body into a Responses-shaped ResponseEnvelope.
+
+        The chat path mints a fresh resp_/msg_ id (it cannot echo an upstream
+        resp_ id like the /responses path) and renames the chat usage fields
+        into the Responses names so the Anthropic surface sees a well-formed
+        completed envelope.
+        """
+        response_id = new_response_id()
+        output, _message = map_completion_output(raw)
+        usage = responses_usage(raw.get("usage"))
+        envelope_raw: dict[str, Any] = {
+            "id": response_id,
+            "object": "response",
+            "status": "completed",
+            "model": request.model,
+            "output": output,
+        }
+        if usage is not None:
+            envelope_raw["usage"] = usage
+        if request.previous_response_id is not None:
+            envelope_raw["previous_response_id"] = request.previous_response_id
+        return ResponseEnvelope(
+            id=response_id,
+            model=request.model,
+            output=output,
+            status="completed",
+            usage=usage,
+            previous_response_id=request.previous_response_id,
+            raw=envelope_raw,
+        )
+
+    async def _create_response_chat(
+        self, request: ResponsesRequest
+    ) -> ResponseEnvelope:
+        bearer = await self._auth.bearer_token()
+        api_base = await self._api_base_for_auth()
+        body = self._chat_body(request, stream=False)
+        async with self._client_factory() as client:
+            response = await client.post(
+                f"{api_base}/chat/completions",
+                headers=_forward_headers(bearer),
+                content=json.dumps(body).encode("utf-8"),
+            )
+        _raise_for_upstream_status(response)
+        raw = response.json()
+        envelope = self._map_chat_completion(request, raw)
+        self._store.put_response(envelope, record_input_items(request))
+        return envelope
+
+    async def _call_chat_stream(
+        self, body: dict[str, Any], bearer: str, api_base: str
+    ) -> AsyncIterator[dict[str, Any]]:
+        """POST a streaming /chat/completions call; yield parsed chunk dicts.
+
+        A status >= 400 read at response.headers BEFORE any SSE byte raises
+        CopilotUpstreamError so the pre-emission contract holds (the gateway
+        synthesises a structured 502 instead of a truncated 200 stream).
+        """
+        async with self._client_factory() as client:
+            async with client.stream(
+                "POST",
+                f"{api_base}/chat/completions",
+                headers=_forward_headers(bearer),
+                content=json.dumps(body).encode("utf-8"),
+            ) as response:
+                if response.status_code >= 400:
+                    await response.aread()
+                    _raise_for_upstream_status(response)
+                pending = b""
+                async for raw in response.aiter_bytes():
+                    if not raw:
+                        continue
+                    pending += raw
+                    while b"\n" in pending:
+                        line, pending = pending.split(b"\n", 1)
+                        line = line.strip()
+                        if not line or not line.startswith(b"data:"):
+                            continue
+                        payload = line[len(b"data:") :].strip()
+                        if not payload:
+                            continue
+                        if payload == b"[DONE]":
+                            yield {
+                                "text": "",
+                                "reasoning_text": "",
+                                "tool_calls": [],
+                                "usage": None,
+                                "done": True,
+                            }
+                            return
+                        try:
+                            event = json.loads(payload)
+                        except json.JSONDecodeError:
+                            continue
+                        parsed = parse_stream_event(event)
+                        if parsed is not None:
+                            yield parsed
+                            if parsed.get("done"):
+                                return
+
+    def _finalize_chat_envelope(
+        self,
+        request: ResponsesRequest,
+        *,
+        response_id: str,
+        message_id: str,
+        full_text: str,
+        usage: dict[str, Any] | None,
+        tool_calls: list[dict[str, Any]],
+    ) -> ResponseEnvelope:
+        """Build the streamed envelope from accumulated chunk state.
+
+        Synthesises a chat-shaped raw dict so _map_chat_completion's tool-call
+        surfacing runs unchanged, then rewrites the minted ids to the ones
+        replay_incremental already announced on the wire.
+        """
+        chat_message: dict[str, Any] = {"role": "assistant", "content": full_text}
+        if tool_calls:
+            chat_message["tool_calls"] = tool_calls
+        finish_reason = "tool_calls" if tool_calls else "stop"
+        raw: dict[str, Any] = {
+            "id": response_id,
+            "model": request.model,
+            "choices": [
+                {"index": 0, "message": chat_message, "finish_reason": finish_reason}
+            ],
+        }
+        if usage is not None:
+            raw["usage"] = usage_to_chat(usage)
+        envelope = self._map_chat_completion(request, raw)
+        envelope.id = response_id
+        envelope.raw["id"] = response_id
+        if envelope.output and envelope.output[0].get("type") == "message":
+            envelope.output[0]["id"] = message_id
+        return envelope
+
+    async def _stream_response_chat(
+        self, request: ResponsesRequest
+    ) -> AsyncIterator[SSEEvent]:
+        bearer = await self._auth.bearer_token()
+        api_base = await self._api_base_for_auth()
+        body = self._chat_body(request, stream=True)
+        response_id = new_response_id()
+        message_id = new_message_id()
+
+        raw_chunks = self._call_chat_stream(body, bearer, api_base)
+        primed = await prime_upstream_stream(raw_chunks)
+
+        def finalize(
+            *,
+            full_text: str,
+            full_reasoning: str | None,
+            usage: dict[str, Any] | None,
+            tool_calls: list[dict[str, Any]],
+        ) -> ResponseEnvelope:
+            return self._finalize_chat_envelope(
+                request,
+                response_id=response_id,
+                message_id=message_id,
+                full_text=full_text,
+                usage=usage,
+                tool_calls=tool_calls,
+            )
+
+        async for event in replay_incremental(
+            primed,
+            response_id=response_id,
+            message_id=message_id,
+            model=request.model,
+            store=self._store,
+            input_items=record_input_items(request),
+            finalize=finalize,
+        ):
+            yield event
 
     @staticmethod
     def _parse_sse_block(block: bytes) -> SSEEvent | None:
