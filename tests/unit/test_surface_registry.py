@@ -227,14 +227,16 @@ def test_rowless_prefix_authoritative_over_indexed_id() -> None:
 
 
 def test_discovery_alias_resolves_and_canonicalizes() -> None:
-    # anthropic--<backend>--<bare> routes to <backend> and canonicalizes to <bare>, so a
-    # /model-picker pick of a non-claude backend reaches the right adapter.
+    # anthropic-<backend>-<bare> routes to <backend> and canonicalizes to <bare>, so a
+    # /model-picker pick of a non-claude backend reaches the right adapter. The bare
+    # model keeps its own hyphens (gpt-5.5, deepseek-v4-pro, claude-opus-4-8), so the
+    # parse keys on the known backend token rather than splitting naively on "-".
     cases = {
-        "anthropic--codex--gpt-5.5": ("codex", "gpt-5.5"),
-        "anthropic--deepseek--deepseek-v4-pro": ("deepseek", "deepseek-v4-pro"),
-        "anthropic--copilot--gpt-5.5": ("copilot", "gpt-5.5"),
-        "anthropic--auggie--opus4.7": ("auggie", "opus4.7"),
-        "anthropic--claude--claude-opus-4-8": ("claude", "claude-opus-4-8"),
+        "anthropic-codex-gpt-5.5": ("codex", "gpt-5.5"),
+        "anthropic-deepseek-deepseek-v4-pro": ("deepseek", "deepseek-v4-pro"),
+        "anthropic-copilot-gpt-5.5": ("copilot", "gpt-5.5"),
+        "anthropic-auggie-opus4.7": ("auggie", "opus4.7"),
+        "anthropic-claude-claude-opus-4-8": ("claude", "claude-opus-4-8"),
     }
     for alias, (backend, bare) in cases.items():
         assert resolve_anthropic_backend(alias) == backend, alias
@@ -242,10 +244,11 @@ def test_discovery_alias_resolves_and_canonicalizes() -> None:
 
 
 def test_discovery_alias_malformed_fails_closed() -> None:
-    # Non-surface backend, empty bare, or missing separator must not route.
-    assert resolve_anthropic_backend("anthropic--openai--gpt-5.5") is None
-    assert resolve_anthropic_backend("anthropic--codex--") is None
-    assert resolve_anthropic_backend("anthropic--codex") is None
+    # Unknown backend token, empty bare, or backend token with no bare must not route.
+    assert resolve_anthropic_backend("anthropic-openai-gpt-5.5") is None
+    assert resolve_anthropic_backend("anthropic-codex-") is None
+    assert resolve_anthropic_backend("anthropic-codex") is None
+    assert resolve_anthropic_backend("anthropic-") is None
 
 
 def test_discovery_aliases_listing_covers_non_claude_backends() -> None:
@@ -253,7 +256,7 @@ def test_discovery_aliases_listing_covers_non_claude_backends() -> None:
     ids = {row["id"] for row in rows}
     backends = {row["backend"] for row in rows}
     # Every alias id passes Claude Code's gateway-discovery filter...
-    assert all(rid.startswith("anthropic--") for rid in ids)
+    assert all(rid.startswith("anthropic-") for rid in ids)
     # ...covers each non-claude surface backend, and never aliases claude (bare claude
     # ids already pass the filter, so aliasing them would only duplicate picker rows).
     assert {"codex", "deepseek", "copilot", "auggie"} <= backends

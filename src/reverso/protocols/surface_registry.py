@@ -33,6 +33,11 @@ from reverso.protocols.model_exposure import codex_builtin_model_backends
 # server whose process env carries no ANTHROPIC_BASE_URL AND the claude adapter
 # scrubs routing/auth env from the spawned CLI's child env, so the claude CLI
 # always reaches api.anthropic.com under the subscription OAuth, never Reverso.
+#
+# INVARIANT: no backend name may be a prefix of another. _split_discovery_alias
+# parses an "anthropic-<backend>-<bare>" picker alias by first-matching a backend
+# token, which is unambiguous only while this holds (adding e.g. "code" alongside
+# "codex" would make the match order-dependent).
 SURFACE_BACKENDS: dict[str, frozenset[str]] = {
     "anthropic": frozenset({"copilot", "deepseek", "auggie", "codex", "claude"}),
 }
@@ -156,12 +161,15 @@ _BACKENDS_WITH_ROWS: frozenset[str] = frozenset(_MODEL_INDEX.values())
 # Claude Code's gateway model discovery (CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY)
 # IGNORES any /v1/models id that does not begin with "claude" or "anthropic". claude
 # ids already pass; to make every OTHER backend selectable in the /model picker, the
-# discovery listing mints an "anthropic--<backend>--<bare>" alias per non-claude model.
+# discovery listing mints an "anthropic-<backend>-<bare>" alias per non-claude model.
 # resolve_anthropic_backend + canonical_model_id route the alias back to <backend> with
-# the bare model. The "--" separator is reserved: real first-party model ids use single
-# hyphens, so it cannot collide with a bare id.
-_DISCOVERY_ALIAS_PREFIX = "anthropic--"
-_DISCOVERY_ALIAS_SEP = "--"
+# the bare model. A single dash reads cleanly in the picker, but real first-party model
+# ids use single hyphens AND can contain them (gpt-5.5, deepseek-v4-pro), so the alias
+# cannot be split naively on "-": after stripping the "anthropic-" prefix the remainder
+# must begin with "<backend>-" where <backend> is a KNOWN Anthropic-surface backend; the
+# rest is the bare model. The known backend names share no common prefix, so a first
+# match over the known set is unambiguous.
+_DISCOVERY_ALIAS_PREFIX = "anthropic-"
 
 # Rowless backends own no _MODEL_INDEX taxonomy, so the discovery listing carries a
 # curated, known-good set for the picker. Free-text copilot/<id> (and auggie/<id>)
@@ -173,21 +181,30 @@ _DISCOVERY_ROWLESS_MODELS: dict[str, tuple[str, ...]] = {
 
 
 def _split_discovery_alias(normalized: str) -> tuple[str, str] | None:
-    """Split a discovery alias ``anthropic--<backend>--<bare>`` into (backend, bare).
+    """Split a discovery alias ``anthropic-<backend>-<bare>`` into (backend, bare).
 
     Returns None when the id is not a well-formed alias naming an Anthropic-surface
     backend with a non-empty bare model. ``normalized`` is the output of
     ``_normalize_model`` (lowercased, custom/ stripped), so backend/bare are lowercase.
+
+    The separator is a single dash, which model ids also use (and embed), so the alias
+    cannot be split naively on ``-``. After stripping the ``anthropic-`` prefix the
+    remainder must begin with ``<backend>-`` for a KNOWN Anthropic-surface backend; the
+    rest is the bare model. The known backend names share no common prefix, so a first
+    match over the known set is unambiguous. Fails closed for ``anthropic-`` alone, a
+    known backend with no bare model, an unknown backend token, or an empty bare model.
     """
     if not normalized.startswith(_DISCOVERY_ALIAS_PREFIX):
         return None
     rest = normalized[len(_DISCOVERY_ALIAS_PREFIX) :]
-    backend, sep, bare = rest.partition(_DISCOVERY_ALIAS_SEP)
-    if not sep or not backend or not bare:
-        return None
-    if backend not in SURFACE_BACKENDS["anthropic"]:
-        return None
-    return backend, bare
+    for backend in SURFACE_BACKENDS["anthropic"]:
+        token = f"{backend}-"
+        if rest.startswith(token):
+            bare = rest[len(token) :]
+            if not bare:
+                return None
+            return backend, bare
+    return None
 
 
 def _split_provider_qualified(normalized: str) -> tuple[str | None, str]:
@@ -254,7 +271,7 @@ def resolve_anthropic_backend(model: str | None) -> str | None:
     normalized = _normalize_model(model)
     alias = _split_discovery_alias(normalized)
     if alias is not None:
-        # A /model-picker discovery alias (anthropic--<backend>--<bare>) routes by its
+        # A /model-picker discovery alias (anthropic-<backend>-<bare>) routes by its
         # explicit backend; the bare model is validated downstream by that adapter.
         return alias[0]
     provider, bare = _split_provider_qualified(normalized)
@@ -290,7 +307,7 @@ def canonical_model_id(model: str | None) -> str | None:
     normalized = _normalize_model(model)
     alias = _split_discovery_alias(normalized)
     if alias is not None:
-        # Discovery alias anthropic--<backend>--<bare> -> bare upstream id. The alias is
+        # Discovery alias anthropic-<backend>-<bare> -> bare upstream id. The alias is
         # machine-minted (lowercase ascii), so the normalized bare is the wire id; this
         # mirrors resolve_anthropic_backend so router and canonicalizer never diverge.
         return alias[1]
@@ -353,14 +370,14 @@ def list_anthropic_surface_models() -> list[dict[str, str]]:
 
 def _discovery_alias_row(backend: str, model_id: str) -> dict[str, str]:
     return {
-        "id": f"{_DISCOVERY_ALIAS_PREFIX}{backend}{_DISCOVERY_ALIAS_SEP}{model_id}",
+        "id": f"anthropic-{backend}-{model_id}",
         "display_name": f"{backend.capitalize()}: {model_id}",
         "backend": backend,
     }
 
 
 def list_anthropic_discovery_aliases() -> list[dict[str, str]]:
-    """List ``anthropic--<backend>--<model>`` aliases for the /model picker.
+    """List ``anthropic-<backend>-<model>`` aliases for the /model picker.
 
     Claude Code's gateway model discovery ignores any /v1/models id not beginning with
     "claude" or "anthropic". claude-family ids already pass, so this mints an alias for

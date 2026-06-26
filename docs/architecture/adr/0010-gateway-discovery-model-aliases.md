@@ -35,9 +35,14 @@ claude-family models were ever selectable in the picker; every other backend req
 Mint a discovery-only alias for every non-claude Anthropic-surface model so it passes the
 filter, and route the alias back to its real backend:
 
-1. **Alias namespace `anthropic--<backend>--<bare>`.** The `anthropic` prefix passes the
-   discovery filter; `--` is a reserved separator (first-party model ids use single hyphens, so
-   it cannot collide with a bare id). `list_anthropic_discovery_aliases()` emits one row per
+1. **Alias namespace `anthropic-<backend>-<bare>`.** The `anthropic` prefix passes the
+   discovery filter, and a single dash reads cleanly in the `/model` picker. Real first-party
+   model ids use single hyphens AND embed them (`gpt-5.5`, `deepseek-v4-pro`, `claude-sonnet-4.6`),
+   so the alias cannot be split naively on `-`. The parser instead keys on the KNOWN backend
+   token: after stripping the `anthropic-` prefix, the remainder must begin with `<backend>-`
+   where `<backend>` is in `SURFACE_BACKENDS["anthropic"]` (codex/deepseek/copilot/auggie/claude);
+   the rest is the bare model. The known backend names share no common prefix, so a first match
+   over the known set is unambiguous. `list_anthropic_discovery_aliases()` emits one row per
    non-claude model: the rows-owning backends (codex/deepseek) from `_MODEL_INDEX`, and the
    rowless backends (copilot/auggie) from a small curated `_DISCOVERY_ROWLESS_MODELS` set (they
    own no taxonomy, so a known-good list seeds the picker; free-text `copilot/<id>` still reaches
@@ -50,7 +55,7 @@ filter, and route the alias back to its real backend:
    `"<Backend>: <model>"`.
 
 3. **The resolver and `canonical_model_id` route the alias back, in lockstep.** Both detect
-   `anthropic--<backend>--<bare>` via the shared `_split_discovery_alias` BEFORE the
+   `anthropic-<backend>-<bare>` via the shared `_split_discovery_alias` BEFORE the
    provider-qualified `/` split: `resolve_anthropic_backend` returns `<backend>` (fail-closed
    unless `<backend>` is an Anthropic-surface backend and `<bare>` is non-empty), and
    `canonical_model_id` returns the bare `<bare>` the adapter expects. The backend validates the
