@@ -340,22 +340,55 @@ async def test_create_response_canonicalizes_gpt55_alias_before_upstream():
     assert envelope.model == "gpt-5.5"
 
 
-async def test_create_response_rejects_copilot_claude_before_upstream():
-    called = {"value": False}
+async def test_create_response_routes_copilot_claude_to_chat_completions():
+    """claude-* now takes the translated /chat/completions path (ADR 0011)."""
+    captured = {}
 
-    def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover
-        called["value"] = True
-        return httpx.Response(200, json={})
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        captured["body"] = json.loads(request.content.decode("utf-8"))
+        return httpx.Response(
+            200,
+            json={
+                "id": "chatcmpl-1",
+                "model": "claude-opus-4.8",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "hello there"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 5,
+                    "completion_tokens": 2,
+                    "total_tokens": 7,
+                },
+            },
+        )
 
     adapter = _fake_auth_adapter(handler)
     request = ResponsesRequest.from_payload({"model": "claude-opus-4.8", "input": "hi"})
 
-    with pytest.raises(UnsupportedFeature) as exc_info:
-        await adapter.create_response(request)
+    envelope = await adapter.create_response(request)
 
-    assert exc_info.value.provider == "copilot"
-    assert exc_info.value.feature == "model:claude-opus-4.8"
-    assert called["value"] is False
+    assert captured["url"].endswith("/chat/completions")
+    assert captured["body"]["model"] == "claude-opus-4.8"
+    assert captured["body"]["messages"] == [{"role": "user", "content": "hi"}]
+    assert captured["body"]["stream"] is False
+    assert isinstance(envelope, ResponseEnvelope)
+    assert envelope.id.startswith("resp_")
+    message_items = [item for item in envelope.output if item.get("type") == "message"]
+    assert message_items, "chat envelope must carry a message output item"
+    assert (
+        message_items[0]["content"][0]["text"] == "hello there"
+    ), "chat content must surface on the message output item"
+    # usage renamed from chat names to Responses names
+    assert envelope.usage == {
+        "input_tokens": 5,
+        "output_tokens": 2,
+        "total_tokens": 7,
+    }
 
 
 async def test_stream_response_yields_events():
@@ -408,24 +441,197 @@ async def test_stream_response_canonicalizes_gpt55_alias_before_upstream():
     assert events
 
 
-async def test_stream_response_rejects_copilot_claude_before_upstream():
-    called = {"value": False}
+async def test_stream_response_routes_copilot_claude_to_chat_completions():
+    """Streaming claude-* yields canonical Responses events via /chat/completions."""
+    captured = {}
+    sse = (
+        b'data: {"choices":[{"index":0,"delta":{"content":"hi"}}]}\n\n'
+        b'data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n'
+        b'data: {"choices":[],"usage":{"prompt_tokens":3,'
+        b'"completion_tokens":1,"total_tokens":4}}\n\n'
+        b"data: [DONE]\n\n"
+    )
 
-    def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover
-        called["value"] = True
-        return httpx.Response(200, json={})
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        captured["body"] = json.loads(request.content.decode("utf-8"))
+        return httpx.Response(
+            200, content=sse, headers={"content-type": "text/event-stream"}
+        )
 
     adapter = _fake_auth_adapter(handler)
     request = ResponsesRequest.from_payload(
         {"model": "claude-sonnet-4.6", "input": "hi", "stream": True}
     )
 
-    with pytest.raises(UnsupportedFeature) as exc_info:
+    events = [event async for event in adapter.stream_response(request)]
+
+    assert captured["url"].endswith("/chat/completions")
+    assert captured["body"]["model"] == "claude-sonnet-4.6"
+    assert captured["body"]["stream"] is True
+    # stream_options.include_usage is required so the terminal usage lands.
+    assert captured["body"]["stream_options"] == {"include_usage": True}
+    types = [event.event for event in events]
+    assert types[0] == "response.created"
+    assert types[1] == "response.in_progress"
+    assert types[-1] == "response.completed"
+    assert "response.output_text.delta" in types
+    completed = events[-1].data["response"]
+    assert completed["usage"] == {
+        "input_tokens": 3,
+        "output_tokens": 1,
+        "total_tokens": 4,
+    }
+
+
+async def test_stream_response_chat_pre_emission_4xx_raises_before_any_event():
+    """A 4xx at chat-completions headers raises before the first replay event."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            429,
+            request=request,
+            stream=_AsyncBytesStream(
+                [b'{"error":{"message":"claude rate limited","code":"rate_limit"}}']
+            ),
+            headers={"content-type": "application/json"},
+        )
+
+    adapter = _fake_auth_adapter(handler)
+    request = ResponsesRequest.from_payload(
+        {"model": "claude-sonnet-4.6", "input": "hi", "stream": True}
+    )
+
+    with pytest.raises(CopilotUpstreamError) as exc_info:
         _ = [event async for event in adapter.stream_response(request)]
 
-    assert exc_info.value.provider == "copilot"
-    assert exc_info.value.feature == "model:claude-sonnet-4.6"
-    assert called["value"] is False
+    assert "claude rate limited" in exc_info.value.public_message
+
+
+async def test_create_response_chat_surfaces_tool_calls_as_function_call_items():
+    """claude tool_calls surface as Responses function_call output items."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "id": "chatcmpl-tool",
+                "model": "claude-sonnet-4.6",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": "call_abc",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "get_weather",
+                                        "arguments": '{"city":"Paris"}',
+                                    },
+                                }
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ],
+            },
+        )
+
+    adapter = _fake_auth_adapter(handler)
+    request = ResponsesRequest.from_payload(
+        {
+            "model": "claude-sonnet-4.6",
+            "input": "weather?",
+            "tools": [
+                {
+                    "type": "function",
+                    "name": "get_weather",
+                    "parameters": {"type": "object"},
+                }
+            ],
+        }
+    )
+
+    envelope = await adapter.create_response(request)
+
+    function_calls = [
+        item for item in envelope.output if item.get("type") == "function_call"
+    ]
+    assert len(function_calls) == 1
+    assert function_calls[0]["call_id"] == "call_abc"
+    assert function_calls[0]["name"] == "get_weather"
+    assert function_calls[0]["arguments"] == '{"city":"Paris"}'
+
+
+async def test_create_response_chat_does_not_forward_responses_only_extras():
+    """The chat body forwards only the vetted set, never Responses-only keys."""
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content.decode("utf-8"))
+        return httpx.Response(
+            200,
+            json={
+                "id": "chatcmpl-x",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "ok"},
+                        "finish_reason": "stop",
+                    }
+                ],
+            },
+        )
+
+    adapter = _fake_auth_adapter(handler)
+    request = ResponsesRequest.from_payload(
+        {
+            "model": "claude-opus-4.8",
+            "input": "hi",
+            "include": ["reasoning.encrypted_content"],
+            "background": False,
+            "metadata": {"trace_id": "abc"},
+        }
+    )
+
+    await adapter.create_response(request)
+
+    body = captured["body"]
+    assert set(body) == {"model", "messages", "stream"}
+    assert "include" not in body
+    assert "background" not in body
+    assert "metadata" not in body
+
+
+async def test_create_response_gpt_still_routes_to_responses_verbatim():
+    """gpt-* keeps the verbatim /responses path unchanged (regression)."""
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        captured["body"] = json.loads(request.content.decode("utf-8"))
+        return httpx.Response(
+            200,
+            json={
+                "id": "resp_gpt",
+                "model": "gpt-5.5",
+                "status": "completed",
+                "output": [{"type": "message"}],
+            },
+        )
+
+    adapter = _fake_auth_adapter(handler)
+    request = ResponsesRequest.from_payload({"model": "gpt-5.5", "input": "hi"})
+
+    envelope = await adapter.create_response(request)
+
+    assert captured["url"].endswith("/responses")
+    assert "input" in captured["body"]
+    assert "messages" not in captured["body"]
+    assert envelope.id == "resp_gpt"
 
 
 async def test_stream_response_reads_error_body_before_raising():
@@ -505,13 +711,19 @@ async def test_list_models_normalizes_to_openai():
     assert models.object == "list"
     assert models.models == []
     ids = [m["id"] for m in models.data]
+    # claude-*/gemini-* now pass classification (served on /chat/completions),
+    # but the injection id (newline) and the bare string are still dropped.
     assert ids == [
         "gpt-5.5",
         "gpt-4o",
+        "claude-opus-4.8",
+        "claude-sonnet-4.6",
+        "gemini-2.5-pro",
         "gpt-5-mini",
     ]
+    assert "gpt-5.5\nmodel:claude-fable-5" not in ids
     assert models.data[0]["owned_by"] == "openai"
-    assert models.data[2]["owned_by"] == "github-copilot"
+    assert models.data[2]["owned_by"] == "anthropic"
 
 
 def test_copilot_upstream_error_keeps_model_diagnostic_without_headers():
