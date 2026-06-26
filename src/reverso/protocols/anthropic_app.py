@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
@@ -68,6 +69,7 @@ from reverso.protocols.surface_registry import (
     list_anthropic_surface_models,
     resolve_anthropic_backend,
 )
+from reverso.proxy.profile_routing import CURRENT_PROFILE_WORKSPACE
 
 logger = logging.getLogger(__name__)
 
@@ -195,6 +197,26 @@ def _anthropic_version_from_headers(headers: list[tuple[bytes, bytes]]) -> str:
             if decoded:
                 return decoded
     return DEFAULT_ANTHROPIC_VERSION
+
+
+def _workspace_from_headers(headers: list[tuple[bytes, bytes]]) -> str | None:
+    """Resolve the per-request workspace from the ``x-reverso-workspace`` header.
+
+    The launcher (claude-reverso) forwards the caller's launch directory as
+    ``x-reverso-workspace: $PWD`` via ANTHROPIC_CUSTOM_HEADERS so the CLI-backed
+    adapters (codex/claude) spawn in that directory instead of inheriting the
+    daemon CWD (the reverso repo). Returns the value ONLY when it decodes to a
+    non-empty ABSOLUTE path that exists as a directory; otherwise None, so a
+    missing/relative/non-existent header never sets a bogus subprocess cwd (the
+    CLI spine raises if the cwd does not exist).
+    """
+    for key, value in headers:
+        if key.lower() == b"x-reverso-workspace":
+            candidate = value.decode("utf-8", "replace").strip()
+            if candidate and os.path.isabs(candidate) and os.path.isdir(candidate):
+                return candidate
+            return None
+    return None
 
 
 def _parse_body(body: bytes) -> dict[str, Any] | None:
@@ -350,6 +372,19 @@ class AnthropicMessagesApp:
         if scope.get("type") != "http":
             return
         headers = scope.get("headers", [])
+        # Resolve the per-request workspace from the x-reverso-workspace header and
+        # set it for the whole dispatch so the CLI-backed adapters (codex/claude)
+        # spawn in the caller's launch dir instead of the daemon CWD (ADR 0012). It
+        # is harmless for count_tokens/models (no subprocess); reset on every path.
+        token = CURRENT_PROFILE_WORKSPACE.set(_workspace_from_headers(headers))
+        try:
+            await self._dispatch(scope, receive, send, headers)
+        finally:
+            CURRENT_PROFILE_WORKSPACE.reset(token)
+
+    async def _dispatch(
+        self, scope: Scope, receive: Receive, send: Send, headers: Any
+    ) -> None:
         anthropic_version = _anthropic_version_from_headers(headers)
         route = split_anthropic_path(str(scope.get("path", "")))
         if route is None:
@@ -686,7 +721,7 @@ class AnthropicMessagesApp:
         deterministic and cache-friendly.
         """
         # Bare surface listing PLUS discovery aliases: claude ids pass Claude Code's
-        # gateway-discovery claude/anthropic filter as-is, and the anthropic--<backend>--
+        # gateway-discovery claude/anthropic filter as-is, and the anthropic-<backend>-
         # aliases make codex/deepseek/copilot/auggie selectable in the /model picker too.
         rows = list_anthropic_surface_models() + list_anthropic_discovery_aliases()
         data = [
