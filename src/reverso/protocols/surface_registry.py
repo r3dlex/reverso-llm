@@ -33,6 +33,11 @@ from reverso.protocols.model_exposure import codex_builtin_model_backends
 # server whose process env carries no ANTHROPIC_BASE_URL AND the claude adapter
 # scrubs routing/auth env from the spawned CLI's child env, so the claude CLI
 # always reaches api.anthropic.com under the subscription OAuth, never Reverso.
+#
+# INVARIANT: no backend name may be a prefix of another. _split_discovery_alias
+# parses an "anthropic-<backend>-<bare>" picker alias by first-matching a backend
+# token, which is unambiguous only while this holds (adding e.g. "code" alongside
+# "codex" would make the match order-dependent).
 SURFACE_BACKENDS: dict[str, frozenset[str]] = {
     "anthropic": frozenset({"copilot", "deepseek", "auggie", "codex", "claude"}),
 }
