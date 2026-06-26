@@ -91,6 +91,12 @@ does. Capability gating continues to key on the copilot column.
 - The chat path deliberately drops Responses-only extras, so a caller relying on
   those keys against a claude/gemini model will not see them forwarded (they are
   not accepted by the upstream chat surface anyway).
+- The chat path is stateless single-shot: it does NOT replay a prior assistant
+  turn upstream for a `previous_response_id` conversation (unlike the DeepSeek
+  adapter, whose `_prior_turn` re-injects reasoning carry-forward, a DeepSeek-only
+  contract). The envelope still records `previous_response_id`, but chaining relies
+  on the stored envelope rather than upstream re-injection, matching how the
+  verbatim `/responses` path delegated chaining to the upstream.
 
 ## Verification
 
