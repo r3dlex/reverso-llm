@@ -179,6 +179,26 @@ async def test_workspace_from_system_prompt_nonexistent_is_none(tmp_path: Path) 
 
 
 @pytest.mark.asyncio
+async def test_workspace_system_prompt_whitespace_heavy_is_linear() -> None:
+    # Regression: a whitespace-heavy system value must not trigger catastrophic
+    # regex backtracking (ReDoS). With the linear pattern this returns ~instantly;
+    # the old "\\s*-?\\s*" pattern would take minutes on this input. Assert it both
+    # yields None (no cwd line) and completes well under a second.
+    import time
+
+    body = _messages_body()
+    body["system"] = [{"type": "text", "text": " " * 200_000}]
+    adapter = _WorkspaceRecordingAdapter()
+    start = time.monotonic()
+    async with _client(adapter) as client:
+        resp = await client.post("/v1/messages", json=body)
+    elapsed = time.monotonic() - start
+    assert resp.status_code == 200, resp.text
+    assert adapter.recorded == [None]
+    assert elapsed < 1.0, f"workspace parse took {elapsed:.2f}s (possible ReDoS)"
+
+
+@pytest.mark.asyncio
 async def test_workspace_header_nonexistent_path_is_none(tmp_path: Path) -> None:
     # A header pointing at a non-existent path is validated away to None (spec c), so
     # a bogus cwd is never passed to the CLI spine (which would raise on a missing dir).

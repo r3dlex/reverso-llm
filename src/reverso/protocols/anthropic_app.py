@@ -222,8 +222,15 @@ def _workspace_from_headers(headers: list[tuple[bytes, bytes]]) -> str | None:
 
 # Claude Code embeds its launch directory in the system prompt of every request as
 # a "- Primary working directory: <path>" line (the harness environment block). The
-# leading "- " is optional and the match is case-insensitive and per-line.
-_PRIMARY_CWD_RE = re.compile(r"(?im)^\s*-?\s*primary working directory:\s*(.+?)\s*$")
+# leading "- " is optional and the match is case-insensitive and per-line. The leading
+# and trailing runs use [ \t] (NOT \s): \s matches newlines, which with the multiline
+# anchors would let the run cross lines and reintroduce catastrophic backtracking (a
+# whitespace-heavy system field could peg a CPU core). [ \t] keeps the match linear and
+# is semantically correct (the cwd line is a single physical line); (.+?) excludes
+# newlines by default, so multi-line system prompts still match the one correct line.
+_PRIMARY_CWD_RE = re.compile(
+    r"(?im)^[ \t]*(?:-[ \t]*)?primary working directory:[ \t]*(.+?)[ \t]*$"
+)
 
 
 def _workspace_from_system_prompt(payload: dict[str, Any] | None) -> str | None:
