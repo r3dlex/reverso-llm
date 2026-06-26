@@ -213,6 +213,18 @@ def test_qualified_prefix_trusted_only_for_rowless_backends() -> None:
     assert resolve_anthropic_backend("codex/ gpt-5.5") is None
 
 
+def test_rowless_prefix_authoritative_over_indexed_id() -> None:
+    # A rowless provider owns no taxonomy, so an explicit rowless prefix is
+    # authoritative even for a bare id indexed to a ROWS-OWNING backend. This is the
+    # only way to reach GitHub Copilot's gpt-5.x (which collides with codex's ids):
+    # copilot/gpt-5.5 selects Copilot's gpt-5.5, NOT codex's bare gpt-5.5.
+    assert resolve_anthropic_backend("copilot/gpt-5.5") == "copilot"
+    assert resolve_anthropic_backend("copilot/gpt-5.4") == "copilot"
+    assert resolve_anthropic_backend("auggie/gpt-5.5") == "auggie"
+    # The bare (unqualified) id still routes to its indexed owner, unchanged.
+    assert resolve_anthropic_backend("gpt-5.5") == "codex"
+
+
 def test_qualified_mismatch_fails_closed() -> None:
     # The prefix names one backend but the bare model is indexed to another: a
     # conflict that must fail closed rather than silently honor either side.

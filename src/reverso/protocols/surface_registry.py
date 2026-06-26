@@ -174,22 +174,28 @@ def _resolve_qualified(provider: str, bare: str) -> str | None:
 
     The provider prefix lets a caller put the provider up front to disambiguate
     when two backends would otherwise share a model name. Fail-closed: the provider
-    must be an Anthropic-surface backend and the bare model must be non-empty. When
-    the bare model is indexed, it must be indexed to THIS provider (a mismatch such
-    as deepseek/gpt-5.5 is a conflict and resolves to None). When the bare model is
-    unknown to the index, the explicit provider is trusted ONLY for a rowless
-    backend (copilot/auggie, which own no index taxonomy); a backend that does own
-    a taxonomy (deepseek/codex) must name a model it actually serves, so an unknown
-    bare model fails closed exactly as the bare-id path would.
+    must be an Anthropic-surface backend and the bare model must be non-empty.
+
+    A ROWLESS backend (copilot/auggie) owns no model taxonomy, so the index cannot
+    know which models it serves; an explicit rowless provider is therefore
+    authoritative for ANY bare id, INCLUDING one indexed to a rows-owning backend.
+    This is the provider-up-front disambiguation in action: ``copilot/gpt-5.5``
+    selects GitHub Copilot's gpt-5.5, distinct from codex's bare ``gpt-5.5`` (the
+    two are different upstream subscriptions that happen to share a model name).
+
+    A rows-owning backend (codex/deepseek/claude) must name a model indexed to
+    ITSELF: a bare id indexed to a different backend (e.g. ``deepseek/gpt-5.5``) is a
+    conflict that resolves to None, and a bare id unknown to the index fails closed
+    exactly as the bare-id path would.
     """
     if not bare or provider not in SURFACE_BACKENDS["anthropic"]:
         return None
+    if provider not in _BACKENDS_WITH_ROWS:
+        return provider
     indexed = _MODEL_INDEX.get(bare)
     if indexed is not None:
         return provider if indexed == provider else None
-    if provider in _BACKENDS_WITH_ROWS:
-        return None
-    return provider
+    return None
 
 
 def resolve_anthropic_backend(model: str | None) -> str | None:
