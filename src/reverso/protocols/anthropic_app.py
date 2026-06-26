@@ -64,6 +64,7 @@ from reverso.protocols.replay import build_prompt, estimate_usage, new_message_i
 from reverso.protocols.surface_registry import (
     SURFACE_BACKENDS,
     canonical_model_id,
+    list_anthropic_discovery_aliases,
     list_anthropic_surface_models,
     resolve_anthropic_backend,
 )
@@ -684,7 +685,10 @@ class AnthropicMessagesApp:
         stable ISO 8601 value rather than a per-request now() so the listing is
         deterministic and cache-friendly.
         """
-        rows = list_anthropic_surface_models()
+        # Bare surface listing PLUS discovery aliases: claude ids pass Claude Code's
+        # gateway-discovery claude/anthropic filter as-is, and the anthropic--<backend>--
+        # aliases make codex/deepseek/copilot/auggie selectable in the /model picker too.
+        rows = list_anthropic_surface_models() + list_anthropic_discovery_aliases()
         data = [
             {
                 "type": "model",
