@@ -50,7 +50,17 @@ config/*backup
 # Operational agent state (transient; never committed)
 .agents/
 .oma/
-.omc/
+# .omc/ mixes transient runtime state with COMMITTED knowledge that source/tests
+# depend on (plans/research/specs/context/interviews/handoffs). Ignore the
+# transient top-level entries (state, sessions, ultragoal, logs, ...) but keep the
+# committed-knowledge directories tracked.
+.omc/*
+!.omc/context/
+!.omc/handoffs/
+!.omc/interviews/
+!.omc/plans/
+!.omc/research/
+!.omc/specs/
 .omx/
 .graphwiki/
 graphwiki-out/
