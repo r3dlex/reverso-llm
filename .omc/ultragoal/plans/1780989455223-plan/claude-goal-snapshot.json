@@ -1,4 +1,0 @@
-{
-  "condition": "Complete all ultragoal stories in .omc/ultragoal/plans/1780989455223-plan/goals.json: G001-docs-first-topology-and-composition Docs-first topology and composition-gap ADR; G002-auggie-sdk-and-indexing-feasibility Auggie SDK and indexing feasibility spike; G003-register-auggie-and-deepseek-in-the Register Auggie and DeepSeek in the merged gateway and wire single port; G004-shared-codex-responses-contract-suit Shared Codex Responses contract suite and falsifiable safety tests; G005-auggie-provider-adapter Auggie provider adapter; G006-deepseek-provider-adapter-with-full DeepSeek provider adapter with full modes (spike-gated); G007-cutover-verification-rollback-and-cl Cutover, verification, rollback, and cleanup",
-  "status": "complete"
-}
