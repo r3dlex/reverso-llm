@@ -46,3 +46,11 @@ docs/spike-notes.md
 config/*.bak
 config/*.bak*
 config/*backup
+
+# Operational agent state (transient; never committed)
+.agents/
+.oma/
+.omc/
+.omx/
+.graphwiki/
+graphwiki-out/

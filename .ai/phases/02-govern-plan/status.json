@@ -1,0 +1,18 @@
+{
+  "schema_version": "1.0",
+  "workflow_id": "init-ai-repo",
+  "phase_id": "02-govern-plan",
+  "title": "Govern & Plan",
+  "required": true,
+  "status": "complete",
+  "inputs": [
+    ".ai/phases/01-discover-decide/status.json"
+  ],
+  "outputs": [
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "docs/specifications/ACTIVE/"
+  ],
+  "evidence": "AGENTS.md is the single source of truth with a Harness Map and workflow links; CLAUDE.md/GEMINI.md are thin pointers (ADR-0014). docs/specifications/ACTIVE/ exists with a .gitkeep.",
+  "next_actions": []
+}
