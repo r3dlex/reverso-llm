@@ -1,0 +1,172 @@
+{
+  "schema_version": "1.1",
+  "root_repo_id": "reverso-root",
+  "topology_type": "standalone",
+  "generated_at": "2026-06-28T00:00:00Z",
+  "nodes": [
+    {
+      "id": "adr:reverso-root:init",
+      "type": "adr",
+      "title": "v3 AI-SDLC scaffold adoption",
+      "status": "active",
+      "repo_id": "reverso-root",
+      "path": "docs/architecture/adr/0001-init.md",
+      "backlinks": []
+    },
+    {
+      "id": "adr:reverso-root:governance-v3-upgrade",
+      "type": "adr",
+      "title": "Governance upgrade to v3 standard",
+      "status": "active",
+      "repo_id": "reverso-root",
+      "path": "docs/architecture/adr/0013-init-ai-repo-v3-upgrade.md",
+      "backlinks": [
+        "adr:reverso-root:init"
+      ]
+    },
+    {
+      "id": "adr:reverso-root:agents-md-single-source",
+      "type": "adr",
+      "title": "AGENTS.md single source of truth; thin CLAUDE.md/GEMINI.md pointers",
+      "status": "active",
+      "repo_id": "reverso-root",
+      "path": "docs/architecture/adr/0014-agents-md-single-source-codex-parity.md",
+      "backlinks": [
+        "adr:reverso-root:governance-v3-upgrade"
+      ]
+    },
+    {
+      "id": "adr:reverso-root:mcp-a2a-observability",
+      "type": "adr",
+      "title": "MCP/A2A open standards and observability harness surface",
+      "status": "active",
+      "repo_id": "reverso-root",
+      "path": "docs/architecture/adr/0015-mcp-a2a-and-observability-harness.md",
+      "backlinks": [
+        "adr:reverso-root:governance-v3-upgrade"
+      ]
+    },
+    {
+      "id": "plan:reverso-root:discover-decide",
+      "type": "plan",
+      "title": "Discover & Decide: SDLC path selection",
+      "status": "active",
+      "repo_id": "reverso-root",
+      "path": ".ai/init/sdlc-path.md",
+      "backlinks": [
+        "adr:reverso-root:init"
+      ]
+    },
+    {
+      "id": "validation:reverso-root:repo-profile",
+      "type": "validation",
+      "title": "Repository profile (discover-decide evidence)",
+      "status": "active",
+      "repo_id": "reverso-root",
+      "path": ".ai/init/repo-profile.json",
+      "backlinks": [
+        "plan:reverso-root:discover-decide"
+      ]
+    },
+    {
+      "id": "workflow:reverso-root:repo-workflow",
+      "type": "workflow",
+      "title": "Repo workflow manifest",
+      "status": "active",
+      "repo_id": "reverso-root",
+      "path": ".ai/workflows/repo-workflow.json",
+      "backlinks": [
+        "adr:reverso-root:governance-v3-upgrade"
+      ]
+    },
+    {
+      "id": "validation:reverso-root:traceability-report",
+      "type": "validation",
+      "title": "Traceability validation report",
+      "status": "active",
+      "repo_id": "reverso-root",
+      "path": ".ai/traceability/validation-report.md",
+      "backlinks": [
+        "workflow:reverso-root:repo-workflow"
+      ]
+    },
+    {
+      "id": "handoff:reverso-root:init-ai-repo",
+      "type": "handoff",
+      "title": "init-ai-repo handoff",
+      "status": "active",
+      "repo_id": "reverso-root",
+      "path": ".ai/handoff/init-ai-repo-handoff.md",
+      "backlinks": [
+        "validation:reverso-root:traceability-report"
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "source": "adr:reverso-root:init",
+      "target": "adr:reverso-root:governance-v3-upgrade",
+      "relation": "refines-to",
+      "created_by": "init-ai-repo",
+      "evidence_path": ".ai/traceability/index.md"
+    },
+    {
+      "source": "adr:reverso-root:init",
+      "target": "plan:reverso-root:discover-decide",
+      "relation": "constrains",
+      "created_by": "init-ai-repo",
+      "evidence_path": ".ai/traceability/index.md"
+    },
+    {
+      "source": "adr:reverso-root:governance-v3-upgrade",
+      "target": "adr:reverso-root:agents-md-single-source",
+      "relation": "refines-to",
+      "created_by": "init-ai-repo",
+      "evidence_path": ".ai/traceability/index.md"
+    },
+    {
+      "source": "adr:reverso-root:governance-v3-upgrade",
+      "target": "adr:reverso-root:mcp-a2a-observability",
+      "relation": "refines-to",
+      "created_by": "init-ai-repo",
+      "evidence_path": ".ai/traceability/index.md"
+    },
+    {
+      "source": "adr:reverso-root:governance-v3-upgrade",
+      "target": "workflow:reverso-root:repo-workflow",
+      "relation": "constrains",
+      "created_by": "init-ai-repo",
+      "evidence_path": ".ai/traceability/index.md"
+    },
+    {
+      "source": "plan:reverso-root:discover-decide",
+      "target": "validation:reverso-root:repo-profile",
+      "relation": "decomposes-to",
+      "created_by": "init-ai-repo",
+      "evidence_path": ".ai/traceability/index.md"
+    },
+    {
+      "source": "workflow:reverso-root:repo-workflow",
+      "target": "validation:reverso-root:traceability-report",
+      "relation": "validated-by",
+      "created_by": "init-ai-repo",
+      "evidence_path": ".ai/traceability/index.md"
+    },
+    {
+      "source": "validation:reverso-root:traceability-report",
+      "target": "handoff:reverso-root:init-ai-repo",
+      "relation": "summarized-by",
+      "created_by": "init-ai-repo",
+      "evidence_path": ".ai/traceability/index.md"
+    }
+  ],
+  "coverage": {
+    "required_types": [
+      "adr",
+      "plan",
+      "workflow",
+      "validation",
+      "handoff"
+    ]
+  }
+}

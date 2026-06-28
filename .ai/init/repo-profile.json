@@ -1,0 +1,74 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-06-28T00:00:00Z",
+  "repo_id": "reverso-root",
+  "repo_name": "reverso",
+  "remote": "git@github.com:r3dlex/reverso-llm.git",
+  "description": "Subscription-backed local LLM gateway wrapping the Claude Code and Codex CLIs with session persistence. Serves the OpenAI Responses API and an inbound Anthropic Messages API surface on 127.0.0.1 only.",
+  "language": "python",
+  "runtime": "cpython",
+  "python_version_minimum": "3.11",
+  "python_version_pinned": "3.12",
+  "package_manager": "uv",
+  "workspace_layout": "single-package",
+  "workspace_packages": [
+    "src/reverso"
+  ],
+  "topology": {
+    "topology_type": "standalone",
+    "current_depth": 0,
+    "max_allowed_depth": 0,
+    "sync_strategy": "physical-copy"
+  },
+  "ci": {
+    "provider": "GitHub Actions",
+    "workflow_files": [
+      ".github/workflows/ci.yml",
+      ".github/workflows/ci-prek.yml",
+      ".github/workflows/release.yml"
+    ],
+    "pre_commit": "prek",
+    "pre_commit_config": "prek.toml"
+  },
+  "scripts": {
+    "test": "uv run pytest tests/ -v --ignore=tests/integration --tb=short",
+    "test_integration": "uv run pytest tests/integration -q",
+    "lint": "uvx ruff check .",
+    "format": "uvx ruff format .",
+    "compile_check": "find src -name '*.py' | xargs uv run python -m py_compile",
+    "pre_commit": "uvx prek run --all-files",
+    "rules_validate": "bash scripts/validate-rules.sh",
+    "archgate": "bash scripts/archgate.sh structural .rules.ts"
+  },
+  "test_framework": "pytest",
+  "build_tool": "hatchling",
+  "tracker": {
+    "host": "github",
+    "repo": "r3dlex/reverso-llm",
+    "issues_url": "https://github.com/r3dlex/reverso-llm/issues"
+  },
+  "branch_policy": {
+    "protected_branch": "main",
+    "delivery": "PR-only",
+    "auto_merge": "squash (when CI + approval green)"
+  },
+  "conventions": {
+    "adr_dir": "docs/architecture/adr/",
+    "spec_dir": "docs/specifications/",
+    "package_source": "src/reverso/",
+    "config_dir": "config/",
+    "entry_scripts": ["reverso-proxy", "reverso-daemon", "reverso-codex-sync", "reverso-claude-code-sync"]
+  },
+  "archgate_rules": ".rules.ts",
+  "release_config": "release.json",
+  "existing_governance": {
+    "ai_rules": [".ai/rules/security.md", ".ai/rules/technical-bounds.md"],
+    "ai_skills": [".ai/skills/git-ops.json", ".ai/skills/workspace-sync.json"],
+    "ai_system_prompts": [
+      ".ai/system-prompts/architect.md",
+      ".ai/system-prompts/developer.md",
+      ".ai/system-prompts/qa-engineer.md"
+    ],
+    "memory_layer": ".memory/"
+  }
+}
