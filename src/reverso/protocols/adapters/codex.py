@@ -73,7 +73,7 @@ from reverso.protocols.auth import (
     AuthResolution,
     redact_mapping,
 )
-from reverso.protocols.model_exposure import codex_catalog_context_window
+from reverso.protocols.model_exposure import codex_usage_context_window
 from reverso.protocols.replay import (
     buffered_envelope,
     build_prompt,
@@ -617,7 +617,7 @@ class CodexAdapter:
         """
         if stream_usage is None:
             return
-        window = codex_catalog_context_window(model_id)
+        window = codex_usage_context_window(model_id)
         current_rl = codex_usage_store.get_rate_limits()
         new_rl = await asyncio.to_thread(read_rate_limits, thread_id)
         # Keep-last: when rollout gives nothing, preserve existing rate_limits.

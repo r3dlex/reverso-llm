@@ -33,6 +33,7 @@ from reverso.protocols.adapters.codex_rollout import (
     _map_rate_limits,
     read_rate_limits,
 )
+from reverso.protocols.model_exposure import codex_usage_context_window
 from reverso.protocols.replay import estimate_usage
 
 
@@ -677,3 +678,31 @@ def test_build_snapshot_uses_catalog_context_window() -> None:
     assert snapshot["context"]["window_tokens"] == 128000
     assert snapshot["context"]["used_tokens"] == 12800
     assert snapshot["context"]["used_percent"] == 10.0
+
+
+def test_codex_usage_context_window_known_unknown_and_500k() -> None:
+    """Served ids return a window; unmapped ids return None; 500k → 500000."""
+    assert codex_usage_context_window("gpt-5.5") == 128000
+    assert codex_usage_context_window("gpt-4.1") == 128000
+    assert codex_usage_context_window("gpt-5-500k") == 500000
+    # An unmapped id yields None so the consumer renders n/a, not a guess.
+    assert codex_usage_context_window("some-unknown-model") is None
+
+
+def test_build_snapshot_unknown_window_yields_null_used_percent() -> None:
+    """window_tokens=None (unmapped model) → used_percent None (HUD n/a), no guess."""
+    snapshot = codex_usage_store.build_snapshot(
+        model_id="some-unknown-model",
+        stream_usage={
+            "input_tokens": 12800,
+            "cached_input_tokens": 0,
+            "output_tokens": 10,
+            "reasoning_output_tokens": 0,
+        },
+        window_tokens=None,
+        rate_limits=None,
+    )
+    assert snapshot["context"]["window_tokens"] is None
+    assert snapshot["context"]["used_percent"] is None
+    # Used tokens are still reported even when the window is unknown.
+    assert snapshot["context"]["used_tokens"] == 12800
