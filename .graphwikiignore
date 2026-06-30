@@ -1,0 +1,19 @@
+# GraphWiki ignore patterns (auto-generated)
+
+# Always excluded
+coverage/
+.git/
+.cache/
+*.log
+.DS_Store
+.env
+.env.*
+graphwiki-out/
+graphify-out/
+.graphwiki/
+
+# Python (detected)
+__pycache__/
+*.pyc
+.venv/
+venv/

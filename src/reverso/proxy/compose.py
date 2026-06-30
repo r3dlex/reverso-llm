@@ -9,6 +9,11 @@ routes by path prefix:
     go to the first-party gateway, served entirely without LiteLLM;
   - everything else is delegated verbatim to the legacy LiteLLM app.
 
+``GET /usage`` is handled directly here (before the Anthropic-surface check and
+before the legacy delegation) so it is reachable regardless of which model is
+active.  It reads ``codex_usage_store`` in-process - it MUST NOT and does NOT
+spawn codex (INV-2, Slice 2).
+
 reverso.proxy.main boots this module's ``app``. Repointing main back to
 ``reverso.proxy.app:app`` is the one-line rollback (ADR 0003 D1): the legacy app
 still understands the claude/deepseek profile prefixes, so first-party traffic
@@ -22,9 +27,11 @@ reverso.proxy.app; the LiteLLM quarantine guard test asserts that invariant.
 
 from __future__ import annotations
 
+import json
 from typing import Any, Awaitable, Callable
 
 from reverso.protocols.adapter import ProviderAdapter
+from reverso.protocols.adapters import codex_usage_store
 from reverso.protocols.anthropic_app import (
     build_anthropic_app,
     route_is_anthropic_surface,
@@ -53,6 +60,22 @@ def build_adapters() -> dict[str, ProviderAdapter]:
         "auggie": AuggieAdapter(),
         "deepseek": DeepSeekAdapter(),
     }
+
+
+async def _send_json(send: Send, body: dict[str, Any], status: int = 200) -> None:
+    """Send a JSON response over the ASGI ``send`` callable."""
+    encoded = json.dumps(body).encode("utf-8")
+    await send(
+        {
+            "type": "http.response.start",
+            "status": status,
+            "headers": [
+                [b"content-type", b"application/json"],
+                [b"content-length", str(len(encoded)).encode("ascii")],
+            ],
+        }
+    )
+    await send({"type": "http.response.body", "body": encoded})
 
 
 class CompositionRoot:
@@ -87,6 +110,20 @@ class CompositionRoot:
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope.get("type") == "http":
             path = str(scope.get("path", ""))
+
+            # GET /usage - Slice 2: serve the latest Codex usage snapshot.
+            # Handled BEFORE the Anthropic-surface check and before legacy
+            # delegation so it is always reachable.  Reads codex_usage_store
+            # in-process only - never spawns codex (INV-2).
+            if path == "/usage" and scope.get("method", "GET") == "GET":
+                snapshot = codex_usage_store.get()
+                if snapshot is not None:
+                    body = snapshot
+                else:
+                    body = codex_usage_store.empty_response()
+                await _send_json(send, body)
+                return
+
             # The Anthropic Messages surface is checked BEFORE the Responses
             # split so /v1/messages and /<profile>/v1/messages (including
             # /claude/v1/messages, now served first-party by the Anthropic app

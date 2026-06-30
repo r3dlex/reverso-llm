@@ -53,7 +53,7 @@ import logging
 import subprocess
 import time
 from pathlib import Path
-from typing import Any, AsyncIterator, Callable
+from typing import Any, AsyncIterator, Callable, NamedTuple
 
 from reverso.protocols.adapter import (
     InputItemList,
@@ -67,10 +67,13 @@ from reverso.protocols.adapters.cli_spine import (
     run_bounded_cli,
     stream_bounded_cli,
 )
+from reverso.protocols.adapters.codex_rollout import read_rate_limits
+from reverso.protocols.adapters import codex_usage_store
 from reverso.protocols.auth import (
     AuthResolution,
     redact_mapping,
 )
+from reverso.protocols.model_exposure import codex_catalog_context_window
 from reverso.protocols.replay import (
     buffered_envelope,
     build_prompt,
@@ -86,6 +89,19 @@ from reverso.protocols.store import ResponseStore
 from reverso.proxy.profile_routing import CURRENT_PROFILE_WORKSPACE
 
 logger = logging.getLogger(__name__)
+
+
+class _CodexStreamTerminal(NamedTuple):
+    """Terminal metadata emitted by the default Codex stream runner."""
+
+    usage: dict[str, Any] | None
+    thread_id: str | None
+
+
+CodexCliResult = str | tuple[str, dict[str, Any] | None, str | None]
+CodexCliRunner = Callable[[str, str], CodexCliResult]
+CodexStreamChunk = str | _CodexStreamTerminal
+CodexStreamRunner = Callable[[str, str], AsyncIterator[CodexStreamChunk]]
 
 # The resolved OAuth method name. The falsifiable gate asserts on this exact
 # value; it must never be an api-key path.
@@ -367,14 +383,21 @@ def _is_turn_complete(event: dict[str, Any]) -> bool:
     return event.get("type") == "turn.completed"
 
 
-def _parse_codex_lines(stdout: str) -> str:
-    """Parse a buffered ``codex exec --json`` stdout into assistant text.
+def _parse_codex_lines(
+    stdout: str,
+) -> tuple[str, dict[str, Any] | None, str | None]:
+    """Parse a buffered ``codex exec --json`` stdout.
 
-    Joins all ``agent_message`` texts with newlines (the same aggregation the
-    daemon ``CodexCLIParser`` performs) and stops at ``turn.completed``. Lines
-    that are blank or not JSON are skipped, matching the lenient daemon grammar.
+    Returns ``(text, usage, thread_id)`` where:
+    - ``text``      - newline-joined agent_message texts (same as before)
+    - ``usage``     - the ``turn.completed.usage`` dict (4 keys) or None
+    - ``thread_id`` - from the ``thread.started`` event, or None
+
+    Lines that are blank or not JSON are skipped (lenient daemon grammar).
     """
     parts: list[str] = []
+    usage: dict[str, Any] | None = None
+    thread_id: str | None = None
     for raw_line in stdout.splitlines():
         line = raw_line.strip()
         if not line:
@@ -385,12 +408,20 @@ def _parse_codex_lines(stdout: str) -> str:
             continue
         if not isinstance(event, dict):
             continue
+        # Capture thread_id from the thread.started event.
+        if event.get("type") == "thread.started":
+            tid = event.get("thread_id")
+            if isinstance(tid, str):
+                thread_id = tid
         text = _agent_message_text(event)
         if text:
             parts.append(text)
         if _is_turn_complete(event):
+            raw_usage = event.get("usage")
+            if isinstance(raw_usage, dict):
+                usage = raw_usage
             break
-    return "\n".join(parts)
+    return "\n".join(parts), usage, thread_id
 
 
 class CodexAdapter:
@@ -422,8 +453,8 @@ class CodexAdapter:
         *,
         auth: CodexOAuthAuth | None = None,
         store: ResponseStore | None = None,
-        cli_runner: Callable[[str, str], str] | None = None,
-        stream_cli_runner: Callable[[str, str], AsyncIterator[str]] | None = None,
+        cli_runner: CodexCliRunner | None = None,
+        stream_cli_runner: CodexStreamRunner | None = None,
     ) -> None:
         self._auth = auth or CodexOAuthAuth()
         self._store = store or ResponseStore()
@@ -453,8 +484,14 @@ class CodexAdapter:
             )
         return resolution
 
-    def _run_codex_cli(self, prompt: str, model_flag: str) -> str:
-        """Run ``codex exec`` once for a single-shot completion and return text.
+    def _run_codex_cli(
+        self, prompt: str, model_flag: str
+    ) -> tuple[str, dict[str, Any] | None, str | None]:
+        """Run ``codex exec`` once for a single-shot completion.
+
+        Returns ``(text, usage, thread_id)`` - the parsed assistant text, the
+        real ``turn.completed.usage`` dict (4 keys) or None, and the
+        ``thread.started`` thread_id or None.
 
         Uses the existing CLI login session (ChatGPT subscription OAuth, A3): NO
         ``env=`` is passed, so the spine inherits the parent env and the CLI
@@ -481,7 +518,7 @@ class CodexAdapter:
 
     async def _default_stream_cli_runner(
         self, prompt: str, model_flag: str
-    ) -> AsyncIterator[str]:
+    ) -> AsyncIterator[CodexStreamChunk]:
         """Default streaming runner over ``codex exec --json``.
 
         Drives the bounded streaming spine (ADR 0005), which owns the deadline,
@@ -490,7 +527,15 @@ class CodexAdapter:
         this yields one fragment per agent_message rather than token deltas; the
         canonical SSE shape is produced by ``replay_incremental`` above. No token
         is injected into the child env (A3); the parent env is inherited.
+
+        Usage and thread_id are surfaced via a private terminal object yielded
+        AFTER all text fragments. This avoids instance-state mutation, so
+        concurrent streaming turns on the shared adapter cannot tear each
+        other's data. The ``chunks()`` closure in ``_stream_response`` captures
+        the values into turn-local nonlocal cells before ``finalize`` reads them.
         """
+        _thread_id: str | None = None
+        _usage: dict[str, Any] | None = None
         async for line in stream_bounded_cli(
             [
                 "codex",
@@ -513,11 +558,77 @@ class CodexAdapter:
                 continue
             if not isinstance(event, dict):
                 continue
+            if event.get("type") == "thread.started":
+                tid = event.get("thread_id")
+                if isinstance(tid, str):
+                    _thread_id = tid
             fragment = _agent_message_text(event)
             if fragment:
                 yield fragment
             if _is_turn_complete(event):
-                return
+                raw_usage = event.get("usage")
+                if isinstance(raw_usage, dict):
+                    _usage = raw_usage
+                break
+        # Yield terminal metadata so _stream_response can capture usage +
+        # thread_id into turn-local cells without touching instance state.
+        yield _CodexStreamTerminal(usage=_usage, thread_id=_thread_id)
+
+    def _build_usage(
+        self,
+        stream_usage: dict[str, Any] | None,
+        prompt: str,
+        full_text: str,
+    ) -> dict[str, Any]:
+        """Return the envelope usage dict.
+
+        Prefers ``stream_usage`` (real 4-key values from ``turn.completed``).
+        Falls back to ``estimate_usage`` ONLY when stream_usage is absent,
+        keeping ``estimate_usage`` unchanged and shared by non-codex adapters
+        (INV-3).
+        """
+        if stream_usage is not None:
+            input_tokens = int(stream_usage.get("input_tokens") or 0)
+            cached = int(stream_usage.get("cached_input_tokens") or 0)
+            output_tokens = int(stream_usage.get("output_tokens") or 0)
+            reasoning = int(stream_usage.get("reasoning_output_tokens") or 0)
+            return {
+                "input_tokens": input_tokens,
+                "cached_input_tokens": cached,
+                "output_tokens": output_tokens,
+                "reasoning_output_tokens": reasoning,
+                "total_tokens": input_tokens + output_tokens + reasoning,
+            }
+        return estimate_usage(prompt, full_text)
+
+    async def _update_usage_store(
+        self,
+        model_id: str,
+        stream_usage: dict[str, Any] | None,
+        thread_id: str | None,
+    ) -> None:
+        """Update the in-process usage store after a completed codex turn.
+
+        Reads the rollout file for rate_limits via ``asyncio.to_thread`` so
+        the rglob+stat+file-read stays off the ASGI event loop (fix #3).
+        A missing rollout keeps the last stored rate_limits value (keep-last
+        semantics - does NOT clear to None).  Tokens and context are always
+        updated from ``stream_usage`` when present.
+        """
+        if stream_usage is None:
+            return
+        window = codex_catalog_context_window(model_id)
+        current_rl = codex_usage_store.get_rate_limits()
+        new_rl = await asyncio.to_thread(read_rate_limits, thread_id)
+        # Keep-last: when rollout gives nothing, preserve existing rate_limits.
+        rate_limits = new_rl if new_rl is not None else current_rl
+        snapshot = codex_usage_store.build_snapshot(
+            model_id=model_id,
+            stream_usage=stream_usage,
+            window_tokens=window,
+            rate_limits=rate_limits,
+        )
+        codex_usage_store.update(snapshot)
 
     async def create_response(self, request: ResponsesRequest) -> ResponseEnvelope:
         """Return a non-streaming Responses object for ``request``.
@@ -530,9 +641,24 @@ class CodexAdapter:
         model_flag = _codex_model_flag(request.model)
         # The CLI runner is a blocking subprocess; offload it so a single Codex
         # call cannot stall the gateway's shared event loop for its full run.
-        text = await asyncio.to_thread(self._cli_runner, prompt, model_flag)
-        envelope = buffered_envelope(request, prompt=prompt, text=text)
+        result = await asyncio.to_thread(self._cli_runner, prompt, model_flag)
+        # Support both the legacy str return (injected test runners that return
+        # bare str) and the new tuple return (real _run_codex_cli).
+        if isinstance(result, tuple):
+            text, stream_usage, thread_id = result
+        else:
+            text, stream_usage, thread_id = result, None, None  # type: ignore[unreachable]
+        usage = self._build_usage(stream_usage, prompt, text)
+        envelope = ResponseEnvelope(
+            id=new_response_id(),
+            model=request.model,
+            output=[message_item(new_message_id(), text)],
+            status="completed",
+            usage=usage,
+            previous_response_id=request.previous_response_id,
+        )
         self._store.put_response(envelope, record_input_items(request))
+        await self._update_usage_store(request.model or "", stream_usage, thread_id)
         return envelope
 
     def stream_response(self, request: ResponsesRequest) -> AsyncIterator[SSEEvent]:
@@ -562,7 +688,7 @@ class CodexAdapter:
         #   rather than a truncated stream.  This is the only case where the
         #   buffered runner is invoked.
         stream = self._stream_cli_runner(prompt, model_flag)
-        first_chunk: str | None = None
+        first_chunk: CodexStreamChunk | None = None
         _stream_failed = False
         if hasattr(stream, "__anext__"):
             try:
@@ -591,33 +717,68 @@ class CodexAdapter:
             # Failure fallback: re-invoke the buffered runner.  A failing codex
             # exec raises CodexAuthError here (no false-green); the gateway
             # renders it as a structured Anthropic error.
-            text = await asyncio.to_thread(self._cli_runner, prompt, model_flag)
-            envelope = buffered_envelope(request, prompt=prompt, text=text)
+            result = await asyncio.to_thread(self._cli_runner, prompt, model_flag)
+            if isinstance(result, tuple):
+                text, stream_usage, thread_id = result
+            else:
+                text, stream_usage, thread_id = result, None, None  # type: ignore[unreachable]
+            fb_usage = self._build_usage(stream_usage, prompt, text)
+            envelope = ResponseEnvelope(
+                id=new_response_id(),
+                model=request.model,
+                output=[message_item(new_message_id(), text)],
+                status="completed",
+                usage=fb_usage,
+                previous_response_id=request.previous_response_id,
+            )
             async for event in replay_turn(
                 envelope, store=self._store, input_items=record_input_items(request)
             ):
                 yield event
+            await self._update_usage_store(request.model or "", stream_usage, thread_id)
             return
 
         if first_chunk is None:
             # Clean empty turn: replay an empty envelope directly, no re-spawn.
+            # No real stream_usage available for an empty turn; _update_usage_store
+            # is a no-op when stream_usage is None, but called for symmetry (#7).
             envelope = buffered_envelope(request, prompt=prompt, text="")
             async for event in replay_turn(
                 envelope, store=self._store, input_items=record_input_items(request)
             ):
                 yield event
+            await self._update_usage_store(request.model or "", None, None)
             return
 
         # Incremental path: replay_incremental owns the canonical SSE sequence
         # and the finalize-time store write. After the first fragment any iterator
         # failure propagates unwrapped so the gateway's mid-stream contract takes
         # over verbatim.
+        #
+        # Turn-local cells for usage + thread_id. No instance-state mutation:
+        # concurrent turns on the shared adapter cannot tear each other's data.
+        # The chunks() async generator intercepts the terminal metadata object
+        # that _default_stream_cli_runner yields after all text fragments and
+        # captures the values into these nonlocal cells before forwarding
+        # nothing to replay_incremental.
         response_id = new_response_id()
         message_id = new_message_id()
+        _turn_usage: dict[str, Any] | None = None
+        _turn_thread_id: str | None = None
 
         async def chunks() -> AsyncIterator[dict[str, Any]]:
+            nonlocal _turn_usage, _turn_thread_id
+            # first_chunk was already awaited; forward it unless it is metadata.
+            if isinstance(first_chunk, _CodexStreamTerminal):
+                _turn_usage = first_chunk.usage
+                _turn_thread_id = first_chunk.thread_id
+                return
             yield {"text": first_chunk}
             async for fragment in stream:
+                if isinstance(fragment, _CodexStreamTerminal):
+                    _turn_usage = fragment.usage
+                    _turn_thread_id = fragment.thread_id
+                    return
                 yield {"text": fragment}
 
         def finalize(
@@ -627,12 +788,15 @@ class CodexAdapter:
             usage: dict[str, Any] | None,
             tool_calls: list[dict[str, Any]],
         ) -> ResponseEnvelope:
+            # _turn_usage and _turn_thread_id were captured into turn-local
+            # nonlocal cells by chunks() above. No instance state, no race.
+            envelope_usage = self._build_usage(_turn_usage, prompt, full_text)
             return ResponseEnvelope(
                 id=response_id,
                 model=request.model,
                 output=[message_item(message_id, full_text)],
                 status="completed",
-                usage=estimate_usage(prompt, full_text),
+                usage=envelope_usage,
                 previous_response_id=request.previous_response_id,
             )
 
@@ -646,6 +810,12 @@ class CodexAdapter:
             finalize=finalize,
         ):
             yield event
+
+        # Store update after replay_incremental completes (store-before-drain
+        # relaxed per ADR 0004; usage store follows the same relaxed contract).
+        await self._update_usage_store(
+            request.model or "", _turn_usage, _turn_thread_id
+        )
 
     async def list_models(self) -> ModelList:
         """Return the five served gpt ids as a ``/v1/models`` listing.

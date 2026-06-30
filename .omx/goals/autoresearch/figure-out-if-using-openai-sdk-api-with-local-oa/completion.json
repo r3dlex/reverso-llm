@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "slug": "figure-out-if-using-openai-sdk-api-with-local-oa",
+  "verdict": "pass",
+  "passed": true,
+  "summary": "User decision recorded: keep current Reverso Codex architecture. Continue using codex exec subprocess backend with validate-only ~/.codex/auth.json OAuth gate; do not add direct OpenAI SDK/API adapter or use local Codex OAuth bearer for Platform API calls now.",
+  "evidence": "User decision recorded: keep current Reverso Codex architecture. Continue using codex exec subprocess backend with validate-only ~/.codex/auth.json OAuth gate; do not add direct OpenAI SDK/API adapter or use local Codex OAuth bearer for Platform API calls now.",
+  "critic_command": "Manual professor-critic: fail unless evidence includes Reverso source inspection, official OpenAI docs or API spec evidence, and a clear migration recommendation with risk controls.",
+  "recorded_at": "2026-06-28T23:08:00.662Z"
+}

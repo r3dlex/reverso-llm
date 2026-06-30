@@ -9,7 +9,10 @@ on:
 jobs:
   _prek-check-self-hosted:
     name: "Pre-commit Hooks (self-hosted)"
-    runs-on: [self-hosted, ubuntu-latest]
+    # Keep the required check context name, but run on GitHub-hosted Ubuntu.
+    # The repository currently has no repo-level self-hosted runners, and queued
+    # self-hosted jobs block the fallback job from ever starting.
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     continue-on-error: true
     outputs:
@@ -41,7 +44,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Route
-        run: echo "self-hosted passed=${{ needs._prek-check-self-hosted.outputs.passed }}"
+        run: echo "compatibility check passed=${{ needs._prek-check-self-hosted.outputs.passed }}"
       - name: Checkout
         if: needs._prek-check-self-hosted.outputs.passed != 'true'
         uses: actions/checkout@v4
