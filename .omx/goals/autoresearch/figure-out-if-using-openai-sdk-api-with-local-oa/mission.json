@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "workflow": "autoresearch-goal",
+  "slug": "figure-out-if-using-openai-sdk-api-with-local-oa",
+  "topic": "Figure out if using OpenAI SDK/API with local OAuth Bearer Token would be possible and have possibly better results than existing codex exec based subprocesses, especially for integration with Reverso's Anthropic API surface",
+  "rubric": "Pass only if the research: (1) verifies current Reverso Codex implementation from source; (2) checks official OpenAI/Codex/API documentation or OpenAPI facts for authentication modes and Responses/Chat APIs; (3) distinguishes local Codex CLI OAuth session use from direct OpenAI SDK/API bearer use; (4) evaluates feasibility, benefits, risks, and Anthropic API integration impact; (5) gives a concrete recommendation and next implementation experiment, without adding dependencies or editing upstream Codex.",
+  "critic_command": "Manual professor-critic: fail unless evidence includes Reverso source inspection, official OpenAI docs or API spec evidence, and a clear migration recommendation with risk controls.",
+  "status": "passed",
+  "created_at": "2026-06-28T22:22:07.118Z",
+  "updated_at": "2026-06-28T23:08:00.662Z",
+  "mission_path": ".omx/goals/autoresearch/figure-out-if-using-openai-sdk-api-with-local-oa/mission.json",
+  "rubric_path": ".omx/goals/autoresearch/figure-out-if-using-openai-sdk-api-with-local-oa/rubric.md",
+  "ledger_path": ".omx/goals/autoresearch/figure-out-if-using-openai-sdk-api-with-local-oa/ledger.jsonl",
+  "completion_path": ".omx/goals/autoresearch/figure-out-if-using-openai-sdk-api-with-local-oa/completion.json"
+}
