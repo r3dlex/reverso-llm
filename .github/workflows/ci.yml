@@ -12,11 +12,14 @@ env:
 jobs:
   _test-self-hosted:
     name: "test (self-hosted)"
-    runs-on: [self-hosted, ubuntu-latest]
+    # Keep the required check context name, but run on GitHub-hosted Ubuntu.
+    # The repository currently has no repo-level self-hosted runners, and queued
+    # self-hosted jobs block the fallback job from ever starting.
+    runs-on: ubuntu-latest
     timeout-minutes: 30
-    # Self-hosted is the preferred leg; the canonical job falls back to a
-    # GitHub-hosted runner when it fails, so a failure here must not fail
-    # the overall run.
+    # Compatibility leg for the protected "test (self-hosted)" context.
+    # Keep continue-on-error so the canonical hosted job can still report
+    # a real result if this leg ever fails.
     continue-on-error: true
     strategy:
       matrix:
