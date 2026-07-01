@@ -26,8 +26,8 @@ schema_version 1):
         },
         "context": {
             "used_tokens": int,           # = input_tokens
-            "window_tokens": int,         # from codex_catalog_context_window()
-            "used_percent": float,        # used_tokens / window_tokens * 100
+            "window_tokens": int | None,  # from codex_usage_context_window()
+            "used_percent": float | None, # used_tokens / window_tokens * 100
         },
         "rate_limits": {                  # null until first rollout read
             "five_hour": {"used_percent": float, "resets_at": str},
