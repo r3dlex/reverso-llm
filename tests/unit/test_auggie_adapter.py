@@ -48,6 +48,12 @@ def test_adapter_satisfies_protocol() -> None:
     assert isinstance(adapter, ProviderAdapter)
 
 
+def test_profile_qualified_model_is_canonicalized_for_cli() -> None:
+    argv = _build_completion_argv("hello", "auggie/opus-4-8", "/tmp/workspace")
+
+    assert argv[argv.index("-m") + 1] == "opus4.8"
+
+
 async def test_create_response_maps_and_stores() -> None:
     adapter = AuggieAdapter(cli_runner=lambda prompt, model: "Hello from Auggie.")
     request = ResponsesRequest.from_payload(

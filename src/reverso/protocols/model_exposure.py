@@ -121,9 +121,9 @@ def reverso_codex_profile_spec(
     )
 
 
-def provider_scoped_catalog_slug(_prefix: str, model_id: str) -> str:
+def provider_scoped_catalog_slug(prefix: str, model_id: str) -> str:
     """Return the catalog slug for a provider-scoped Codex picker."""
-    return model_id
+    return selector_model_id(prefix, model_id)
 
 
 def codex_catalog_context_window(model_id: str) -> int:

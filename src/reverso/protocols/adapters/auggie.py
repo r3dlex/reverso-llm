@@ -110,6 +110,8 @@ def _resolve_workspace_root() -> str:
 
 def _normalize_model_for_cli(model: str) -> str:
     """Return the Auggie CLI model id for Reverso and Codex-facing aliases."""
+    if model.startswith("auggie/"):
+        model = model[len("auggie/") :]
     return _MODEL_ALIASES.get(model, model)
 
 

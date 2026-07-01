@@ -508,7 +508,7 @@ def test_sync_default_config_exposes_no_reverso_models_globally(
     assert parsed["model"] == "gpt-5.5"
 
 
-def test_sync_writes_per_provider_catalog_files_with_bare_slugs(
+def test_sync_writes_per_provider_catalog_files_with_profile_safe_slugs(
     tmp_path: Path,
 ) -> None:
     target = tmp_path / "config.toml"
@@ -525,17 +525,26 @@ def test_sync_writes_per_provider_catalog_files_with_bare_slugs(
 
     copilot = json.loads((catalog_dir / "copilot.json").read_text(encoding="utf-8"))
     copilot_slugs = [m["slug"] for m in copilot["models"]]
-    # Bare model-id slugs only; never provider-prefixed.
-    assert "gpt-5.5" in copilot_slugs
-    assert "gpt-4o" in copilot_slugs
-    assert not any("/" in slug for slug in copilot_slugs)
-    assert "copilot/gpt-5.5" not in copilot_slugs
+    # Collision-prone providers are prefixed so they cannot shadow built-in GPT
+    # model ids in Codex's picker. The profile's default model remains bare.
+    assert "copilot/gpt-5.5" in copilot_slugs
+    assert "copilot/gpt-4o" in copilot_slugs
+    assert "gpt-5.5" not in copilot_slugs
 
     claude = json.loads((catalog_dir / "claude.json").read_text(encoding="utf-8"))
     claude_slugs = {m["slug"] for m in claude["models"]}
     # Each provider catalog only carries its own models.
     assert claude_slugs == {"claude-fable-5", "claude-sonnet-4-6"}
     assert "gpt-5.5" not in claude_slugs
+
+    auggie = json.loads((catalog_dir / "auggie.json").read_text(encoding="utf-8"))
+    assert [m["slug"] for m in auggie["models"]] == ["auggie/prism-a"]
+
+    deepseek = json.loads((catalog_dir / "deepseek.json").read_text(encoding="utf-8"))
+    assert [m["slug"] for m in deepseek["models"]] == [
+        "deepseek-v3",
+        "deepseek-r1",
+    ]
 
 
 def test_sync_strips_legacy_clutter_blocks(tmp_path: Path) -> None:
@@ -601,6 +610,39 @@ def test_sync_preserves_user_selected_model(tmp_path: Path) -> None:
     assert tomllib.loads(text)["model"] == "custom-user-model"
     assert top_level.count('model = "custom-user-model"') == 1
     assert 'model = "gpt-5.5"' not in top_level
+
+
+def test_sync_inserts_missing_reverso_provider_tables(tmp_path: Path) -> None:
+    target = tmp_path / "config.toml"
+    target.write_text(
+        'model_reasoning_effort = "medium"\n\n[tui]\nstatus_line = ["model"]\n',
+        encoding="utf-8",
+    )
+    catalog_dir = tmp_path / "reverso"
+
+    first = codex_sync.sync(
+        target=target,
+        fetcher=_make_fetcher(),
+        catalog_dir=catalog_dir,
+    )
+
+    assert first.changed is True
+    text = target.read_text(encoding="utf-8")
+    parsed = tomllib.loads(text)
+    providers = parsed["model_providers"]
+    for prefix in ("claude", "copilot", "auggie", "deepseek"):
+        provider = providers[f"reverso_{prefix}"]
+        assert provider["base_url"] == f"http://127.0.0.1:64946/{prefix}/v1"
+        assert provider["wire_api"] == "responses"
+    assert codex_sync.GATEWAY_PROVIDERS_BEGIN in text
+    assert '[tui]\nstatus_line = ["model"]' in text
+
+    second = codex_sync.sync(
+        target=target,
+        fetcher=_make_fetcher(),
+        catalog_dir=catalog_dir,
+    )
+    assert second.changed is False
 
 
 def test_sync_strips_legacy_block_and_creates_config_backup(tmp_path: Path) -> None:
@@ -1132,12 +1174,15 @@ def test_generate_catalog_json_shape_dedup_and_context_window() -> None:
 
     assert set(payload.keys()) == {"models"}
     slugs = [m["slug"] for m in payload["models"]]
-    assert slugs == ["shared-model", "big-500k-model"]
+    assert slugs == ["copilot/shared-model", "copilot/big-500k-model"]
 
     by_slug = {m["slug"]: m for m in payload["models"]}
-    assert by_slug["shared-model"]["display_name"] == "Reverso copilot shared-model"
-    assert by_slug["shared-model"]["context_window"] == 128000
-    assert by_slug["big-500k-model"]["context_window"] == 500000
+    assert (
+        by_slug["copilot/shared-model"]["display_name"]
+        == "Reverso copilot shared-model"
+    )
+    assert by_slug["copilot/shared-model"]["context_window"] == 128000
+    assert by_slug["copilot/big-500k-model"]["context_window"] == 500000
     required_keys = {
         "slug",
         "display_name",
@@ -1165,7 +1210,7 @@ def test_generate_catalog_json_dedupes_within_provider() -> None:
     pm = codex_sync.ProviderModels("copilot", ("gpt-5.5", "gpt-5.5", "gpt-4o"))
     payload = json.loads(codex_sync._generate_catalog_json(pm))
     slugs = [m["slug"] for m in payload["models"]]
-    assert slugs == ["gpt-5.5", "gpt-4o"]
+    assert slugs == ["copilot/gpt-5.5", "copilot/gpt-4o"]
 
 
 def test_generate_catalog_json_survives_hostile_model_ids() -> None:

@@ -18,6 +18,8 @@ def canonical_copilot_responses_model(model_id: str) -> str | None:
     ``unsupported_api_for_model``. Keep the Codex Responses profile on the
     OpenAI-family models that the upstream Responses endpoint accepts.
     """
+    if model_id.startswith("copilot/"):
+        model_id = model_id[len("copilot/") :]
     if not has_safe_model_id_chars(model_id):
         return None
     if model_id.startswith("gpt5"):

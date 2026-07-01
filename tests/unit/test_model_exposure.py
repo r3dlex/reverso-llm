@@ -124,7 +124,17 @@ def test_model_exposure_owns_codex_responses_model_eligibility() -> None:
 
 
 def test_model_exposure_owns_codex_catalog_and_stale_profile_policy() -> None:
-    assert provider_scoped_catalog_slug("copilot", "gpt-5.5") == "gpt-5.5"
+    assert provider_scoped_catalog_slug("copilot", "gpt-5.5") == "copilot/gpt-5.5"
+    assert provider_scoped_catalog_slug("auggie", "opus4.8") == "auggie/opus4.8"
+    assert provider_scoped_catalog_slug("agy", "gemini-2.5-pro") == "agy/gemini-2.5-pro"
+    assert provider_scoped_catalog_slug("codex", "gpt-5.5") == "gpt-5.5"
+    assert (
+        provider_scoped_catalog_slug("deepseek", "deepseek-v4-pro") == "deepseek-v4-pro"
+    )
+    assert (
+        provider_scoped_catalog_slug("claude", "claude-sonnet-4-6")
+        == "claude-sonnet-4-6"
+    )
     assert codex_catalog_context_window("regular-model") == 128000
     assert codex_catalog_context_window("claude-500k") == 500000
     assert stale_codex_variant_profile_stems() == STALE_CODEX_VARIANT_PROFILE_STEMS
