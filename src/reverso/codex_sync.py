@@ -59,6 +59,12 @@ NUX_BEGIN = "# BEGIN REVERSO MODELS NUX (managed by reverso-codex-sync)"
 NUX_END = "# END REVERSO MODELS NUX (managed by reverso-codex-sync)"
 CATALOG_BEGIN = "# BEGIN REVERSO MODEL CATALOG (managed by reverso-codex-sync)"
 CATALOG_END = "# END REVERSO MODEL CATALOG (managed by reverso-codex-sync)"
+GATEWAY_PROVIDERS_BEGIN = (
+    "# BEGIN REVERSO GATEWAY PROVIDERS (managed by reverso-codex-sync)"
+)
+GATEWAY_PROVIDERS_END = (
+    "# END REVERSO GATEWAY PROVIDERS (managed by reverso-codex-sync)"
+)
 
 BACKUPS_KEPT = 5
 BACKUP_SUFFIX_PREFIX = ".reverso-sync."
@@ -251,12 +257,7 @@ def _profile_files(
 
 
 def _catalog_model_entries(entry: ProviderModels) -> list[CatalogModelEntry]:
-    """Return one provider's catalog entries with bare model-id slugs.
-
-    Per-provider catalogs cannot collide across providers, and Codex sends the
-    slug as ``model`` to the pinned provider, so the slug MUST be the bare
-    upstream model id (no provider-prefixing).
-    """
+    """Return one provider's catalog entries with Codex-visible selector slugs."""
     merged: list[CatalogModelEntry] = []
     seen_slugs: set[str] = set()
     for model_id in entry.models:
@@ -376,6 +377,50 @@ def _ensure_default_model(text: str) -> str:
     if prefix and not prefix.endswith("\n"):
         prefix += "\n"
     return prefix + line + suffix
+
+
+def _gateway_provider_table(prefix: str, *, base_url: str = GATEWAY_BASE_URL) -> str:
+    """Render one required Reverso Codex provider table."""
+    provider = f"reverso_{prefix}"
+    display = prefix.capitalize()
+    return "\n".join(
+        [
+            f"[model_providers.{provider}]",
+            f"name = {_toml_string(f'Reverso {display} profile')}",
+            f"base_url = {_toml_string(f'{base_url}/{prefix}/v1')}",
+            'wire_api = "responses"',
+        ]
+    )
+
+
+def _ensure_gateway_provider_tables(
+    text: str,
+    prefixes: t.Iterable[str],
+    *,
+    base_url: str = GATEWAY_BASE_URL,
+) -> str:
+    """Append any missing Reverso provider tables required by profile files."""
+    parsed = _parse_toml(text, "existing config")
+    providers = parsed.get("model_providers")
+    if not isinstance(providers, dict):
+        providers = {}
+
+    missing = [prefix for prefix in prefixes if f"reverso_{prefix}" not in providers]
+    if not missing:
+        return text
+
+    block = "\n".join(
+        [
+            GATEWAY_PROVIDERS_BEGIN,
+            *(_gateway_provider_table(prefix, base_url=base_url) for prefix in missing),
+            GATEWAY_PROVIDERS_END,
+        ]
+    )
+    if text and not text.endswith("\n"):
+        text += "\n"
+    if text:
+        return text + "\n" + block + "\n"
+    return block + "\n"
 
 
 def _strip_overlay_tables(text: str) -> str:
@@ -618,7 +663,7 @@ def _write_per_provider_catalogs(
 ) -> list[Path]:
     """Write one catalog JSON per live provider; return the paths written.
 
-    Each file contains only that provider's models with bare model-id slugs.
+    Each file contains only that provider's models with Codex-visible slugs.
     Files are written for the same prefixes (and order) the profiles block
     references, so a profile never points at a missing catalog.
     """
@@ -845,6 +890,11 @@ def sync(
     new_text = _merge_catalog_config_block(new_text, None)
     new_text = _strip_managed_block(new_text, NUX_BEGIN, NUX_END)
     new_text = _strip_managed_block(new_text, PROFILES_BEGIN, PROFILES_END)
+    new_text = _ensure_gateway_provider_tables(
+        new_text,
+        model_exposure.reverso_routed_codex_profile_prefixes(),
+        base_url=base_url,
+    )
 
     for path, text in profile_files.items():
         _parse_toml(text, f"rendered profile {path.name}")

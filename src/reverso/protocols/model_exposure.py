@@ -121,9 +121,9 @@ def reverso_codex_profile_spec(
     )
 
 
-def provider_scoped_catalog_slug(_prefix: str, model_id: str) -> str:
+def provider_scoped_catalog_slug(prefix: str, model_id: str) -> str:
     """Return the catalog slug for a provider-scoped Codex picker."""
-    return model_id
+    return selector_model_id(prefix, model_id)
 
 
 def codex_catalog_context_window(model_id: str) -> int:
@@ -131,6 +131,32 @@ def codex_catalog_context_window(model_id: str) -> int:
     if "500k" in model_id.lower():
         return 500000
     return 128000
+
+
+# Per-served-model context-window sizes for the /usage telemetry surface
+# (Slice 1b). Unmapped ids return None so the HUD renders ``n/a`` rather than a
+# confidently-wrong percentage computed against a guessed window. This is the
+# /usage-specific variant; ``codex_catalog_context_window`` above stays
+# int-typed because ``codex_sync`` needs a concrete value for catalog files.
+_CODEX_USAGE_CONTEXT_WINDOWS: dict[str, int] = {
+    "gpt-5.5": 128000,
+    "gpt-5.4": 128000,
+    "gpt-5.4-mini": 128000,
+    "gpt-5.3-codex-spark": 128000,
+    "gpt-4.1": 128000,
+}
+
+
+def codex_usage_context_window(model_id: str) -> int | None:
+    """Context-window size for a served Codex model id, for /usage telemetry.
+
+    Returns the known window for a served gpt-* id (500000 for a 500k variant),
+    and ``None`` for an unmapped id so the consumer renders ``n/a`` instead of
+    dividing used tokens by a guessed window.
+    """
+    if "500k" in model_id.lower():
+        return 500000
+    return _CODEX_USAGE_CONTEXT_WINDOWS.get(model_id)
 
 
 def catalog_display_name(prefix: str, model_id: str) -> str:

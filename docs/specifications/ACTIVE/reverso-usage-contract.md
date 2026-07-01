@@ -37,6 +37,12 @@ The response body is JSON with `schema_version: 1`.
 }
 ```
 
+For a completed Codex turn whose context window is not known,
+`context.window_tokens` and `context.used_percent` are `null`. Consumers must
+render that case as unknown (for example `n/a`) rather than treating it as zero
+usage. Empty-store responses still use numeric zero values for the context
+block.
+
 When a Codex rollout file provides quota data, `rate_limits` is:
 
 ```json

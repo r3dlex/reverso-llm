@@ -30,6 +30,7 @@ from reverso.protocols.adapters.copilot import (
     GITHUB_TOKEN_URL,
     _raise_for_upstream_status,
 )
+from reverso.protocols.copilot_models import canonical_copilot_responses_model
 
 FAKE_OAUTH_TOKEN = "gho_FAKEoauthTOKENvalue1234567890"
 FAKE_BEARER_TOKEN = "tid=FAKEbearerTOKENvalue0987654321"
@@ -49,6 +50,10 @@ def _mock_client(handler):
         return httpx.AsyncClient(transport=transport, timeout=300.0)
 
     return factory
+
+
+def test_copilot_profile_qualified_model_is_canonicalized_for_responses() -> None:
+    assert canonical_copilot_responses_model("copilot/gpt-5.5") == "gpt-5.5"
 
 
 class _AsyncBytesStream(httpx.AsyncByteStream):

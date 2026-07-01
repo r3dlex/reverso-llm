@@ -26,8 +26,8 @@ schema_version 1):
         },
         "context": {
             "used_tokens": int,           # = input_tokens
-            "window_tokens": int,         # from codex_catalog_context_window()
-            "used_percent": float,        # used_tokens / window_tokens * 100
+            "window_tokens": int | None,  # from codex_usage_context_window()
+            "used_percent": float | None, # used_tokens / window_tokens * 100
         },
         "rate_limits": {                  # null until first rollout read
             "five_hour": {"used_percent": float, "resets_at": str},
@@ -102,13 +102,15 @@ def build_snapshot(
     *,
     model_id: str,
     stream_usage: dict[str, Any],
-    window_tokens: int,
+    window_tokens: int | None,
     rate_limits: dict[str, Any] | None,
 ) -> dict[str, Any]:
     """Build a contract-shaped snapshot from the finalize-time data.
 
     ``stream_usage``  - the 4-key dict from ``turn.completed.usage``
-    ``window_tokens`` - from ``codex_catalog_context_window(model_id)``
+    ``window_tokens`` - from ``codex_usage_context_window(model_id)``; ``None``
+                        for an unmapped model id, in which case ``used_percent``
+                        is ``None`` (HUD renders ``n/a``) rather than a guess.
     ``rate_limits``   - the mapped rate_limits block (or None)
 
     ``total_tokens`` = input_tokens + output_tokens + reasoning_output_tokens
@@ -121,7 +123,9 @@ def build_snapshot(
     total_tokens = input_tokens + output_tokens + reasoning_output_tokens
 
     used_tokens = input_tokens
-    used_percent = round(used_tokens / window_tokens * 100, 1) if window_tokens else 0.0
+    used_percent = (
+        round(used_tokens / window_tokens * 100, 1) if window_tokens else None
+    )
 
     return {
         "schema_version": 1,
