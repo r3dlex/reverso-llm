@@ -326,6 +326,29 @@ independently:
 - `get_response(response_id)` and `list_input_items(response_id)` where Codex-observed
   fixtures require them.
 
+### 11.3.1 Headroom compression seam
+
+Headroom is installed as a base runtime dependency so a normal Reverso install can use
+compression without a second setup step. The first increment is a provider-neutral seam in
+`src/reverso/protocols/headroom_compression.py`; gateway dispatch does not call it yet.
+The seam projects text-bearing Responses fields to Headroom messages, runs Headroom off
+the event loop with a short timeout, then reconstructs the original Responses shape. It
+preserves non-text content, tool metadata, response ids, and adapter boundaries. Unsafe
+output, timeout, exceptions, or token inflation fail open to the original request.
+
+Runtime controls:
+
+- Enabled by default. Set `REVERSO_HEADROOM_ENABLED=0` to disable.
+- Compression profile defaults to `agent-90` and is configurable with
+  `REVERSO_HEADROOM_PROFILE`.
+- Headroom process settings are enforced as stateless: `HEADROOM_STATELESS=true`,
+  telemetry off, update checks off, no periodic token stats, and
+  `HEADROOM_CCR_BACKEND=memory` so CCR retrieval state is process-local only.
+- Metrics are process-local aggregates only and never store prompt text.
+- Optional Headroom extras such as `headroom-ai[ml]` or `headroom-ai[all]` are not
+  installed by default; operators can add them explicitly when local model support is
+  needed.
+
 ### 11.4 Authentication
 
 - Claude: subscription OAuth via the `claudeAiOauth` artifact (macOS Keychain service
