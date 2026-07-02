@@ -329,12 +329,16 @@ independently:
 ### 11.3.1 Headroom compression seam
 
 Headroom is installed as a base runtime dependency so a normal Reverso install can use
-compression without a second setup step. The first increment is a provider-neutral seam in
-`src/reverso/protocols/headroom_compression.py`; gateway dispatch does not call it yet.
-The seam projects text-bearing Responses fields to Headroom messages, runs Headroom off
-the event loop with a short timeout, then reconstructs the original Responses shape. It
-preserves non-text content, tool metadata, response ids, and adapter boundaries. Unsafe
-output, timeout, exceptions, or token inflation fail open to the original request.
+compression without a second setup step. Reverso owns a provider-neutral seam in
+`src/reverso/protocols/headroom_compression.py`. The Responses gateway calls it after
+raw feature gating and normalization, then dispatches the returned request to the frozen
+`ProviderAdapter` boundary on both unary and streaming paths. The Anthropic Messages
+surface is wired in a later slice. The seam projects text-bearing Responses fields to
+Headroom messages, runs Headroom off the event loop with a short timeout, then
+reconstructs the original Responses shape. It preserves non-text content, tool
+metadata, response ids, and adapter boundaries. Unsafe output, timeout, exceptions, or
+token inflation fail open to the original request. Public `/input_items` returns the
+original client input; compressed input is internal to provider dispatch.
 
 Runtime controls:
 

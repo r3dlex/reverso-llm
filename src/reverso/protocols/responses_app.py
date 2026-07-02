@@ -17,6 +17,7 @@ while still delegating everything else to the legacy LiteLLM app.
 from __future__ import annotations
 
 import json
+import threading
 from typing import Any, Awaitable, Callable
 
 from reverso.protocols.adapter import (
@@ -39,6 +40,8 @@ from reverso.protocols.middleware import (
     normalize_request_payload,
     strip_think_json,
 )
+from reverso.protocols.headroom_compression import compress_responses_request
+from reverso.protocols.replay import record_input_items
 from reverso.proxy.profile_routing import (
     CURRENT_PROFILE_WORKSPACE,
     _workspace_from_body,
@@ -194,6 +197,17 @@ def _sse_event_bytes(event: SSEEvent) -> bytes:
     return encode_sse_event(event.event, event.data)
 
 
+def _response_id_from_sse_event(event: SSEEvent) -> str | None:
+    """Extract a response id from a decoded Responses SSE event."""
+    response = event.data.get("response")
+    if isinstance(response, dict) and isinstance(response.get("id"), str):
+        return response["id"]
+    value = event.data.get("id")
+    if isinstance(value, str) and value.startswith("resp_"):
+        return value
+    return None
+
+
 async def _send_unsupported_feature(send: Send, provider: str, feature: str) -> None:
     await _send_json(send, 400, build_unsupported_payload(provider, feature))
 
@@ -205,6 +219,7 @@ async def _handle_create_response(
     send: Send,
     *,
     workspace: str | None = None,
+    remember_input_items: Callable[[str, ResponsesRequest], None] | None = None,
 ) -> None:
     # The gate inspects the raw payload (Codex-only fields preserved in extra)
     # so it can reject e.g. parallel_tool_calls on claude even though the Codex
@@ -218,17 +233,28 @@ async def _handle_create_response(
 
     normalized = normalize_request_payload(payload)
     request = ResponsesRequest.from_payload(normalized)
+    compression_outcome = await compress_responses_request(request)
+    dispatch_request = compression_outcome.request
     token = CURRENT_PROFILE_WORKSPACE.set(workspace)
     try:
-        if request.stream:
-            await _stream(adapter, provider, request, send)
+        if dispatch_request.stream:
+            await _stream(
+                adapter,
+                provider,
+                dispatch_request,
+                send,
+                original_request=raw_request,
+                remember_input_items=remember_input_items,
+            )
             return
-        envelope = await adapter.create_response(request)
+        envelope = await adapter.create_response(dispatch_request)
     except UnsupportedFeature as exc:
         await _send_unsupported_feature(send, exc.provider, exc.feature)
         return
     finally:
         CURRENT_PROFILE_WORKSPACE.reset(token)
+    if remember_input_items is not None:
+        remember_input_items(envelope.id, raw_request)
     await _send_json(send, 200, _envelope_to_payload(envelope))
 
 
@@ -270,6 +296,9 @@ async def _stream(
     provider: str,
     request: ResponsesRequest,
     send: Send,
+    *,
+    original_request: ResponsesRequest | None = None,
+    remember_input_items: Callable[[str, ResponsesRequest], None] | None = None,
 ) -> None:
     # The 200 header is held until the first event so a failure that happens
     # before any output (auth, connect, upstream non-2xx) can still return a
@@ -279,8 +308,18 @@ async def _stream(
     # response.failed + [DONE] contract as any other provider error.
     started = False
     saw_done = False
+    recorded_input_items = False
     try:
         async for event in adapter.stream_response(request):
+            if (
+                not recorded_input_items
+                and original_request is not None
+                and remember_input_items is not None
+            ):
+                response_id = _response_id_from_sse_event(event)
+                if response_id is not None:
+                    remember_input_items(response_id, original_request)
+                    recorded_input_items = True
             if not started:
                 await _start_stream(send)
                 started = True
@@ -338,6 +377,22 @@ class ResponsesGatewayApp:
                 f"allowed: {sorted(APP_PROVIDER_PREFIXES)}"
             )
         self._adapters = dict(adapters)
+        self._input_items_lock = threading.Lock()
+        self._original_input_items: dict[str, list[dict[str, Any]]] = {}
+
+    def _remember_input_items(
+        self, response_id: str, request: ResponsesRequest
+    ) -> None:
+        with self._input_items_lock:
+            self._original_input_items[response_id] = record_input_items(request)
+
+    def _get_original_input_items(self, response_id: str) -> InputItemList | None:
+        with self._input_items_lock:
+            items = self._original_input_items.get(response_id)
+            if items is None:
+                return None
+            copied = [dict(item) for item in items]
+        return InputItemList(response_id=response_id, data=copied)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope.get("type") != "http":
@@ -388,7 +443,12 @@ class ResponsesGatewayApp:
             )
             workspace = _workspace_from_body(body) or header_workspace
             await _handle_create_response(
-                adapter, routed.provider, payload, send, workspace=workspace
+                adapter,
+                routed.provider,
+                payload,
+                send,
+                workspace=workspace,
+                remember_input_items=self._remember_input_items,
             )
             return
 
@@ -400,6 +460,10 @@ class ResponsesGatewayApp:
         if method == "GET":
             response_id, is_input_items = _response_id_from_path(local)
             if response_id is not None and is_input_items:
+                original = self._get_original_input_items(response_id)
+                if original is not None:
+                    await _send_json(send, 200, _input_items_to_payload(original))
+                    return
                 items = await adapter.list_input_items(response_id)
                 await _send_json(send, 200, _input_items_to_payload(items))
                 return
