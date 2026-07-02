@@ -49,7 +49,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, cast
 
 from reverso.protocols.adapter import ProviderAdapter
 from reverso.protocols.anthropic_feature_gate import (
@@ -62,6 +62,7 @@ from reverso.protocols.anthropic_translate import (
     anthropic_request_to_responses,
     responses_envelope_to_anthropic,
 )
+from reverso.protocols.headroom_compression import compress_responses_request
 from reverso.protocols.replay import build_prompt, estimate_usage, new_message_id
 from reverso.protocols.surface_registry import (
     SURFACE_BACKENDS,
@@ -627,8 +628,10 @@ class AnthropicMessagesApp:
         """
         adapter = self._adapters[backend]
         request = anthropic_request_to_responses(payload)
+        compression_outcome = await compress_responses_request(request)
+        dispatch_request = compression_outcome.request
         try:
-            envelope = await adapter.create_response(request)
+            envelope = await adapter.create_response(dispatch_request)
         except Exception as exc:  # noqa: BLE001 - any backend failure -> 502
             logger.warning(
                 "anthropic backend %s create failed: %s", backend, type(exc).__name__
@@ -677,10 +680,12 @@ class AnthropicMessagesApp:
         """
         adapter = self._adapters[backend]
         request = anthropic_request_to_responses(payload)
+        compression_outcome = await compress_responses_request(request)
+        dispatch_request = compression_outcome.request
         message_id = new_message_id()
         anthropic_events = responses_sse_to_anthropic(
-            adapter.stream_response(request),
-            model=request.model,
+            adapter.stream_response(dispatch_request),
+            model=dispatch_request.model,
             message_id=message_id,
         )
         started = False
@@ -729,7 +734,7 @@ class AnthropicMessagesApp:
             # Deterministically close the async generator so the upstream
             # stream/subprocess is released promptly on both success and
             # mid-stream-failure paths (Finding 3).
-            await anthropic_events.aclose()
+            await cast(Any, anthropic_events).aclose()
         if not started:
             # The mapper always yields at least message_start, so this is
             # defensive; commit the header so the client sees a valid stream.
