@@ -39,6 +39,14 @@ echo "==> Smoke: /v1/models"
 R=$(curl -sf "${BASE}/v1/models" 2>&1 || echo "CONNECTION_ERROR")
 check "models endpoint" "${R}" "data"
 
+echo "==> Smoke: /usage"
+R=$(curl -sf "${BASE}/usage" 2>&1 || echo "CONNECTION_ERROR")
+check "usage endpoint" "${R}" "headroom"
+
+echo "==> Smoke: /usage/headroom"
+R=$(curl -sf "${BASE}/usage/headroom" 2>&1 || echo "CONNECTION_ERROR")
+check "headroom usage endpoint" "${R}" "tokens_saved"
+
 echo "==> Smoke: deepseek first-party Responses GPT-level alias"
 PAYLOAD='{"model":"gpt-5.5","input":"Reply with exactly: SMOKE_OK"}'
 R=$(curl -sf -X POST "${BASE}/deepseek/v1/responses" \

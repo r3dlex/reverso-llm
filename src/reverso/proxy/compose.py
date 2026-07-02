@@ -9,10 +9,10 @@ routes by path prefix:
     go to the first-party gateway, served entirely without LiteLLM;
   - everything else is delegated verbatim to the legacy LiteLLM app.
 
-``GET /usage`` is handled directly here (before the Anthropic-surface check and
-before the legacy delegation) so it is reachable regardless of which model is
-active.  It reads ``codex_usage_store`` in-process - it MUST NOT and does NOT
-spawn codex (INV-2, Slice 2).
+``GET /usage`` and ``GET /usage/headroom`` are handled directly here (before
+the Anthropic-surface check and before the legacy delegation) so they are
+reachable regardless of which model is active. They read in-process stores only
+- they MUST NOT and do NOT spawn codex or Headroom subprocesses.
 
 reverso.proxy.main boots this module's ``app``. Repointing main back to
 ``reverso.proxy.app:app`` is the one-line rollback (ADR 0003 D1): the legacy app
@@ -32,6 +32,10 @@ from typing import Any, Awaitable, Callable
 
 from reverso.protocols.adapter import ProviderAdapter
 from reverso.protocols.adapters import codex_usage_store
+from reverso.protocols.headroom_compression import (
+    DEFAULT_HEADROOM_METRICS,
+    HeadroomCompressionConfig,
+)
 from reverso.protocols.anthropic_app import (
     build_anthropic_app,
     route_is_anthropic_surface,
@@ -60,6 +64,28 @@ def build_adapters() -> dict[str, ProviderAdapter]:
         "auggie": AuggieAdapter(),
         "deepseek": DeepSeekAdapter(),
     }
+
+
+def _headroom_usage_summary() -> dict[str, Any]:
+    """Return prompt-free aggregate Headroom usage metrics."""
+    config = HeadroomCompressionConfig.from_env()
+    return DEFAULT_HEADROOM_METRICS.snapshot(config)
+
+
+def _headroom_usage_response() -> dict[str, Any]:
+    """Return the standalone /usage/headroom response body."""
+    return {
+        "schema_version": 1,
+        "provider": "headroom",
+        "headroom": _headroom_usage_summary(),
+    }
+
+
+def _with_headroom_usage(body: dict[str, Any]) -> dict[str, Any]:
+    """Add Headroom aggregate metrics to the existing /usage response."""
+    enriched = dict(body)
+    enriched["headroom"] = _headroom_usage_summary()
+    return enriched
 
 
 async def _send_json(send: Send, body: dict[str, Any], status: int = 200) -> None:
@@ -111,17 +137,21 @@ class CompositionRoot:
         if scope.get("type") == "http":
             path = str(scope.get("path", ""))
 
-            # GET /usage - Slice 2: serve the latest Codex usage snapshot.
+            # GET /usage and /usage/headroom - serve local usage snapshots.
             # Handled BEFORE the Anthropic-surface check and before legacy
-            # delegation so it is always reachable.  Reads codex_usage_store
-            # in-process only - never spawns codex (INV-2).
+            # delegation so they are always reachable. Reads in-process stores
+            # only - never spawns codex, Headroom, or provider subprocesses.
+            if path == "/usage/headroom" and scope.get("method", "GET") == "GET":
+                await _send_json(send, _headroom_usage_response())
+                return
+
             if path == "/usage" and scope.get("method", "GET") == "GET":
                 snapshot = codex_usage_store.get()
                 if snapshot is not None:
                     body = snapshot
                 else:
                     body = codex_usage_store.empty_response()
-                await _send_json(send, body)
+                await _send_json(send, _with_headroom_usage(body))
                 return
 
             # The Anthropic Messages surface is checked BEFORE the Responses

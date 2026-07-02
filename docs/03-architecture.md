@@ -351,7 +351,10 @@ Runtime controls:
 - Headroom process settings are enforced as stateless: `HEADROOM_STATELESS=true`,
   telemetry off, update checks off, no periodic token stats, and
   `HEADROOM_CCR_BACKEND=memory` so CCR retrieval state is process-local only.
-- Metrics are process-local aggregates only and never store prompt text.
+- Metrics are process-local aggregates only and never store prompt text. They are
+  exposed on `GET /usage/headroom` and as the additive `headroom` block on
+  `GET /usage`. Both routes read in-process state only and never invoke Headroom
+  or provider subprocesses.
 - Optional Headroom extras such as `headroom-ai[ml]` or `headroom-ai[all]` are not
   installed by default; operators can add them explicitly when local model support is
   needed.
