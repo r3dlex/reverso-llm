@@ -11,7 +11,7 @@ dependencies = [
     "uvicorn",
     "websockets",
     "psutil",
-    "headroom-ai==0.28.0",
+    "headroom-ai[all]==0.28.0",
 ]
 
 [project.scripts]
