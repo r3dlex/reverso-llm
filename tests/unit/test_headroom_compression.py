@@ -253,6 +253,37 @@ async def test_inflation_guard_fails_open() -> None:
 
 
 @pytest.mark.asyncio
+async def test_retrieval_marker_fails_open() -> None:
+    request = ResponsesRequest(model="claude-test", input="large user text")
+
+    def fake_compress(
+        messages: list[dict[str, Any]], **kwargs: Any
+    ) -> FakeHeadroomResult:
+        return FakeHeadroomResult(
+            messages=[
+                {
+                    "role": "user",
+                    "content": "[2000 lines compressed to 0. Retrieve more: hash=abc123]",
+                }
+            ]
+        )
+
+    metrics = HeadroomUsageMetrics()
+    outcome = await compress_responses_request(
+        request,
+        compressor=fake_compress,
+        metrics=metrics,
+    )
+
+    assert outcome.request is request
+    assert outcome.compressed is False
+    assert outcome.fail_open is True
+    assert outcome.reason == "retrieval_marker"
+    assert outcome.error_type == "RetrievalMarker"
+    assert metrics.snapshot()["failure_reasons"] == {"retrieval_marker": 1}
+
+
+@pytest.mark.asyncio
 async def test_unsafe_output_shape_fails_open() -> None:
     request = _rich_request()
 

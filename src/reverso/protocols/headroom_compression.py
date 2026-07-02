@@ -13,6 +13,7 @@ import asyncio
 import copy
 import logging
 import os
+import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
@@ -307,6 +308,23 @@ def _extract_message_content(message: Any) -> str | None:
     return None
 
 
+_RETRIEVAL_MARKER_RE = re.compile(
+    r"(?:Retrieve (?:more|original): hash=|headroom_retrieve|<<ccr:|\[\d+[^\]]*compressed[^\]]*hash=)",
+    re.IGNORECASE,
+)
+
+
+def _contains_retrieval_marker(value: Any) -> bool:
+    """Return True when compressed output needs an unavailable retrieve tool."""
+    if isinstance(value, str):
+        return bool(_RETRIEVAL_MARKER_RE.search(value))
+    if isinstance(value, dict):
+        return any(_contains_retrieval_marker(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_contains_retrieval_marker(item) for item in value)
+    return False
+
+
 def _reconstruct_request(
     projection: _Projection,
     compressed_messages: Any,
@@ -446,6 +464,21 @@ async def compress_responses_request(
     compressed_request = _reconstruct_request(
         projection, getattr(result, "messages", None)
     )
+    if compressed_request is not None and _contains_retrieval_marker(
+        compressed_request.input
+    ):
+        return await finish(
+            HeadroomCompressionOutcome(
+                request=request,
+                fail_open=True,
+                reason="retrieval_marker",
+                tokens_before=tokens_before,
+                tokens_after=tokens_after,
+                tokens_saved=0,
+                compression_ratio=0.0,
+                error_type="RetrievalMarker",
+            )
+        )
     if compressed_request is None:
         return await finish(
             HeadroomCompressionOutcome(
