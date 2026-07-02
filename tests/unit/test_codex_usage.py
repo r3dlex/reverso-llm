@@ -22,6 +22,10 @@ import pytest
 
 from reverso.protocols.adapter import ResponsesRequest
 from reverso.protocols.adapters import codex_usage_store
+from reverso.protocols.headroom_compression import (
+    DEFAULT_HEADROOM_METRICS,
+    HeadroomCompressionOutcome,
+)
 from reverso.protocols.adapters.codex import (
     CodexAdapter,
     CodexOAuthAuth,
@@ -524,12 +528,12 @@ async def test_concurrent_streaming_usage_is_request_local() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def _asgi_get_usage(root) -> dict[str, Any]:
-    """Drive the CompositionRoot __call__ for GET /usage and capture the response."""
+async def _asgi_get_usage(root, path: str = "/usage") -> dict[str, Any]:
+    """Drive the CompositionRoot __call__ for a usage route and capture JSON."""
     scope = {
         "type": "http",
         "method": "GET",
-        "path": "/usage",
+        "path": path,
         "query_string": b"",
         "headers": [],
     }
@@ -573,6 +577,8 @@ async def test_get_usage_empty_store_returns_null_rate_limits(monkeypatch) -> No
     assert body["rate_limits"] is None
     assert "tokens" in body
     assert "context" in body
+    assert body["headroom"]["requests_seen"] >= 0
+    assert "failure_reasons" in body["headroom"]
     # The route must NOT have touched any of the other apps.
     assert not tripwire_called
 
@@ -622,6 +628,78 @@ async def test_get_usage_populated_store_returns_snapshot(monkeypatch) -> None:
     assert body["rate_limits"]["five_hour"]["used_percent"] == 12.0
     assert body["rate_limits"]["weekly"]["used_percent"] == 36.0
     assert body["rate_limits"]["plan_type"] == "pro"
+    assert body["headroom"]["requests_seen"] >= 0
+    assert "tokens_saved" in body["headroom"]
+
+
+@pytest.mark.asyncio
+async def test_get_usage_headroom_returns_aggregate_snapshot(monkeypatch) -> None:
+    """GET /usage/headroom returns prompt-free aggregate Headroom metrics."""
+    from reverso.proxy.compose import CompositionRoot
+
+    DEFAULT_HEADROOM_METRICS.reset()
+    DEFAULT_HEADROOM_METRICS.record(
+        HeadroomCompressionOutcome(
+            request=ResponsesRequest(model="m", input="secret prompt text"),
+            compressed=True,
+            reason="compressed",
+            tokens_before=100,
+            tokens_after=40,
+            tokens_saved=60,
+            compression_ratio=0.6,
+        )
+    )
+    monkeypatch.setenv("REVERSO_HEADROOM_PROFILE", "agent-90")
+
+    tripwire_called = False
+
+    async def _tripwire(scope, receive, send):
+        nonlocal tripwire_called
+        tripwire_called = True
+
+    root = CompositionRoot(
+        gateway=_tripwire,
+        anthropic_app=_tripwire,
+        legacy_app=_tripwire,
+    )
+    try:
+        body = await _asgi_get_usage(root, path="/usage/headroom")
+    finally:
+        DEFAULT_HEADROOM_METRICS.reset()
+
+    assert body["schema_version"] == 1
+    assert body["provider"] == "headroom"
+    headroom = body["headroom"]
+    assert headroom["enabled"] is True
+    assert headroom["profile"] == "agent-90"
+    assert headroom["requests_seen"] == 1
+    assert headroom["requests_compressed"] == 1
+    assert headroom["tokens_before"] == 100
+    assert headroom["tokens_after"] == 40
+    assert headroom["tokens_saved"] == 60
+    assert "secret prompt" not in repr(body)
+    assert not tripwire_called
+
+
+@pytest.mark.asyncio
+async def test_get_usage_headroom_disabled_reflects_config(monkeypatch) -> None:
+    """GET /usage/headroom reports the env rollback switch without side effects."""
+    from reverso.proxy.compose import CompositionRoot
+
+    DEFAULT_HEADROOM_METRICS.reset()
+    monkeypatch.setenv("REVERSO_HEADROOM_ENABLED", "0")
+
+    async def _noop(scope, receive, send):
+        pass
+
+    root = CompositionRoot(gateway=_noop, anthropic_app=_noop, legacy_app=_noop)
+    try:
+        body = await _asgi_get_usage(root, path="/usage/headroom")
+    finally:
+        DEFAULT_HEADROOM_METRICS.reset()
+
+    assert body["headroom"]["enabled"] is False
+    assert body["headroom"]["requests_seen"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -655,6 +733,36 @@ async def test_get_usage_does_not_invoke_subprocess(monkeypatch) -> None:
     await _asgi_get_usage(root)
 
     assert not subprocess_called, "GET /usage must never call subprocess.run"
+
+
+@pytest.mark.asyncio
+async def test_get_usage_headroom_does_not_invoke_subprocess(monkeypatch) -> None:
+    """INV-2: GET /usage/headroom reads local metrics only, no subprocess."""
+    import subprocess as subprocess_mod
+    from reverso.proxy.compose import CompositionRoot
+
+    DEFAULT_HEADROOM_METRICS.reset()
+
+    original_run = subprocess_mod.run
+    subprocess_called = False
+
+    def _tripwire_run(*args, **kwargs):
+        nonlocal subprocess_called
+        subprocess_called = True
+        return original_run(*args, **kwargs)
+
+    monkeypatch.setattr(subprocess_mod, "run", _tripwire_run)
+
+    async def _noop(scope, receive, send):
+        pass
+
+    root = CompositionRoot(gateway=_noop, anthropic_app=_noop, legacy_app=_noop)
+    try:
+        await _asgi_get_usage(root, path="/usage/headroom")
+    finally:
+        DEFAULT_HEADROOM_METRICS.reset()
+
+    assert not subprocess_called, "GET /usage/headroom must never call subprocess.run"
 
 
 # ---------------------------------------------------------------------------

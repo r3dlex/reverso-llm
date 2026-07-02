@@ -195,6 +195,26 @@ curl -s http://127.0.0.1:64946/auggie/v1/models \
   | python3 -c "import json,sys; print([m['id'] for m in json.load(sys.stdin)['data']])"
 ```
 
+
+### Inspect Headroom savings and rollback
+
+Headroom compression is enabled by default for Reverso-owned Responses and
+Anthropic Messages dispatch. Runtime usage is aggregate-only and prompt-free:
+
+```bash
+curl -s http://127.0.0.1:64946/usage/headroom \
+  | python3 -m json.tool
+
+curl -s http://127.0.0.1:64946/usage \
+  | python3 -c "import json,sys; print(json.load(sys.stdin)['headroom'])"
+```
+
+To disable compression, set `REVERSO_HEADROOM_ENABLED=0` in the gateway process
+environment and restart the LaunchAgent. The `/usage/headroom` response reports
+`"enabled": false` after the restart. Re-enable by removing the variable or
+setting it to `1` and restarting again. Metrics reset on process restart and never
+store prompt text or compressed text.
+
 Or run the bundled smoke script:
 
 ```bash
