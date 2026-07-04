@@ -303,14 +303,18 @@ See `.ai/matrix.json`, `.memory/human-override/`, and `docs/architecture/adr/`. 
 <!-- v3-ai-sdlc-init:end -->
 
 
-OpenAI pass-through is the next provider track after `codex-direct`. It is opt-in
-only with `REVERSO_OPENAI_BACKEND=1` on local loopback and exposes
-`/openai/v1/responses` plus `/openai/v1/models`. Codex-visible pass-through
-profiles use `openai-pass-through.config.toml` and
-`~/.codex/reverso/openai-pass-through.json` so the built-in `openai.config.toml`
-GPT profile remains bare/default-safe.
+## Operator status: codex-direct and OpenAI pass-through
 
-`~/.codex/reverso/openai-pass-through.json` built-in `openai.config.toml`
-GPT bare/default-safe. Operator HTTP uses `/openai/v1/...`; generated Codex
-pass-through profiles intentionally use `/openai-pass-through/v1/...` so they do
-not collide with the built-in OpenAI provider profile.
+As of PR #73, `codex-direct` is complete for local-loopback default use and
+OpenAI pass-through is merged as a local-loopback opt-in provider.
+
+- `codex-direct` remains local-loopback default-on for `REVERSO_HOST=127.0.0.1`
+  and can be disabled with `REVERSO_CODEX_DIRECT_BACKEND=0`. Non-loopback or
+  hosted default-on remains a no-go under ADR 0016.
+- OpenAI pass-through is opt-in only. Set `REVERSO_OPENAI_BACKEND=1` on
+  `REVERSO_HOST=127.0.0.1` to expose `/openai/v1/responses` and
+  `/openai/v1/models`.
+- Codex-sync pass-through profiles use `openai-pass-through.config.toml` and
+  `~/.codex/reverso/openai-pass-through.json`, routed through
+  `/openai-pass-through/v1/...`, so built-in `openai.config.toml` GPT defaults
+  remain bare and default-safe.

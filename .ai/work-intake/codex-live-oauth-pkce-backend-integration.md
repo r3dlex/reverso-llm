@@ -1,14 +1,15 @@
 # Codex live OAuth/PKCE backend proof integration
 
+Completion: PRs #70, #71, and #72 merged. Archived as codex-direct reference evidence.
 Labels: `needs-triage`, `ready-for-agent`, `northstar`, `auth-risk`, `manual-live-proof`
-Status: ready-for-agent
-Spec: `docs/specifications/ACTIVE/codex-live-oauth-pkce-backend-integration.md`
+Status: complete
+Spec: `docs/specifications/ARCHIVED/codex-live-oauth-pkce-backend-integration.md`
 Northstar handoff: `.ai/handoff/northstar-codex-live-oauth-pkce-backend-integration.md`
 
 ## Traceability
 
 - BRD: None provided
-- PRD/spec: `docs/specifications/ACTIVE/codex-live-oauth-pkce-backend-integration.md`
+- PRD/spec: `docs/specifications/ARCHIVED/codex-live-oauth-pkce-backend-integration.md`
 - Parent: `.ai/work-intake/codex-live-oauth-pkce-proof.md`
 - Version impact: production backend path after live proof and ADR go/no-go; default behavior remains safe
 

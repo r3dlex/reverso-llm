@@ -1,8 +1,9 @@
 # Work Intake: Codex Direct Post-Default CLI Cleanup
 
-Status: planned
+Completion: PRs #70, #71, and #72 merged. Codex-direct is done for local-loopback default use.
+Status: complete
 Date: 2026-07-04
-Spec: `docs/specifications/ACTIVE/codex-direct-post-default-cli-cleanup.md`
+Spec: `docs/specifications/ARCHIVED/codex-direct-post-default-cli-cleanup.md`
 Dependency: PR #71 merged (`b1091cec0373bcd21539627f83e184cafc4f152b`).
 
 ## Problem

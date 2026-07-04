@@ -1,11 +1,12 @@
 # Issue: Plan live Codex OAuth/PKCE backend proof integration
 
+Completion: PRs #70, #71, and #72 merged. Archived as codex-direct reference evidence.
 Labels: `needs-triage`, `ready-for-agent`, `northstar`, `spike`, `auth-risk`, `manual-live-proof`
-Status: ready-for-agent
+Status: complete
 
 ## Traceability
 
-- Spec: `docs/specifications/ACTIVE/codex-live-oauth-pkce-proof.md`
+- Spec: `docs/specifications/ARCHIVED/codex-live-oauth-pkce-proof.md`
 - Parent: `.ai/work-intake/codex-oauth-provider-reverso.md`
 - Version impact: proof harness only; no runtime mount or default behavior change
 

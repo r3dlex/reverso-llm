@@ -1,11 +1,12 @@
 # Issue: Spike direct Codex OAuth provider for Reverso
 
+Completion: PRs #70, #71, and #72 merged. Archived as codex-direct reference evidence.
 Labels: `needs-triage`, `ready-for-agent`, `northstar`, `spike`, `auth-risk`
-Status: ready-for-agent
+Status: complete
 
 ## Traceability
 
-- Spec: `docs/specifications/ACTIVE/codex-oauth-provider-reverso.md`
+- Spec: `docs/specifications/ARCHIVED/codex-oauth-provider-reverso.md`
 - Northstar handoff: `.ai/handoff/northstar-codex-oauth-provider-reverso.md`
 - Parent: None
 - Version impact: experimental provider path, no default behavior change in first slice
@@ -35,7 +36,7 @@ Implemented proof slice:
 - Added `src/reverso/protocols/adapters/codex_direct.py` as an unmounted experimental ProviderAdapter proof.
 - Added `tests/unit/test_codex_direct_adapter.py` with fake-upstream, SSE framing, lifecycle-ID, injected-upstream, and not-mounted guards.
 - Added `docs/architecture/adr/0016-experimental-codex-direct-oauth-provider.md`.
-- Updated `docs/specifications/ACTIVE/codex-oauth-provider-reverso.md` with proof status and remaining live-spike gates.
+- Updated `docs/specifications/ARCHIVED/codex-oauth-provider-reverso.md` with proof status and remaining live-spike gates.
 
 Verification:
 

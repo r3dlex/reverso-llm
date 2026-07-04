@@ -1,9 +1,9 @@
 # Codex Direct Post-Default CLI Cleanup
-Completion: codex-direct track completed by PRs #70, #71, and #72; retained in ACTIVE as ADR/reference history.
+Status: complete. Archived after PRs #70, #71, and #72 merged. Codex-direct is done for local-loopback default use.
+Completion: codex-direct track completed by PRs #70, #71, and #72; archived as ADR/reference history.
 
 
 Date: 2026-07-04
-Status: Northstar planned
 Dependency: PR #71, `Default-enable codex direct on loopback`, merged 2026-07-04.
 
 ## Intent

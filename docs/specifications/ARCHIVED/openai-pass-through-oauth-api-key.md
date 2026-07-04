@@ -1,7 +1,7 @@
 # OpenAI pass-through OAuth/API-key provider
+Status: complete. Archived after PR #73 merged. Issue #47 implementation is done for local-loopback opt-in OpenAI pass-through.
 
 Date: 2026-07-04
-Status: Northstar ready for Autobahn
 Tracker: GitHub issue #47, https://github.com/r3dlex/reverso-llm/issues/47
 Slug: openai-pass-through-oauth-api-key
 
