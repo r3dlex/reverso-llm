@@ -1,4 +1,6 @@
 ---
+Completion: codex-direct track completed by PRs #70, #71, and #72; retained in ACTIVE as ADR/reference history.
+
 title: Live Codex OAuth/PKCE Backend Proof Integration
 status: active
 created: 2026-07-03

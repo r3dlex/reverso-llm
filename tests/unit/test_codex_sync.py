@@ -1382,3 +1382,32 @@ def test_merge_catalog_config_block_strips_legacy_block() -> None:
 def test_merge_catalog_config_block_rejects_a_path() -> None:
     with pytest.raises(ValueError):
         codex_sync._merge_catalog_config_block("", Path("/x.json"))
+
+
+def test_sync_opt_in_openai_pass_through_profile(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("REVERSO_OPENAI_BACKEND", "1")
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+    catalog_dir = tmp_path / "reverso"
+
+    result = codex_sync.sync(
+        target=target,
+        fetcher=_make_fetcher({"openai-pass-through": ["gpt-5.5"]}),
+        catalog_dir=catalog_dir,
+    )
+
+    profile_path = tmp_path / "openai-pass-through.config.toml"
+    parsed = tomllib.loads(profile_path.read_text())
+    assert parsed["model_provider"] == "reverso_openai-pass-through"
+    assert parsed["model"] == "gpt-5.5"
+    assert parsed["model_catalog_json"] == str(catalog_dir / "openai-pass-through.json")
+    catalog = json.loads(
+        (catalog_dir / "openai-pass-through.json").read_text(encoding="utf-8")
+    )
+    assert [model["slug"] for model in catalog["models"]] == [
+        "openai-pass-through/gpt-5.5"
+    ]
+    assert result.changed is True

@@ -180,6 +180,59 @@
       "backlinks": [
         "plan:reverso-root:northstar-codex-direct-post-default-cli-cleanup"
       ]
+    },
+    {
+      "id": "plan:reverso-root:northstar-openai-pass-through-oauth-api-key",
+      "type": "plan",
+      "title": "northstar sliced plan: openai-pass-through-oauth-api-key",
+      "status": "active",
+      "repo_id": "reverso-root",
+      "path": ".ai/handoff/northstar-openai-pass-through-oauth-api-key.md",
+      "backlinks": []
+    },
+    {
+      "id": "handoff:reverso-root:northstar-openai-pass-through-oauth-api-key",
+      "type": "handoff",
+      "title": "northstar A->B handoff: openai-pass-through-oauth-api-key",
+      "status": "active",
+      "repo_id": "reverso-root",
+      "path": ".ai/handoff/northstar-openai-pass-through-oauth-api-key.md",
+      "backlinks": [
+        "plan:reverso-root:northstar-openai-pass-through-oauth-api-key"
+      ]
+    },
+    {
+      "id": "pr:reverso-root:70",
+      "type": "evidence",
+      "title": "PR #70 codex-direct proof evidence",
+      "repo_id": "reverso-root",
+      "path": "https://github.com/r3dlex/reverso-llm/pull/70",
+      "status": "complete",
+      "backlinks": [
+        "handoff:reverso-root:northstar-codex-direct-post-default-cli-cleanup"
+      ]
+    },
+    {
+      "id": "pr:reverso-root:71",
+      "type": "evidence",
+      "title": "PR #71 codex-direct local-loopback default enable",
+      "repo_id": "reverso-root",
+      "path": "https://github.com/r3dlex/reverso-llm/pull/71",
+      "status": "complete",
+      "backlinks": [
+        "handoff:reverso-root:northstar-codex-direct-post-default-cli-cleanup"
+      ]
+    },
+    {
+      "id": "pr:reverso-root:72",
+      "type": "evidence",
+      "title": "PR #72 codex-direct post-default cleanup",
+      "repo_id": "reverso-root",
+      "path": "https://github.com/r3dlex/reverso-llm/pull/72",
+      "status": "complete",
+      "backlinks": [
+        "handoff:reverso-root:northstar-codex-direct-post-default-cli-cleanup"
+      ]
     }
   ],
   "edges": [
@@ -266,6 +319,34 @@
       "relation": "summarized-by",
       "created_by": "northstar",
       "evidence_path": ".ai/handoff/northstar-codex-direct-post-default-cli-cleanup.md"
+    },
+    {
+      "source": "plan:reverso-root:northstar-openai-pass-through-oauth-api-key",
+      "target": "handoff:reverso-root:northstar-openai-pass-through-oauth-api-key",
+      "relation": "summarized-by",
+      "created_by": "northstar",
+      "evidence_path": ".ai/handoff/northstar-openai-pass-through-oauth-api-key.md"
+    },
+    {
+      "source": "handoff:reverso-root:northstar-codex-direct-post-default-cli-cleanup",
+      "target": "pr:reverso-root:70",
+      "relation": "implemented-by",
+      "created_by": "autobahn",
+      "evidence_path": "https://github.com/r3dlex/reverso-llm/pull/70"
+    },
+    {
+      "source": "handoff:reverso-root:northstar-codex-direct-post-default-cli-cleanup",
+      "target": "pr:reverso-root:71",
+      "relation": "implemented-by",
+      "created_by": "autobahn",
+      "evidence_path": "https://github.com/r3dlex/reverso-llm/pull/71"
+    },
+    {
+      "source": "handoff:reverso-root:northstar-codex-direct-post-default-cli-cleanup",
+      "target": "pr:reverso-root:72",
+      "relation": "implemented-by",
+      "created_by": "autobahn",
+      "evidence_path": "https://github.com/r3dlex/reverso-llm/pull/72"
     }
   ],
   "coverage": {

@@ -7,6 +7,7 @@ from reverso.protocols.model_exposure import (
     CODEX_DEFAULT_MODEL,
     CODEX_DIRECT_BACKEND_ENV,
     CODEX_FRONTIER_MODELS,
+    OPENAI_BACKEND_ENV,
     REVERSO_HOST_ENV,
     DIRECT_CODEX_PROFILE_SPECS,
     REVERSO_ROUTED_CODEX_PROFILE_PREFIXES,
@@ -40,6 +41,10 @@ def test_selector_model_id_prefixes_only_collision_prone_providers() -> None:
     assert selector_model_id("auggie", "gpt-5.5") == "auggie/gpt-5.5"
     assert selector_model_id("agy", "gpt-5.5") == "agy/gpt-5.5"
     assert selector_model_id("codex-direct", "gpt-5.5") == "codex-direct/gpt-5.5"
+    assert (
+        selector_model_id("openai-pass-through", "gpt-5.5")
+        == "openai-pass-through/gpt-5.5"
+    )
     assert selector_model_id("codex", "gpt-5.5") == "gpt-5.5"
     assert selector_model_id("deepseek", "deepseek-v4-pro") == "deepseek-v4-pro"
     assert selector_model_id("minimax", "MiniMax-M3") == "MiniMax-M3"
@@ -53,6 +58,10 @@ def test_claude_code_selector_uses_cli_safe_prefixes_for_conflicts() -> None:
     assert (
         claude_code_selector_model_id("codex-direct", "gpt-5.5")
         == "codex-direct-gpt-5.5"
+    )
+    assert (
+        claude_code_selector_model_id("openai-pass-through", "gpt-5.5")
+        == "openai-pass-through-gpt-5.5"
     )
     assert claude_code_selector_model_id("claude", "sonnet") == "sonnet"
     assert (
@@ -114,6 +123,22 @@ def test_model_exposure_owns_codex_profile_sync_prefixes() -> None:
         "auggie",
         "deepseek",
         "codex-direct",
+    )
+    assert reverso_routed_codex_profile_prefixes({OPENAI_BACKEND_ENV: "1"}) == (
+        "claude",
+        "copilot",
+        "auggie",
+        "deepseek",
+        "codex-direct",
+        "openai-pass-through",
+    )
+    assert reverso_routed_codex_profile_prefixes(
+        {OPENAI_BACKEND_ENV: "1", REVERSO_HOST_ENV: "0.0.0.0"}
+    ) == (
+        "claude",
+        "copilot",
+        "auggie",
+        "deepseek",
     )
     direct = {spec.prefix: spec for spec in direct_codex_profile_specs()}
     assert direct_codex_profile_specs() == DIRECT_CODEX_PROFILE_SPECS

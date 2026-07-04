@@ -58,7 +58,15 @@ BIND_PORT = 64946
 # First-party prefixes served here. NOT the legacy PROVIDER_PREFIXES; the
 # composition root routes these to this app and delegates the rest to legacy.
 APP_PROVIDER_PREFIXES = frozenset(
-    {"claude", "copilot", "auggie", "deepseek", "codex-direct"}
+    {
+        "claude",
+        "copilot",
+        "auggie",
+        "deepseek",
+        "codex-direct",
+        "openai",
+        "openai-pass-through",
+    }
 )
 
 _DONE_EVENT = b"data: [DONE]\n\n"
@@ -137,6 +145,17 @@ def _safe_error_message(exc: Exception) -> str:
     if isinstance(public_message, str) and public_message:
         return f"upstream provider error ({type(exc).__name__}): {public_message}"
     return f"upstream provider error ({type(exc).__name__})"
+
+
+def _provider_http_error_payload(exc: Exception) -> tuple[int, dict[str, Any]] | None:
+    """Return a provider-curated HTTP status/body pair when explicitly supplied."""
+    status_code = getattr(exc, "status_code", None)
+    payload = getattr(exc, "payload", None)
+    if not isinstance(status_code, int) or not 400 <= status_code <= 599:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return status_code, payload
 
 
 class _SendTracker:
@@ -340,6 +359,11 @@ async def _stream(
         return
     except Exception as exc:  # noqa: BLE001 - a provider failure must not crash the app
         if not started:
+            provider_error = _provider_http_error_payload(exc)
+            if provider_error is not None:
+                status_code, payload = provider_error
+                await _send_json(send, status_code, payload)
+                return
             await _send_server_error(send, _safe_error_message(exc))
             return
         await _emit_mid_stream_failure(send, exc)
@@ -416,6 +440,11 @@ class ResponsesGatewayApp:
             # terminal failure event; only synthesize an error response while
             # the status line is still uncommitted.
             if not tracked.started:
+                provider_error = _provider_http_error_payload(exc)
+                if provider_error is not None:
+                    status_code, payload = provider_error
+                    await _send_json(tracked, status_code, payload)
+                    return
                 await _send_server_error(tracked, _safe_error_message(exc))
 
     async def _dispatch(

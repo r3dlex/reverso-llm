@@ -219,3 +219,14 @@ The 400 body emitted for any unsupported feature on any provider is:
 - **`previous_response_id` across gateway restarts**: drops to a stored-id miss. Codex resume already survives via its client-side transcript; other Responses-API clients must replay input items. The deepseek D1 incremental streaming path additionally relaxes the store-before-drain invariant on its own branch (see ADR 0004 and the in-memory boundary section above); a client that aborts between the last delta and `response.completed` does not find the envelope in the store. This is bounded to non-codex clients.
 
 Phase D removed the previously-recorded deepseek streaming carve-out: the adapter now consumes upstream `stream=true` chunks via `replay.replay_incremental`, so the `stream.incremental_deltas` row is `translated` and the streaming-status section above carries the full description. See ADR 0004 for the architecture and the relaxed store-before-drain trade.
+
+- OpenAI pass-through is opt-in local-loopback only: `/openai/v1/responses` and
+  `/openai/v1/models` mount when `REVERSO_OPENAI_BACKEND=1`. Codex profile
+  generation uses `openai-pass-through.config.toml` and
+  `~/.codex/reverso/openai-pass-through.json`; the built-in `openai.config.toml`
+  remains the bare GPT/Codex default profile.
+
+`openai-pass-through.config.toml`
+`~/.codex/reverso/openai-pass-through.json` route Codex-sync traffic through
+`/openai-pass-through/v1/...`; operator HTTP remains `/openai/v1/...`. Built-in
+`openai.config.toml` GPT/Codex defaults remain bare.

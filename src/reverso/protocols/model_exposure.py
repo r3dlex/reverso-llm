@@ -16,7 +16,9 @@ CODEX_BUILTIN_MODELS: tuple[str, ...] = (
     "gpt-4.1",
 )
 CODEX_FRONTIER_MODELS: tuple[str, ...] = CODEX_BUILTIN_MODELS[:2]
-PREFIXED_SELECTOR_PREFIXES = frozenset({"copilot", "auggie", "agy", "codex-direct"})
+PREFIXED_SELECTOR_PREFIXES = frozenset(
+    {"copilot", "auggie", "agy", "codex-direct", "openai-pass-through"}
+)
 
 
 @dataclass(frozen=True)
@@ -50,8 +52,10 @@ REVERSO_ROUTED_CODEX_PROFILE_PREFIXES: tuple[str, ...] = (
     "deepseek",
 )
 CODEX_DIRECT_BACKEND_ENV = "REVERSO_CODEX_DIRECT_BACKEND"
+OPENAI_BACKEND_ENV = "REVERSO_OPENAI_BACKEND"
 REVERSO_HOST_ENV = "REVERSO_HOST"
 _CODEX_DIRECT_PROFILE_PREFIX = "codex-direct"
+_OPENAI_PROFILE_PREFIX = "openai-pass-through"
 DEEPSEEK_CODEX_PROFILE_DEFAULT = "deepseek-v4-pro"
 DIRECT_CODEX_PROFILE_SPECS: tuple[CodexProfileSpec, ...] = (
     CodexProfileSpec(
@@ -91,13 +95,27 @@ def codex_direct_profile_enabled(env: dict[str, str] | None = None) -> bool:
     return raw.strip().lower() not in {"0", "false", "no", "off"}
 
 
+def openai_profile_enabled(env: dict[str, str] | None = None) -> bool:
+    """Return True only for explicit local-loopback OpenAI profile opt-in."""
+    source = os.environ if env is None else env
+    if source.get(REVERSO_HOST_ENV, "127.0.0.1").strip() != "127.0.0.1":
+        return False
+    raw = source.get(OPENAI_BACKEND_ENV)
+    if raw is None:
+        return False
+    return raw.strip().lower() in {"1", "true", "yes", "on", "openai"}
+
+
 def reverso_routed_codex_profile_prefixes(
     env: dict[str, str] | None = None,
 ) -> tuple[str, ...]:
     """Return provider prefixes whose Codex profiles route through Reverso."""
+    prefixes = REVERSO_ROUTED_CODEX_PROFILE_PREFIXES
     if codex_direct_profile_enabled(env):
-        return REVERSO_ROUTED_CODEX_PROFILE_PREFIXES + (_CODEX_DIRECT_PROFILE_PREFIX,)
-    return REVERSO_ROUTED_CODEX_PROFILE_PREFIXES
+        prefixes = prefixes + (_CODEX_DIRECT_PROFILE_PREFIX,)
+    if openai_profile_enabled(env):
+        prefixes = prefixes + (_OPENAI_PROFILE_PREFIX,)
+    return prefixes
 
 
 def direct_codex_profile_specs() -> tuple[CodexProfileSpec, ...]:
@@ -192,6 +210,8 @@ def catalog_display_name(prefix: str, model_id: str) -> str:
         return f"DeepSeek {model_id}"
     if prefix == "codex-direct":
         return f"Codex Direct (OAuth) {model_id}"
+    if prefix == "openai-pass-through":
+        return f"OpenAI pass-through {model_id}"
     return f"Reverso {prefix} {model_id}"
 
 
