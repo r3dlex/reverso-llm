@@ -1,4 +1,6 @@
 # Codex Direct Post-Default CLI Cleanup
+Completion: codex-direct track completed by PRs #70, #71, and #72; retained in ACTIVE as ADR/reference history.
+
 
 Date: 2026-07-04
 Status: Northstar planned

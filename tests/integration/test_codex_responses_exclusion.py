@@ -45,6 +45,7 @@ RESPONSES_PROVIDERS = list(sorted(APP_PROVIDER_PREFIXES))
 # surface (they are Anthropic-surface-only, ADR 0007).
 _GPT_MODELS = list(CODEX_BUILTIN_MODELS)
 _CODEX_KEY = "codex"
+_OPTIONAL_DEFAULT_OFF_KEYS = {"openai", "openai-pass-through"}
 
 
 def _responses_client() -> httpx.AsyncClient:
@@ -81,7 +82,7 @@ def test_build_adapters_excludes_codex() -> None:
     """The real Responses gateway adapter registry never constructs codex."""
     adapters = build_adapters()
     assert _CODEX_KEY not in adapters
-    assert set(adapters) == set(RESPONSES_PROVIDERS)
+    assert set(adapters) == set(RESPONSES_PROVIDERS) - _OPTIONAL_DEFAULT_OFF_KEYS
     for adapter in adapters.values():
         assert type(adapter).__name__ != "CodexAdapter"
 

@@ -1,4 +1,6 @@
 ---
+Completion: codex-direct track completed by PRs #70, #71, and #72; retained in ACTIVE as ADR/reference history.
+
 title: Codex OAuth Direct Provider Feasibility for Reverso
 status: active
 created: 2026-07-03

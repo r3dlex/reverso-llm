@@ -301,3 +301,16 @@ This repo follows the v3 AI-SDLC layout (`topology_type: standalone`, depth 0). 
 
 See `.ai/matrix.json`, `.memory/human-override/`, and `docs/architecture/adr/`. Modules at `r3dlex/skills/init-ai-repo/modules/`.
 <!-- v3-ai-sdlc-init:end -->
+
+
+OpenAI pass-through is the next provider track after `codex-direct`. It is opt-in
+only with `REVERSO_OPENAI_BACKEND=1` on local loopback and exposes
+`/openai/v1/responses` plus `/openai/v1/models`. Codex-visible pass-through
+profiles use `openai-pass-through.config.toml` and
+`~/.codex/reverso/openai-pass-through.json` so the built-in `openai.config.toml`
+GPT profile remains bare/default-safe.
+
+`~/.codex/reverso/openai-pass-through.json` built-in `openai.config.toml`
+GPT bare/default-safe. Operator HTTP uses `/openai/v1/...`; generated Codex
+pass-through profiles intentionally use `/openai-pass-through/v1/...` so they do
+not collide with the built-in OpenAI provider profile.

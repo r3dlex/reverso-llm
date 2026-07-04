@@ -48,6 +48,7 @@ Scope = dict[str, Any]
 Send = Callable[[dict[str, Any]], Awaitable[None]]
 
 CODEX_DIRECT_BACKEND_ENV = "REVERSO_CODEX_DIRECT_BACKEND"
+OPENAI_BACKEND_ENV = "REVERSO_OPENAI_BACKEND"
 REVERSO_HOST_ENV = "REVERSO_HOST"
 
 
@@ -60,6 +61,17 @@ def codex_direct_backend_enabled(env: dict[str, str] | None = None) -> bool:
     if raw is None:
         return True
     return raw.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def openai_backend_enabled(env: dict[str, str] | None = None) -> bool:
+    """Return True only for explicit local-loopback OpenAI pass-through opt-in."""
+    source = os.environ if env is None else env
+    if source.get(REVERSO_HOST_ENV, "127.0.0.1").strip() != "127.0.0.1":
+        return False
+    raw = source.get(OPENAI_BACKEND_ENV)
+    if raw is None:
+        return False
+    return raw.strip().lower() in {"1", "true", "yes", "on", "openai"}
 
 
 def build_adapters(env: dict[str, str] | None = None) -> dict[str, ProviderAdapter]:
@@ -89,6 +101,12 @@ def build_adapters(env: dict[str, str] | None = None) -> dict[str, ProviderAdapt
         adapters["codex-direct"] = CodexDirectAdapter(
             auth=CodexOAuthAuth(), upstream=HttpCodexDirectUpstream()
         )
+    if openai_backend_enabled(env):
+        from reverso.protocols.adapters.openai import build_openai_pass_through_adapter
+
+        openai_adapter = build_openai_pass_through_adapter()
+        adapters["openai"] = openai_adapter
+        adapters["openai-pass-through"] = openai_adapter
     return adapters
 
 
