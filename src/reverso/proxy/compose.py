@@ -48,15 +48,21 @@ Scope = dict[str, Any]
 Send = Callable[[dict[str, Any]], Awaitable[None]]
 
 CODEX_DIRECT_BACKEND_ENV = "REVERSO_CODEX_DIRECT_BACKEND"
+REVERSO_HOST_ENV = "REVERSO_HOST"
 
 
 def codex_direct_backend_enabled(env: dict[str, str] | None = None) -> bool:
-    """Return True only when the experimental direct Codex backend is explicit."""
+    """Return False only when the direct Codex backend is explicitly disabled."""
     source = os.environ if env is None else env
-    return source.get(CODEX_DIRECT_BACKEND_ENV) == "1"
+    if source.get(REVERSO_HOST_ENV, "127.0.0.1").strip() != "127.0.0.1":
+        return False
+    raw = source.get(CODEX_DIRECT_BACKEND_ENV)
+    if raw is None:
+        return True
+    return raw.strip().lower() not in {"0", "false", "no", "off"}
 
 
-def build_adapters() -> dict[str, ProviderAdapter]:
+def build_adapters(env: dict[str, str] | None = None) -> dict[str, ProviderAdapter]:
     """Construct the real {prefix: adapter} registry for the first-party gateway.
 
     Adapters are imported here (not at module top) so the registry can be built
@@ -73,7 +79,7 @@ def build_adapters() -> dict[str, ProviderAdapter]:
         "auggie": AuggieAdapter(),
         "deepseek": DeepSeekAdapter(),
     }
-    if codex_direct_backend_enabled():
+    if codex_direct_backend_enabled(env):
         from reverso.protocols.adapters.codex import CodexOAuthAuth
         from reverso.protocols.adapters.codex_direct import (
             CodexDirectAdapter,

@@ -120,9 +120,9 @@ Autobahn local implementation adds a guarded `codex-direct` backend mount:
 
 - `/codex-direct/v1/...` is a reserved first-party route.
 - The direct backend is not mounted by default.
-- `REVERSO_CODEX_DIRECT_BACKEND=1` mounts `CodexDirectAdapter` with `CodexOAuthAuth` and `HttpCodexDirectUpstream`.
+- `REVERSO_CODEX_DIRECT_BACKEND` absent or truthy mounts `CodexDirectAdapter` with `CodexOAuthAuth` and `HttpCodexDirectUpstream`; `0`, `false`, `no`, or `off` disables it.
 - `CodexOAuthAuth.bearer_token()` is available only for gated direct-backend callers; `resolve()` remains secret-free.
-- UX keeps GPT built-in bare and exposes `codex-direct/<model>` direct-backend slugs only when `REVERSO_CODEX_DIRECT_BACKEND=1` is enabled.
+- UX GPT built-in defaults stay bare; `codex-direct/<model>` direct-backend profiles are local-loopback default-on with `REVERSO_CODEX_DIRECT_BACKEND` kill switch.
 
 Verification:
 
@@ -130,4 +130,13 @@ Verification:
 - Live direct proof: skipped fail-closed without `REVERSO_CODEX_DIRECT_LIVE_PROOF=1`.
 - Live official proof: skipped fail-closed without `REVERSO_CODEX_OFFICIAL_LIVE_PROOF=1` or `REVERSO_CODEX_LIVE_PROOF=1`.
 
-ADR: opt-in; default-off; default-on remains no-go.
+ADR: local-loopback default-on accepted; non-loopback/hosted CI default-on no-go; env kill switch required.
+
+
+## Stage 2 - local-loopback default enablement (2026-07-04)
+
+Scope moves from proof-only opt-in to local-loopback default-on. Acceptance requires:
+- Absent `REVERSO_CODEX_DIRECT_BACKEND` mounts `/codex-direct/v1/...` and exposes the `codex-direct` profile prefix.
+- `REVERSO_CODEX_DIRECT_BACKEND=0`, `false`, `no`, or `off` disables the route/profile and still reserves the path so requests fail closed before legacy fallback.
+- Non-loopback/hosted deployment remains blocked by `REVERSO_HOST` policy and is not part of this default.
+- Missing/expired OAuth fails closed; live-token proof evidence from Stage 1 remains the basis for default-enable review, not a secret-bearing CI requirement.

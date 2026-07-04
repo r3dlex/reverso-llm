@@ -64,10 +64,10 @@ Direct Codex OAuth may become a mounted experimental provider only after a follo
 
 ## Follow-up decision: local opt-in backend mount (2026-07-03)
 
-Status: opt-in; default-off; default-on remains no-go.
+Status: local-loopback default-on accepted; non-loopback/hosted CI default-on no-go.
 
 The backend integration may reserve `/codex-direct/v1/...` and may mount `CodexDirectAdapter` only when
-`REVERSO_CODEX_DIRECT_BACKEND=1` is present in the operator environment. Without that gate, the default
+`REVERSO_CODEX_DIRECT_BACKEND` is a kill switch: absent or truthy mounts `codex-direct`; `0`, `false`, `no`, or `off` disables it.
 composition root must not include a `codex-direct` adapter. This keeps the route explicit and fail-closed:
 Reverso recognizes the experimental prefix, but no direct Codex network path exists unless an operator opts in.
 
@@ -75,7 +75,7 @@ Additional controls:
 
 - `CodexOAuthAuth.bearer_token()` may expose the local OAuth access token only to the gated direct backend.
   `resolve()` remains secret-free and no token value is serialized into diagnostics.
-- UX exposes `codex-direct/gpt-5.5` provider-scoped slugs only when `REVERSO_CODEX_DIRECT_BACKEND=1`; GPT built-in ids stay bare.
+- UX `codex-direct/gpt-5.5` provider-scoped local-loopback default-on route; GPT built-in selectors remain bare.
 - The CLI-backed Codex path remains unchanged and remains the default supported production Codex path.
 - Default-on direct backend, hosted use, non-loopback use, and CI live-token execution remain no-go.
 
@@ -144,3 +144,14 @@ Default-enable recommendation:
 - Do not default-enable for non-loopback or hosted CI environments.
 - Before changing the default, merge the streaming-shape fix, run hosted CI, and
   keep ADR evidence attached to the PR.
+
+
+## Default-enable review (2026-07-04)
+
+Decision: enable `codex-direct` by default for local loopback deployments only. `REVERSO_CODEX_DIRECT_BACKEND=0`, `false`, `no`, or `off` is the explicit operator kill switch.
+
+Safety gates:
+- `REVERSO_HOST` non-loopback rejection in `src/reverso/proxy/main.py` continues to block hosted/public deployment.
+- Missing or expired ChatGPT/Codex OAuth credentials fail closed; no static secret is embedded or logged.
+- Hosted CI and non-loopback defaults remain no-go until a public supported API or separate ADR changes that posture.
+- Built-in Codex GPT model ids remain bare defaults; direct models stay provider-scoped as `codex-direct/<model>` / `codex-direct-<model>`.

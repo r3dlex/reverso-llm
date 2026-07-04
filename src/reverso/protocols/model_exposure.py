@@ -50,6 +50,7 @@ REVERSO_ROUTED_CODEX_PROFILE_PREFIXES: tuple[str, ...] = (
     "deepseek",
 )
 CODEX_DIRECT_BACKEND_ENV = "REVERSO_CODEX_DIRECT_BACKEND"
+REVERSO_HOST_ENV = "REVERSO_HOST"
 _CODEX_DIRECT_PROFILE_PREFIX = "codex-direct"
 DEEPSEEK_CODEX_PROFILE_DEFAULT = "deepseek-v4-pro"
 DIRECT_CODEX_PROFILE_SPECS: tuple[CodexProfileSpec, ...] = (
@@ -80,9 +81,14 @@ STALE_CODEX_VARIANT_PROFILE_STEMS: frozenset[str] = frozenset(
 
 
 def codex_direct_profile_enabled(env: dict[str, str] | None = None) -> bool:
-    """Return True only when the experimental Codex Direct profile is explicit."""
+    """Return False only when the Codex Direct profile is explicitly disabled."""
     source = os.environ if env is None else env
-    return source.get(CODEX_DIRECT_BACKEND_ENV) == "1"
+    if source.get(REVERSO_HOST_ENV, "127.0.0.1").strip() != "127.0.0.1":
+        return False
+    raw = source.get(CODEX_DIRECT_BACKEND_ENV)
+    if raw is None:
+        return True
+    return raw.strip().lower() not in {"0", "false", "no", "off"}
 
 
 def reverso_routed_codex_profile_prefixes(
