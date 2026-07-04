@@ -18,6 +18,7 @@ import subprocess
 
 from reverso.protocols.adapter import ResponsesRequest
 from reverso.protocols.auth import ProviderAuth, redact_mapping
+from reverso.protocols.adapters.codex import CodexOAuthAuth
 from reverso.protocols.adapters.codex_direct import (
     CodexDirectUpstream,
     experimental_http_codex_direct_adapter,
@@ -243,5 +244,8 @@ def _first_string(rows: list[dict[str, Any]], key: str) -> str | None:
     return None
 
 
-def run_direct_live_proof_sync(auth: ProviderAuth, **kwargs: Any) -> LiveProofReport:
-    return asyncio.run(run_direct_live_proof(auth, **kwargs))
+def run_direct_live_proof_sync(
+    auth: ProviderAuth | None = None, **kwargs: Any
+) -> LiveProofReport:
+    live_auth = auth if auth is not None else CodexOAuthAuth()
+    return asyncio.run(run_direct_live_proof(live_auth, **kwargs))

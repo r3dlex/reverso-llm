@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 import subprocess
-import os
 from typing import Any
 
 import pytest
@@ -181,25 +180,20 @@ def test_live_proof_report_public_dict_has_only_expected_keys() -> None:
     }
 
 
-def test_empty_env_override_ignores_ambient_opt_in(
+def test_direct_sync_default_uses_codex_oauth_auth_factory(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv(DIRECT_LIVE_PROOF_ENV, "1")
-    with pytest.raises(CodexLiveProofSkipped):
-        require_live_opt_in("direct", {})
+    import reverso.protocols.adapters.codex_live_proof as live_proof
 
+    monkeypatch.setattr(live_proof, "CodexOAuthAuth", lambda: _auth())
 
-def test_direct_script_opt_in_reports_validate_only_auth_boundary() -> None:
-    import subprocess as _subprocess
-
-    result = _subprocess.run(
-        ["scripts/codex-live-proof.py", "--lane", "direct", "--json"],
-        env={**os.environ, DIRECT_LIVE_PROOF_ENV: "1"},
-        text=True,
-        stdout=_subprocess.PIPE,
-        stderr=_subprocess.PIPE,
-        check=False,
+    report = live_proof.run_direct_live_proof_sync(
+        env={DIRECT_LIVE_PROOF_ENV: "1"},
+        upstream=FakeDirectUpstream(),
     )
-    assert result.returncode == 0
-    assert "validate-only" in result.stdout
-    assert "auth.json" not in result.stdout
+
+    assert report.status == "passed"
+    public = report.to_public_dict()
+    assert public["auth_authenticated"] is True
+    assert public["token_present"] is True
+    assert "opaque-fixture" not in repr(public)

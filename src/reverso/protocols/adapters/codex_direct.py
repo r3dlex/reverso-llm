@@ -184,11 +184,23 @@ class CodexDirectAdapter:
             raise CodexDirectError("codex direct auth token unavailable")
         return token
 
-    def _body(self, request: ResponsesRequest, *, stream: bool) -> dict[str, Any]:
+    def _body(
+        self, request: ResponsesRequest, *, stream: bool = False
+    ) -> dict[str, Any]:
+        input_value: Any = request.input
+        if isinstance(input_value, str):
+            input_value = [
+                {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": input_value}],
+                }
+            ]
+
         body: dict[str, Any] = {
             "model": request.model,
-            "input": request.input,
+            "input": input_value,
             "stream": stream,
+            "store": False,
         }
         if request.previous_response_id:
             body["previous_response_id"] = request.previous_response_id
@@ -199,17 +211,27 @@ class CodexDirectAdapter:
         if request.tool_choice is not None:
             body["tool_choice"] = request.tool_choice
         body.update(request.extra)
+        body["store"] = False
         return body
 
     async def create_response(self, request: ResponsesRequest) -> ResponseEnvelope:
-        token = await self._bearer_token()
-        raw = await self._upstream.create_response(
-            token=token,
-            body=self._body(request, stream=False),
-        )
-        envelope = _envelope_from_raw(raw, request=request)
-        self._store.put_response(envelope, record_input_items(request))
-        return envelope
+        completed: ResponseEnvelope | None = None
+        async for event in self.stream_response(request):
+            if event.event != "response.completed":
+                continue
+            raw = event.data.get("response")
+            if not isinstance(raw, dict):
+                continue
+            completed = ResponseEnvelope(
+                id=str(raw.get("id") or f"resp_{uuid.uuid4().hex}"),
+                model=str(raw.get("model") or request.model),
+                output=raw.get("output") if isinstance(raw.get("output"), list) else [],
+                usage=raw.get("usage") if isinstance(raw.get("usage"), dict) else None,
+                raw=raw,
+            )
+        if completed is None:
+            raise CodexDirectError("codex direct stream completed without response")
+        return completed
 
     async def stream_response(
         self, request: ResponsesRequest

@@ -1,9 +1,9 @@
-#!/usr/bin/env -S uv run python
-"""Manual opt-in Codex live proof runner.
+#!/usr/bin/env python3
+"""Run opt-in Codex live proof lanes.
 
-By default this exits before touching real auth or network. Use only on a trusted
-local machine and never paste the resulting report if it contains unexpected
-fields.
+The output is intentionally secret-free JSON. Live token/network proof must be
+explicitly opted in with the lane-specific environment variables documented in
+ADR 0016.
 """
 
 from __future__ import annotations
@@ -14,38 +14,28 @@ import sys
 
 from reverso.protocols.adapters.codex_live_proof import (
     CodexLiveProofSkipped,
-    require_live_opt_in,
+    run_direct_live_proof_sync,
     run_official_cli_live_proof,
 )
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run a gated Codex live proof")
-    parser.add_argument("--lane", choices=("official", "direct"), default="official")
-    parser.add_argument("--json", action="store_true", help="emit JSON report")
+    parser = argparse.ArgumentParser(description="Run opt-in Codex OAuth live proof")
+    parser.add_argument("--lane", choices=("official", "direct"), required=True)
+    parser.add_argument("--json", action="store_true", help="emit secret-free JSON")
     args = parser.parse_args()
 
     try:
         if args.lane == "official":
             report = run_official_cli_live_proof()
         else:
-            require_live_opt_in("direct")
-            report_dict = {
-                "lane": "direct",
-                "status": "skipped",
-                "reason": "direct live proof requires a ProviderAuth with bearer_token(); CodexOAuthAuth is validate-only",
-            }
-            if args.json:
-                print(json.dumps(report_dict, indent=2, sort_keys=True))
-            else:
-                print(json.dumps(report_dict, indent=2, sort_keys=True))
-            return 0
+            report = run_direct_live_proof_sync()
     except CodexLiveProofSkipped as exc:
         report_dict = {"lane": args.lane, "status": "skipped", "reason": str(exc)}
         if args.json:
             print(json.dumps(report_dict, indent=2, sort_keys=True))
         else:
-            print(f"skipped: {exc}")
+            print(json.dumps(report_dict, indent=2, sort_keys=True))
         return 0
 
     report_dict = report.to_public_dict()
@@ -53,7 +43,7 @@ def main() -> int:
         print(json.dumps(report_dict, indent=2, sort_keys=True))
     else:
         print(json.dumps(report_dict, indent=2, sort_keys=True))
-    return 0 if report.status in {"passed", "skipped"} else 1
+    return 0 if report.status == "passed" else 1
 
 
 if __name__ == "__main__":
