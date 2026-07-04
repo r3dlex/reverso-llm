@@ -105,7 +105,7 @@
       "id": "plan:reverso-root:northstar-codex-oauth-provider-reverso",
       "type": "plan",
       "title": "northstar sliced plan: codex-oauth-provider-reverso",
-      "status": "active",
+      "status": "complete",
       "repo_id": "reverso-root",
       "path": ".ai/handoff/northstar-codex-oauth-provider-reverso.md",
       "backlinks": []
@@ -114,7 +114,7 @@
       "id": "handoff:reverso-root:northstar-codex-oauth-provider-reverso",
       "type": "handoff",
       "title": "northstar A->B handoff: codex-oauth-provider-reverso",
-      "status": "active",
+      "status": "complete",
       "repo_id": "reverso-root",
       "path": ".ai/handoff/northstar-codex-oauth-provider-reverso.md",
       "backlinks": [
@@ -125,7 +125,7 @@
       "id": "plan:reverso-root:northstar-codex-live-oauth-pkce-proof",
       "type": "plan",
       "title": "northstar sliced plan: codex-live-oauth-pkce-proof",
-      "status": "active",
+      "status": "complete",
       "repo_id": "reverso-root",
       "path": ".ai/handoff/northstar-codex-live-oauth-pkce-proof.md",
       "backlinks": []
@@ -134,7 +134,7 @@
       "id": "handoff:reverso-root:northstar-codex-live-oauth-pkce-proof",
       "type": "handoff",
       "title": "northstar A->B handoff: codex-live-oauth-pkce-proof",
-      "status": "active",
+      "status": "complete",
       "repo_id": "reverso-root",
       "path": ".ai/handoff/northstar-codex-live-oauth-pkce-proof.md",
       "backlinks": [
@@ -145,7 +145,7 @@
       "id": "plan:reverso-root:northstar-codex-live-oauth-pkce-backend-integration",
       "type": "plan",
       "title": "northstar sliced plan: codex-live-oauth-pkce-backend-integration",
-      "status": "active",
+      "status": "complete",
       "repo_id": "reverso-root",
       "path": ".ai/handoff/northstar-codex-live-oauth-pkce-backend-integration.md",
       "backlinks": []
@@ -154,7 +154,7 @@
       "id": "handoff:reverso-root:northstar-codex-live-oauth-pkce-backend-integration",
       "type": "handoff",
       "title": "northstar A->B handoff: codex-live-oauth-pkce-backend-integration",
-      "status": "active",
+      "status": "complete",
       "repo_id": "reverso-root",
       "path": ".ai/handoff/northstar-codex-live-oauth-pkce-backend-integration.md",
       "backlinks": [
@@ -165,7 +165,7 @@
       "id": "plan:reverso-root:northstar-codex-direct-post-default-cli-cleanup",
       "type": "plan",
       "title": "northstar sliced plan: codex-direct-post-default-cli-cleanup",
-      "status": "active",
+      "status": "complete",
       "repo_id": "reverso-root",
       "path": ".ai/handoff/northstar-codex-direct-post-default-cli-cleanup.md",
       "backlinks": []
@@ -174,7 +174,7 @@
       "id": "handoff:reverso-root:northstar-codex-direct-post-default-cli-cleanup",
       "type": "handoff",
       "title": "northstar A->B handoff: codex-direct-post-default-cli-cleanup",
-      "status": "active",
+      "status": "complete",
       "repo_id": "reverso-root",
       "path": ".ai/handoff/northstar-codex-direct-post-default-cli-cleanup.md",
       "backlinks": [
@@ -185,7 +185,7 @@
       "id": "plan:reverso-root:northstar-openai-pass-through-oauth-api-key",
       "type": "plan",
       "title": "northstar sliced plan: openai-pass-through-oauth-api-key",
-      "status": "active",
+      "status": "complete",
       "repo_id": "reverso-root",
       "path": ".ai/handoff/northstar-openai-pass-through-oauth-api-key.md",
       "backlinks": []
@@ -194,7 +194,7 @@
       "id": "handoff:reverso-root:northstar-openai-pass-through-oauth-api-key",
       "type": "handoff",
       "title": "northstar A->B handoff: openai-pass-through-oauth-api-key",
-      "status": "active",
+      "status": "complete",
       "repo_id": "reverso-root",
       "path": ".ai/handoff/northstar-openai-pass-through-oauth-api-key.md",
       "backlinks": [
@@ -207,7 +207,7 @@
       "title": "PR #70 codex-direct proof evidence",
       "repo_id": "reverso-root",
       "path": "https://github.com/r3dlex/reverso-llm/pull/70",
-      "status": "complete",
+      "status": "merged",
       "backlinks": [
         "handoff:reverso-root:northstar-codex-direct-post-default-cli-cleanup"
       ]
@@ -218,7 +218,7 @@
       "title": "PR #71 codex-direct local-loopback default enable",
       "repo_id": "reverso-root",
       "path": "https://github.com/r3dlex/reverso-llm/pull/71",
-      "status": "complete",
+      "status": "merged",
       "backlinks": [
         "handoff:reverso-root:northstar-codex-direct-post-default-cli-cleanup"
       ]
@@ -229,9 +229,20 @@
       "title": "PR #72 codex-direct post-default cleanup",
       "repo_id": "reverso-root",
       "path": "https://github.com/r3dlex/reverso-llm/pull/72",
-      "status": "complete",
+      "status": "merged",
       "backlinks": [
         "handoff:reverso-root:northstar-codex-direct-post-default-cli-cleanup"
+      ]
+    },
+    {
+      "id": "pr:reverso-root:73",
+      "type": "pull_request",
+      "title": "PR #73 OpenAI pass-through OAuth/API-key implementation",
+      "status": "merged",
+      "repo_id": "reverso-root",
+      "path": "https://github.com/r3dlex/reverso-llm/pull/73",
+      "backlinks": [
+        "handoff:reverso-root:northstar-openai-pass-through-oauth-api-key"
       ]
     }
   ],
@@ -347,6 +358,13 @@
       "relation": "implemented-by",
       "created_by": "autobahn",
       "evidence_path": "https://github.com/r3dlex/reverso-llm/pull/72"
+    },
+    {
+      "source": "handoff:reverso-root:northstar-openai-pass-through-oauth-api-key",
+      "target": "pr:reverso-root:73",
+      "relation": "implemented-by",
+      "created_by": "diagnose-post-merge-hygiene",
+      "evidence_path": "https://github.com/r3dlex/reverso-llm/pull/73"
     }
   ],
   "coverage": {

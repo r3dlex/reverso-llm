@@ -1,9 +1,10 @@
 # OpenAI pass-through OAuth/API-key provider
 
+Completion: PR #73 merged 2026-07-04. GitHub #47 closed after local-loopback opt-in OpenAI pass-through shipped.
 Date: 2026-07-04
-Status: local-first Northstar issue raised
+Status: complete
 Hosted tracker: GitHub issue #47, https://github.com/r3dlex/reverso-llm/issues/47
-Spec: `docs/specifications/ACTIVE/openai-pass-through-oauth-api-key.md`
+Spec: `docs/specifications/ARCHIVED/openai-pass-through-oauth-api-key.md`
 
 ## Problem
 

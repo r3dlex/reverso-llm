@@ -6,7 +6,7 @@ created: 2026-07-03
 supersedes: null
 related:
   - docs/architecture/adr/0007-codex-anthropic-surface-via-chatgpt-oauth.md
-  - docs/specifications/ACTIVE/codex-oauth-provider-reverso.md
+  - docs/specifications/ARCHIVED/codex-oauth-provider-reverso.md
 ---
 
 # ADR 0016: Experimental Direct Codex OAuth Provider Spike
