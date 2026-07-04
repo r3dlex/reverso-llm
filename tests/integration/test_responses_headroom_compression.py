@@ -21,7 +21,7 @@ from reverso.protocols.headroom_compression import HeadroomCompressionOutcome
 from reverso.protocols.responses_app import APP_PROVIDER_PREFIXES, build_app
 
 BASE_URL = "http://127.0.0.1:64946"
-RESPONSES_PROVIDERS = ("auggie", "claude", "copilot", "deepseek")
+RESPONSES_PROVIDERS = ("auggie", "claude", "codex-direct", "copilot", "deepseek")
 assert RESPONSES_PROVIDERS == tuple(sorted(APP_PROVIDER_PREFIXES))
 
 

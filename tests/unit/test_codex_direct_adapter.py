@@ -212,7 +212,7 @@ def test_direct_codex_requires_injected_upstream() -> None:
         CodexDirectAdapter(auth=_auth())
 
 
-def test_direct_codex_route_is_reserved_but_not_mounted_by_default(
+def test_direct_codex_route_is_reserved_but_disabled_by_kill_switch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from reverso.protocols.responses_app import (
@@ -221,7 +221,7 @@ def test_direct_codex_route_is_reserved_but_not_mounted_by_default(
     )
     from reverso.proxy import compose
 
-    monkeypatch.delenv(compose.CODEX_DIRECT_BACKEND_ENV, raising=False)
+    monkeypatch.setenv(compose.CODEX_DIRECT_BACKEND_ENV, "0")
 
     assert "codex_direct" not in APP_PROVIDER_PREFIXES
     assert "codex-direct" in APP_PROVIDER_PREFIXES
@@ -232,7 +232,23 @@ def test_direct_codex_route_is_reserved_but_not_mounted_by_default(
     assert "codex-direct" not in mounted
 
 
-def test_direct_codex_mounts_only_with_explicit_backend_gate(
+def test_direct_codex_mounts_by_default_unless_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from reverso.proxy import compose
+
+    monkeypatch.delenv(compose.CODEX_DIRECT_BACKEND_ENV, raising=False)
+
+    mounted = compose.build_adapters()
+
+    assert isinstance(mounted["codex-direct"], CodexDirectAdapter)
+
+    for disabled in ("0", "false", "no", "off"):
+        monkeypatch.setenv(compose.CODEX_DIRECT_BACKEND_ENV, disabled)
+        assert "codex-direct" not in compose.build_adapters()
+
+
+def test_codex_direct_explicit_enable_still_mounts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from reverso.proxy import compose
@@ -244,13 +260,27 @@ def test_direct_codex_mounts_only_with_explicit_backend_gate(
     assert isinstance(mounted["codex-direct"], CodexDirectAdapter)
 
 
+def test_codex_direct_non_loopback_host_never_mounts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from reverso.proxy import compose
+
+    monkeypatch.setenv(compose.REVERSO_HOST_ENV, "0.0.0.0")
+    monkeypatch.delenv(compose.CODEX_DIRECT_BACKEND_ENV, raising=False)
+
+    assert "codex-direct" not in compose.build_adapters()
+
+    monkeypatch.setenv(compose.CODEX_DIRECT_BACKEND_ENV, "1")
+    assert "codex-direct" not in compose.build_adapters()
+
+
 @pytest.mark.asyncio
 async def test_direct_codex_reserved_route_fails_closed_before_legacy(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from reverso.proxy import compose
 
-    monkeypatch.delenv(compose.CODEX_DIRECT_BACKEND_ENV, raising=False)
+    monkeypatch.setenv(compose.CODEX_DIRECT_BACKEND_ENV, "0")
     legacy_calls: list[str] = []
 
     async def legacy_app(scope, receive, send):  # noqa: ANN001

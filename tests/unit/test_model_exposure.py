@@ -7,6 +7,7 @@ from reverso.protocols.model_exposure import (
     CODEX_DEFAULT_MODEL,
     CODEX_DIRECT_BACKEND_ENV,
     CODEX_FRONTIER_MODELS,
+    REVERSO_HOST_ENV,
     DIRECT_CODEX_PROFILE_SPECS,
     REVERSO_ROUTED_CODEX_PROFILE_PREFIXES,
     STATIC_CATALOG_SEEDS,
@@ -82,10 +83,30 @@ def test_model_exposure_owns_codex_profile_sync_prefixes() -> None:
         "copilot",
         "auggie",
         "deepseek",
+        "codex-direct",
     )
-    assert (
-        reverso_routed_codex_profile_prefixes({})
-        == REVERSO_ROUTED_CODEX_PROFILE_PREFIXES
+    assert reverso_routed_codex_profile_prefixes(
+        {}
+    ) == REVERSO_ROUTED_CODEX_PROFILE_PREFIXES + ("codex-direct",)
+    assert reverso_routed_codex_profile_prefixes({CODEX_DIRECT_BACKEND_ENV: "0"}) == (
+        "claude",
+        "copilot",
+        "auggie",
+        "deepseek",
+    )
+    assert reverso_routed_codex_profile_prefixes({REVERSO_HOST_ENV: "0.0.0.0"}) == (
+        "claude",
+        "copilot",
+        "auggie",
+        "deepseek",
+    )
+    assert reverso_routed_codex_profile_prefixes(
+        {REVERSO_HOST_ENV: "0.0.0.0", CODEX_DIRECT_BACKEND_ENV: "1"}
+    ) == (
+        "claude",
+        "copilot",
+        "auggie",
+        "deepseek",
     )
     assert reverso_routed_codex_profile_prefixes({CODEX_DIRECT_BACKEND_ENV: "1"}) == (
         "claude",
