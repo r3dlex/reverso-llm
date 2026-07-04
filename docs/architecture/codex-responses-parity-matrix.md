@@ -178,7 +178,7 @@ A1 (`.omc/research/codex-resume-probe.md`) returned NO-PERSIST: `codex exec resu
 Codex 0.139.0 has no native mechanism to feed its TUI `/model` picker from a custom `model_provider`'s `/v1/models` endpoint (`.omc/research/codex-model-picker.md`). B5 ships the SYNC-TOOL workaround:
 
 - `reverso-codex-sync` console script (`src/reverso/codex_sync.py`).
-- GETs `http://127.0.0.1:64946/<prefix>/v1/models` for each of the four Reverso prefixes and writes provider-name profile files beside `~/.codex/config.toml`: `claude.config.toml`, `copilot.config.toml`, `auggie.config.toml`, and `deepseek.config.toml`.
+- GETs `http://127.0.0.1:64946/<prefix>/v1/models` for each Reverso-routed prefix and writes provider-name profile files beside `~/.codex/config.toml`: `claude.config.toml`, `codex-direct.config.toml`, `copilot.config.toml`, `auggie.config.toml`, and `deepseek.config.toml` when the local-loopback `codex-direct` gate is enabled. `REVERSO_CODEX_DIRECT_BACKEND=0` (or `false`, `no`, `off`) hides the direct profile.
 - Each generated Reverso profile pins `model`, `model_provider = "reverso_<prefix>"`, and a provider-scoped `model_catalog_json`. The per-provider catalogs live under `~/.codex/reverso/<prefix>.json` by default and use bare model slugs because collisions cannot occur inside a provider-scoped picker.
 - The base `config.toml` is kept clean: the tool strips legacy global catalog, NUX, and managed `[profiles.*]` blocks, and does not generate a root `model_catalog_json` or global model-list exposure.
 - Direct `openai.config.toml` and `minimax.config.toml` profiles are direct Codex provider profiles, not Reverso routes. MiniMax remains direct Codex-only.

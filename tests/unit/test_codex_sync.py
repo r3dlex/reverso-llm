@@ -26,6 +26,7 @@ def _fixture_payload() -> dict[str, list[str]]:
         "copilot": ["claude-fable-5", "gpt-4o", "gpt-5.5", "claude-opus-4.8"],
         "auggie": ["prism-a"],
         "deepseek": ["deepseek-v3", "deepseek-r1"],
+        "codex-direct": ["gpt-5.5"],
     }
 
 
@@ -233,6 +234,7 @@ def test_profile_files_emit_one_file_per_live_prefix(
         codex_sync.ProviderModels("copilot", ("gpt-5.5", "gpt-4o")),
         codex_sync.ProviderModels("auggie", ("prism-a",)),
         codex_sync.ProviderModels("deepseek", ("deepseek-v3", "deepseek-v4-pro")),
+        codex_sync.ProviderModels("codex-direct", ("gpt-5.5",)),
     ]
     catalog_dir = tmp_path / "reverso"
     files = codex_sync._reverso_profile_files(pm, tmp_path, catalog_dir)
@@ -242,6 +244,7 @@ def test_profile_files_emit_one_file_per_live_prefix(
         "copilot.config.toml",
         "auggie.config.toml",
         "deepseek.config.toml",
+        "codex-direct.config.toml",
     ]
     parsed = {
         path.stem.removesuffix(".config"): tomllib.loads(text)
@@ -250,9 +253,14 @@ def test_profile_files_emit_one_file_per_live_prefix(
     assert parsed["claude"]["model_provider"] == "reverso_claude"
     assert parsed["copilot"]["model_provider"] == "reverso_copilot"
     assert parsed["deepseek"]["model_provider"] == "reverso_deepseek"
+    assert parsed["codex-direct"]["model_provider"] == "reverso_codex-direct"
     assert parsed["claude"]["model"] == "claude-fable-5"
     assert parsed["copilot"]["model"] == "gpt-5.5"
     assert parsed["deepseek"]["model"] == "deepseek-v4-pro"
+    assert parsed["codex-direct"]["model"] == "gpt-5.5"
+    assert parsed["codex-direct"]["model_catalog_json"] == str(
+        catalog_dir / "codex-direct.json"
+    )
     assert parsed["copilot"]["model_catalog_json"] == str(catalog_dir / "copilot.json")
 
 
@@ -521,7 +529,13 @@ def test_sync_writes_per_provider_catalog_files_with_profile_safe_slugs(
 
     assert result.catalog_dir == catalog_dir
     written = {p.name for p in result.catalogs}
-    assert written == {"claude.json", "copilot.json", "auggie.json", "deepseek.json"}
+    assert written == {
+        "claude.json",
+        "codex-direct.json",
+        "copilot.json",
+        "auggie.json",
+        "deepseek.json",
+    }
 
     copilot = json.loads((catalog_dir / "copilot.json").read_text(encoding="utf-8"))
     copilot_slugs = [m["slug"] for m in copilot["models"]]
@@ -530,6 +544,10 @@ def test_sync_writes_per_provider_catalog_files_with_profile_safe_slugs(
     assert "copilot/gpt-5.5" in copilot_slugs
     assert "copilot/gpt-4o" in copilot_slugs
     assert "gpt-5.5" not in copilot_slugs
+
+    direct = json.loads((catalog_dir / "codex-direct.json").read_text(encoding="utf-8"))
+    direct_slugs = [m["slug"] for m in direct["models"]]
+    assert direct_slugs == ["codex-direct/gpt-5.5"]
 
     claude = json.loads((catalog_dir / "claude.json").read_text(encoding="utf-8"))
     claude_slugs = {m["slug"] for m in claude["models"]}
@@ -916,12 +934,14 @@ def test_main_writes_when_not_dry_run(
     assert sorted(Path(p).name for p in report["catalogs"]) == [
         "auggie.json",
         "claude.json",
+        "codex-direct.json",
         "copilot.json",
         "deepseek.json",
     ]
     assert sorted(Path(p).name for p in report["profiles"]) == [
         "auggie.config.toml",
         "claude.config.toml",
+        "codex-direct.config.toml",
         "copilot.config.toml",
         "deepseek.config.toml",
         "minimax.config.toml",
