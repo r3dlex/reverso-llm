@@ -158,11 +158,11 @@ class CodexOAuthAuth:
     environment token; if the artifact is absent the resolution is simply
     unauthenticated.
 
-    There is deliberately NO ``bearer_token`` method: ``codex exec`` exposes no
-    token-injection env var, so the resolved token is never handed to the child.
-    The CLI authenticates the turn from its own ``codex login`` session. This keeps
-    the gate a falsifiable pre-flight check that asserts the subscription OAuth path
-    and never a metered API key.
+    The default CLI-backed path uses this as a validate-only pre-flight check: the
+    CLI authenticates the turn from its own ``codex login`` session. The optional
+    direct-backend path may call ``bearer_token()`` after the explicit backend gate is
+    enabled; the token is still read only from the local OAuth artifact and must never
+    be logged or serialized.
     """
 
     def __init__(
@@ -290,6 +290,22 @@ class CodexOAuthAuth:
             subscription_type=auth_mode,
             details=details,
         )
+
+    async def bearer_token(self) -> str:
+        """Return the local Codex OAuth access token for gated direct-backend calls."""
+        resolution = self.resolve()
+        if not resolution.authenticated:
+            reason = resolution.details.get("reason", "unauthenticated")
+            raise CodexAuthError(f"codex oauth failed: {reason}")
+
+        artifact, _source = self._load_artifact()
+        tokens = artifact.get(_TOKENS_KEY) if isinstance(artifact, dict) else None
+        access_token = (
+            tokens.get(_ACCESS_TOKEN_FIELD) if isinstance(tokens, dict) else None
+        )
+        if not isinstance(access_token, str) or not access_token:
+            raise CodexAuthError("codex oauth failed: no_access_token")
+        return access_token
 
 
 def _jwt_exp_ms(access_token: Any) -> int | None:

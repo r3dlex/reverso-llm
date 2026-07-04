@@ -22,6 +22,12 @@ Send = Callable[[dict[str, Any]], Awaitable[None]]
 
 FRONTIER_GPT_MODELS = frozenset(CODEX_FRONTIER_MODELS)
 KNOWN_GPT_MODELS = frozenset(CODEX_BUILTIN_MODELS)
+# Claude CLI rejects versioned names (e.g. "claude-haiku-4-6") and only
+# accepts short aliases ("haiku"/"sonnet"/"opus"). The translation here
+# covers cases where a client sends a versioned Claude name through
+# the *legacy* LiteLLM fallthrough path; the first-party ClaudeAdapter
+# also does its own versioned->alias translation before spawning the CLI
+# (see _cli_model_arg in src/reverso/protocols/adapters/claude.py).
 MODEL_ALIASES = {
     "claude-opus-4.8": "claude-opus-4-8",
     "claude-sonnet-4.6": "claude-sonnet-4-6",
