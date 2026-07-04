@@ -65,21 +65,37 @@ def _request(stream: bool = False) -> ResponsesRequest:
 
 
 @pytest.mark.asyncio
-async def test_direct_codex_create_response_uses_provider_adapter_shape() -> None:
+async def test_direct_codex_create_response_drains_streaming_endpoint() -> None:
     upstream = FakeDirectUpstream()
     adapter = CodexDirectAdapter(auth=_auth(), upstream=upstream)
 
     envelope = await adapter.create_response(_request())
 
-    assert envelope.id == "resp_direct_fake"
+    assert envelope.id.startswith("resp_")
     assert envelope.model == "gpt-5.5"
-    assert envelope.output[0]["content"][0]["text"] == "direct codex proof"
-    assert envelope.usage == {"input_tokens": 2, "output_tokens": 3, "total_tokens": 5}
-    assert upstream.calls[0][0] == "create"
+    assert envelope.output[0]["content"][0]["text"] == "direct stream"
+    assert upstream.calls[0][0] == "stream"
     assert upstream.calls[0][1] == "synthetic-access-token"
-    assert upstream.calls[0][2]["instructions"] == "answer briefly"
-    assert await adapter.get_response(envelope.id) == envelope
-    assert (await adapter.list_input_items(envelope.id)).response_id == envelope.id
+    body = upstream.calls[0][2]
+    assert body["stream"] is True
+    assert body["store"] is False
+    assert body["input"] == [
+        {
+            "role": "user",
+            "content": [{"type": "input_text", "text": "hello direct codex"}],
+        }
+    ]
+    loaded = await adapter.get_response(envelope.id)
+    assert loaded.id == envelope.id
+    items = await adapter.list_input_items(envelope.id)
+    assert items.response_id == envelope.id
+    assert items.data == [
+        {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "hello direct codex"}],
+        }
+    ]
 
 
 @pytest.mark.asyncio

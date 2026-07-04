@@ -94,3 +94,53 @@ Go / no-go:
 - No-go: default profile selection, default gateway mounting, remote-hosted use, or production recommendation
   until live official-first and direct HTTP proof evidence is captured on a trusted local account and reviewed
   in a follow-up ADR update.
+
+## Live-token proof evidence - 2026-07-04
+
+Secret-free opt-in proof was run locally with the merged proof harness plus the
+streaming-shape fix from this diagnosis pass.
+
+Commands:
+
+```bash
+REVERSO_CODEX_DIRECT_LIVE_PROOF=1 .venv/bin/python scripts/codex-live-proof.py --lane direct --json
+REVERSO_CODEX_OFFICIAL_LIVE_PROOF=1 .venv/bin/python scripts/codex-live-proof.py --lane official --json
+```
+
+Observed direct lane evidence:
+
+- status: passed
+- auth_authenticated: true
+- auth_method: codex_oauth
+- auth_source: credentials_file
+- token_present: true
+- model: gpt-5.5
+- usage_present: true
+- error_type: null
+
+Observed official lane evidence:
+
+- status: passed
+- response_shape_keys included item, thread_id, type, usage
+- usage_present: true
+- error_type: null
+
+Diagnosis notes:
+
+- The initial direct lane skipped because the CLI wrapper used validate-only
+  `ProviderAuth` instead of `CodexOAuthAuth`.
+- After the auth seam was fixed, direct OAuth authenticated but the upstream
+  returned HTTP 400 with `Input must be a list`.
+- Minimized live probes then showed the direct endpoint requires `store: false`
+  and `stream: true`.
+- With Responses input-list normalization, `store: false`, and stream-backed
+  `create_response`, the direct lane passed against the live backend.
+
+Default-enable recommendation:
+
+- This evidence is sufficient to justify a reviewed default-enable proposal for
+  local loopback deployments, provided default-on still fails closed when Codex
+  OAuth is missing or expired.
+- Do not default-enable for non-loopback or hosted CI environments.
+- Before changing the default, merge the streaming-shape fix, run hosted CI, and
+  keep ADR evidence attached to the PR.
