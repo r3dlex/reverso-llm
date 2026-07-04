@@ -39,7 +39,7 @@ from reverso.protocols.responses_app import (
 from reverso.proxy.compose import build_adapters
 
 # The Responses-surface providers (claude is Responses-only here; codex is NOT).
-RESPONSES_PROVIDERS = ["claude", "codex-direct", "copilot", "auggie", "deepseek"]
+RESPONSES_PROVIDERS = list(sorted(APP_PROVIDER_PREFIXES))
 
 # The five gpt ids and the codex backend key that must NEVER be on the Responses
 # surface (they are Anthropic-surface-only, ADR 0007).

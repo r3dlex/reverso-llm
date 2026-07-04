@@ -90,6 +90,11 @@
       "id": "northstar-handoff-codex-live-oauth-pkce-backend-integration",
       "enabled_when": "northstar_handoff_present",
       "status": "available"
+    },
+    {
+      "id": "northstar-handoff-codex-direct-post-default-cli-cleanup",
+      "enabled_when": "northstar_handoff_present",
+      "status": "available"
     }
   ],
   "handoff": ".ai/handoff/init-ai-repo-handoff.md",

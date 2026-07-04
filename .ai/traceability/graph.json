@@ -160,6 +160,26 @@
       "backlinks": [
         "plan:reverso-root:northstar-codex-live-oauth-pkce-backend-integration"
       ]
+    },
+    {
+      "id": "plan:reverso-root:northstar-codex-direct-post-default-cli-cleanup",
+      "type": "plan",
+      "title": "northstar sliced plan: codex-direct-post-default-cli-cleanup",
+      "status": "active",
+      "repo_id": "reverso-root",
+      "path": ".ai/handoff/northstar-codex-direct-post-default-cli-cleanup.md",
+      "backlinks": []
+    },
+    {
+      "id": "handoff:reverso-root:northstar-codex-direct-post-default-cli-cleanup",
+      "type": "handoff",
+      "title": "northstar A->B handoff: codex-direct-post-default-cli-cleanup",
+      "status": "active",
+      "repo_id": "reverso-root",
+      "path": ".ai/handoff/northstar-codex-direct-post-default-cli-cleanup.md",
+      "backlinks": [
+        "plan:reverso-root:northstar-codex-direct-post-default-cli-cleanup"
+      ]
     }
   ],
   "edges": [
@@ -239,6 +259,13 @@
       "relation": "summarized-by",
       "created_by": "northstar",
       "evidence_path": ".ai/handoff/northstar-codex-live-oauth-pkce-backend-integration.md"
+    },
+    {
+      "source": "plan:reverso-root:northstar-codex-direct-post-default-cli-cleanup",
+      "target": "handoff:reverso-root:northstar-codex-direct-post-default-cli-cleanup",
+      "relation": "summarized-by",
+      "created_by": "northstar",
+      "evidence_path": ".ai/handoff/northstar-codex-direct-post-default-cli-cleanup.md"
     }
   ],
   "coverage": {

@@ -101,8 +101,20 @@ model_context_window = 512000
 
 `reverso-codex-sync` writes one provider-name profile file per Reverso-routed
 provider beside `~/.codex/config.toml`: `claude.config.toml`,
-`copilot.config.toml`, `auggie.config.toml`, and `deepseek.config.toml`. Each
-file pins the Reverso provider and points Codex at a provider-scoped catalog. Reverso profile files keep GPT-level model names where those names are the Codex-facing contract for a provider.
+`codex-direct.config.toml`, `copilot.config.toml`, `auggie.config.toml`, and
+`deepseek.config.toml`. Each file pins the Reverso provider and points Codex at a
+provider-scoped catalog. `codex-direct` is local-loopback default-on; set
+`REVERSO_CODEX_DIRECT_BACKEND=0` (or `false`, `no`, `off`) to hide it. Reverso profile files keep GPT-level model names where those names are the
+Codex-facing contract for a provider.
+
+Example generated `~/.codex/codex-direct.config.toml`:
+
+```toml
+model = "gpt-5.5"
+model_provider = "reverso_codex-direct"
+model_catalog_json = "/Users/you/.codex/reverso/codex-direct.json"
+```
+
 Example generated `~/.codex/deepseek.config.toml`:
 
 ```toml
