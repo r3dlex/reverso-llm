@@ -110,6 +110,33 @@ _FALLBACK_CLAUDE_MODELS = (
     "haiku",
 )
 
+# Versioned Claude model names that the Codex /claude Responses profile may
+# receive (e.g. from /v1/models listings) but the local  CLI rejects.
+# The CLI only accepts the short aliases, so translate here before the
+# subprocess argv is built. Unknown names pass through unchanged so a future
+# Claude CLI version that accepts a new name still works without an adapter
+# change.
+_VERSIONED_CLAUDE_TO_CLI_ALIAS: dict[str, str] = {
+    "claude-opus-4-8": "opus",
+    "claude-sonnet-4-6": "sonnet",
+    "claude-haiku-4-6": "haiku",
+}
+
+
+def _cli_model_arg(model: str) -> str:
+    """Translate a Codex/REST-facing Claude model name to the CLI alias.
+
+    The first-party ClaudeAdapter is the boundary between OpenAI Responses
+    clients (which see versioned ids like claude-haiku-4-6) and the local
+    claude CLI subprocess (which only accepts haiku/sonnet/opus).
+    Without this translation the spawned CLI exits rc=1 with "may not exist or
+    you may not have access", which the bounded-CLI spine re-raises as
+    ClaudeAuthError (a misclassification — see diagnose 2026-07-03).
+    """
+    if not model:
+        return model
+    return _VERSIONED_CLAUDE_TO_CLI_ALIAS.get(model, model)
+
 
 class ClaudeAuthError(RuntimeError):
     """Raised when the Claude subscription-OAuth credential cannot be resolved."""
@@ -349,6 +376,9 @@ class ClaudeAdapter:
         token = _resolve_token_sync(self._auth)
         # Scrub routing/auth env so the CLI never re-enters Reverso (ADR 0009).
         child_env = _child_env_for_cli(token)
+        # Translate versioned Claude name -> CLI alias (the CLI rejects
+        # "claude-haiku-4-6" and only accepts "haiku"/"sonnet"/"opus").
+        cli_model = _cli_model_arg(model)
         argv = [
             "claude",
             "--print",
@@ -357,7 +387,7 @@ class ClaudeAdapter:
             "--verbose",
             "--include-partial-messages",
             "--model",
-            model,
+            cli_model,
             "--",
             prompt,
         ]
@@ -411,8 +441,11 @@ class ClaudeAdapter:
         # Hand the child the live subscription token (redact before any logging)
         # and scrub routing/auth env so the CLI never re-enters Reverso (ADR 0009).
         child_env = _child_env_for_cli(token)
+        # Translate versioned Claude name -> CLI alias (the CLI rejects
+        # "claude-haiku-4-6" and only accepts "haiku"/"sonnet"/"opus").
+        cli_model = _cli_model_arg(model)
         stdout = run_bounded_cli(
-            ["claude", "--print", "--model", model, "--", prompt],
+            ["claude", "--print", "--model", cli_model, "--", prompt],
             error=ClaudeAuthError,
             cli_label="claude CLI",
             env=child_env,

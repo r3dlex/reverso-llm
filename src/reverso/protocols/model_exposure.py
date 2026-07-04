@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 from reverso.protocols.copilot_models import is_copilot_responses_model_id
@@ -15,7 +16,7 @@ CODEX_BUILTIN_MODELS: tuple[str, ...] = (
     "gpt-4.1",
 )
 CODEX_FRONTIER_MODELS: tuple[str, ...] = CODEX_BUILTIN_MODELS[:2]
-PREFIXED_SELECTOR_PREFIXES = frozenset({"copilot", "auggie", "agy"})
+PREFIXED_SELECTOR_PREFIXES = frozenset({"copilot", "auggie", "agy", "codex-direct"})
 
 
 @dataclass(frozen=True)
@@ -48,6 +49,8 @@ REVERSO_ROUTED_CODEX_PROFILE_PREFIXES: tuple[str, ...] = (
     "auggie",
     "deepseek",
 )
+CODEX_DIRECT_BACKEND_ENV = "REVERSO_CODEX_DIRECT_BACKEND"
+_CODEX_DIRECT_PROFILE_PREFIX = "codex-direct"
 DEEPSEEK_CODEX_PROFILE_DEFAULT = "deepseek-v4-pro"
 DIRECT_CODEX_PROFILE_SPECS: tuple[CodexProfileSpec, ...] = (
     CodexProfileSpec(
@@ -76,8 +79,18 @@ STALE_CODEX_VARIANT_PROFILE_STEMS: frozenset[str] = frozenset(
 )
 
 
-def reverso_routed_codex_profile_prefixes() -> tuple[str, ...]:
+def codex_direct_profile_enabled(env: dict[str, str] | None = None) -> bool:
+    """Return True only when the experimental Codex Direct profile is explicit."""
+    source = os.environ if env is None else env
+    return source.get(CODEX_DIRECT_BACKEND_ENV) == "1"
+
+
+def reverso_routed_codex_profile_prefixes(
+    env: dict[str, str] | None = None,
+) -> tuple[str, ...]:
     """Return provider prefixes whose Codex profiles route through Reverso."""
+    if codex_direct_profile_enabled(env):
+        return REVERSO_ROUTED_CODEX_PROFILE_PREFIXES + (_CODEX_DIRECT_PROFILE_PREFIX,)
     return REVERSO_ROUTED_CODEX_PROFILE_PREFIXES
 
 
@@ -171,6 +184,8 @@ def catalog_display_name(prefix: str, model_id: str) -> str:
         return f"Claude (Claude Code) {model_id}"
     if prefix == "deepseek":
         return f"DeepSeek {model_id}"
+    if prefix == "codex-direct":
+        return f"Codex Direct (OAuth) {model_id}"
     return f"Reverso {prefix} {model_id}"
 
 

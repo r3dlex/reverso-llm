@@ -57,7 +57,9 @@ BIND_PORT = 64946
 
 # First-party prefixes served here. NOT the legacy PROVIDER_PREFIXES; the
 # composition root routes these to this app and delegates the rest to legacy.
-APP_PROVIDER_PREFIXES = frozenset({"claude", "copilot", "auggie", "deepseek"})
+APP_PROVIDER_PREFIXES = frozenset(
+    {"claude", "copilot", "auggie", "deepseek", "codex-direct"}
+)
 
 _DONE_EVENT = b"data: [DONE]\n\n"
 

@@ -100,6 +100,66 @@
       "backlinks": [
         "validation:reverso-root:traceability-report"
       ]
+    },
+    {
+      "id": "plan:reverso-root:northstar-codex-oauth-provider-reverso",
+      "type": "plan",
+      "title": "northstar sliced plan: codex-oauth-provider-reverso",
+      "status": "active",
+      "repo_id": "reverso-root",
+      "path": ".ai/handoff/northstar-codex-oauth-provider-reverso.md",
+      "backlinks": []
+    },
+    {
+      "id": "handoff:reverso-root:northstar-codex-oauth-provider-reverso",
+      "type": "handoff",
+      "title": "northstar A->B handoff: codex-oauth-provider-reverso",
+      "status": "active",
+      "repo_id": "reverso-root",
+      "path": ".ai/handoff/northstar-codex-oauth-provider-reverso.md",
+      "backlinks": [
+        "plan:reverso-root:northstar-codex-oauth-provider-reverso"
+      ]
+    },
+    {
+      "id": "plan:reverso-root:northstar-codex-live-oauth-pkce-proof",
+      "type": "plan",
+      "title": "northstar sliced plan: codex-live-oauth-pkce-proof",
+      "status": "active",
+      "repo_id": "reverso-root",
+      "path": ".ai/handoff/northstar-codex-live-oauth-pkce-proof.md",
+      "backlinks": []
+    },
+    {
+      "id": "handoff:reverso-root:northstar-codex-live-oauth-pkce-proof",
+      "type": "handoff",
+      "title": "northstar A->B handoff: codex-live-oauth-pkce-proof",
+      "status": "active",
+      "repo_id": "reverso-root",
+      "path": ".ai/handoff/northstar-codex-live-oauth-pkce-proof.md",
+      "backlinks": [
+        "plan:reverso-root:northstar-codex-live-oauth-pkce-proof"
+      ]
+    },
+    {
+      "id": "plan:reverso-root:northstar-codex-live-oauth-pkce-backend-integration",
+      "type": "plan",
+      "title": "northstar sliced plan: codex-live-oauth-pkce-backend-integration",
+      "status": "active",
+      "repo_id": "reverso-root",
+      "path": ".ai/handoff/northstar-codex-live-oauth-pkce-backend-integration.md",
+      "backlinks": []
+    },
+    {
+      "id": "handoff:reverso-root:northstar-codex-live-oauth-pkce-backend-integration",
+      "type": "handoff",
+      "title": "northstar A->B handoff: codex-live-oauth-pkce-backend-integration",
+      "status": "active",
+      "repo_id": "reverso-root",
+      "path": ".ai/handoff/northstar-codex-live-oauth-pkce-backend-integration.md",
+      "backlinks": [
+        "plan:reverso-root:northstar-codex-live-oauth-pkce-backend-integration"
+      ]
     }
   ],
   "edges": [
@@ -158,6 +218,27 @@
       "relation": "summarized-by",
       "created_by": "init-ai-repo",
       "evidence_path": ".ai/traceability/index.md"
+    },
+    {
+      "source": "plan:reverso-root:northstar-codex-oauth-provider-reverso",
+      "target": "handoff:reverso-root:northstar-codex-oauth-provider-reverso",
+      "relation": "summarized-by",
+      "created_by": "northstar",
+      "evidence_path": ".ai/handoff/northstar-codex-oauth-provider-reverso.md"
+    },
+    {
+      "source": "plan:reverso-root:northstar-codex-live-oauth-pkce-proof",
+      "target": "handoff:reverso-root:northstar-codex-live-oauth-pkce-proof",
+      "relation": "summarized-by",
+      "created_by": "northstar",
+      "evidence_path": ".ai/handoff/northstar-codex-live-oauth-pkce-proof.md"
+    },
+    {
+      "source": "plan:reverso-root:northstar-codex-live-oauth-pkce-backend-integration",
+      "target": "handoff:reverso-root:northstar-codex-live-oauth-pkce-backend-integration",
+      "relation": "summarized-by",
+      "created_by": "northstar",
+      "evidence_path": ".ai/handoff/northstar-codex-live-oauth-pkce-backend-integration.md"
     }
   ],
   "coverage": {

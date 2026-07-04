@@ -28,6 +28,7 @@ reverso.proxy.app; the LiteLLM quarantine guard test asserts that invariant.
 from __future__ import annotations
 
 import json
+import os
 from typing import Any, Awaitable, Callable
 
 from reverso.protocols.adapter import ProviderAdapter
@@ -46,6 +47,14 @@ Receive = Callable[[], Awaitable[dict[str, Any]]]
 Scope = dict[str, Any]
 Send = Callable[[dict[str, Any]], Awaitable[None]]
 
+CODEX_DIRECT_BACKEND_ENV = "REVERSO_CODEX_DIRECT_BACKEND"
+
+
+def codex_direct_backend_enabled(env: dict[str, str] | None = None) -> bool:
+    """Return True only when the experimental direct Codex backend is explicit."""
+    source = os.environ if env is None else env
+    return source.get(CODEX_DIRECT_BACKEND_ENV) == "1"
+
 
 def build_adapters() -> dict[str, ProviderAdapter]:
     """Construct the real {prefix: adapter} registry for the first-party gateway.
@@ -58,12 +67,23 @@ def build_adapters() -> dict[str, ProviderAdapter]:
     from reverso.protocols.adapters.copilot import CopilotAdapter
     from reverso.protocols.adapters.deepseek import DeepSeekAdapter
 
-    return {
+    adapters: dict[str, ProviderAdapter] = {
         "claude": ClaudeAdapter(),
         "copilot": CopilotAdapter(),
         "auggie": AuggieAdapter(),
         "deepseek": DeepSeekAdapter(),
     }
+    if codex_direct_backend_enabled():
+        from reverso.protocols.adapters.codex import CodexOAuthAuth
+        from reverso.protocols.adapters.codex_direct import (
+            CodexDirectAdapter,
+            HttpCodexDirectUpstream,
+        )
+
+        adapters["codex-direct"] = CodexDirectAdapter(
+            auth=CodexOAuthAuth(), upstream=HttpCodexDirectUpstream()
+        )
+    return adapters
 
 
 def _headroom_usage_summary() -> dict[str, Any]:

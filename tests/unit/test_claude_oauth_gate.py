@@ -614,6 +614,31 @@ def test_stream_runner_never_consumes_env_oauth_token(
         asyncio.run(_drain())
 
 
+def test_cli_model_arg_translates_versioned_claude_names_to_cli_aliases() -> None:
+    """Lock the versioned -> CLI-alias translation in ClaudeAdapter.
+
+    The local `claude` CLI rejects model names like "claude-haiku-4-6" and only
+    accepts the short aliases ("haiku", "sonnet", "opus"). Without this
+    translation the spawned CLI exits rc=1, which the bounded CLI spine
+    re-raises as ClaudeAuthError (a misclassification — the real cause is
+    that the CLI rejected the model, not that auth failed).
+    """
+    from reverso.protocols.adapters.claude import _cli_model_arg
+
+    # All three known versioned names collapse to their CLI alias.
+    assert _cli_model_arg("claude-opus-4-8") == "opus"
+    assert _cli_model_arg("claude-sonnet-4-6") == "sonnet"
+    assert _cli_model_arg("claude-haiku-4-6") == "haiku"
+    # Short aliases pass through unchanged.
+    assert _cli_model_arg("opus") == "opus"
+    assert _cli_model_arg("sonnet") == "sonnet"
+    assert _cli_model_arg("haiku") == "haiku"
+    # Unknown names pass through (future Claude CLI versions may accept new IDs).
+    assert _cli_model_arg("claude-some-future-id") == "claude-some-future-id"
+    # Falsy input passes through.
+    assert _cli_model_arg("") == ""
+
+
 def test_default_claude_runner_honors_profile_workspace_context(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
@@ -638,6 +663,8 @@ def test_default_claude_runner_honors_profile_workspace_context(
 
     token = CURRENT_PROFILE_WORKSPACE.set(str(workspace))
     try:
+        # The Claude CLI rejects versioned names; the adapter translates them
+        # to the short alias before the CLI argv.
         assert adapter._run_claude_cli("prompt", "claude-opus-4-8") == "ok"
     finally:
         CURRENT_PROFILE_WORKSPACE.reset(token)
@@ -647,7 +674,7 @@ def test_default_claude_runner_honors_profile_workspace_context(
         "claude",
         "--print",
         "--model",
-        "claude-opus-4-8",
+        "opus",
         "--",
         "prompt",
     ]
@@ -731,6 +758,7 @@ def test_default_claude_stream_runner_honors_profile_workspace_context(
         finally:
             CURRENT_PROFILE_WORKSPACE.reset(token)
 
+    # The CLI argv must carry the alias ("opus"), not the versioned name.
     assert asyncio.run(_drain()) == ["ok"]
     assert seen["cwd"] == str(workspace)
     assert seen["argv"] == [
@@ -741,7 +769,7 @@ def test_default_claude_stream_runner_honors_profile_workspace_context(
         "--verbose",
         "--include-partial-messages",
         "--model",
-        "claude-opus-4-8",
+        "opus",
         "--",
         "prompt",
     ]

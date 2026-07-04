@@ -5,6 +5,7 @@ from __future__ import annotations
 from reverso.protocols.model_exposure import (
     CODEX_BUILTIN_MODELS,
     CODEX_DEFAULT_MODEL,
+    CODEX_DIRECT_BACKEND_ENV,
     CODEX_FRONTIER_MODELS,
     DIRECT_CODEX_PROFILE_SPECS,
     REVERSO_ROUTED_CODEX_PROFILE_PREFIXES,
@@ -37,6 +38,7 @@ def test_selector_model_id_prefixes_only_collision_prone_providers() -> None:
     assert selector_model_id("copilot", "gpt-5.5") == "copilot/gpt-5.5"
     assert selector_model_id("auggie", "gpt-5.5") == "auggie/gpt-5.5"
     assert selector_model_id("agy", "gpt-5.5") == "agy/gpt-5.5"
+    assert selector_model_id("codex-direct", "gpt-5.5") == "codex-direct/gpt-5.5"
     assert selector_model_id("codex", "gpt-5.5") == "gpt-5.5"
     assert selector_model_id("deepseek", "deepseek-v4-pro") == "deepseek-v4-pro"
     assert selector_model_id("minimax", "MiniMax-M3") == "MiniMax-M3"
@@ -47,6 +49,10 @@ def test_claude_code_selector_uses_cli_safe_prefixes_for_conflicts() -> None:
     assert claude_code_selector_model_id("copilot", "opus-4-8") == "copilot-opus-4-8"
     assert claude_code_selector_model_id("auggie", "prism-a") == "auggie-prism-a"
     assert claude_code_selector_model_id("agy", "nova") == "agy-nova"
+    assert (
+        claude_code_selector_model_id("codex-direct", "gpt-5.5")
+        == "codex-direct-gpt-5.5"
+    )
     assert claude_code_selector_model_id("claude", "sonnet") == "sonnet"
     assert (
         claude_code_selector_model_id("claude", "claude-opus-4-5") == "claude-opus-4-5"
@@ -71,14 +77,22 @@ def test_codex_builtin_model_backends_share_surface_mapping() -> None:
 
 
 def test_model_exposure_owns_codex_profile_sync_prefixes() -> None:
-    assert reverso_routed_codex_profile_prefixes() == (
+    assert reverso_routed_codex_profile_prefixes({}) == (
         "claude",
         "copilot",
         "auggie",
         "deepseek",
     )
     assert (
-        reverso_routed_codex_profile_prefixes() == REVERSO_ROUTED_CODEX_PROFILE_PREFIXES
+        reverso_routed_codex_profile_prefixes({})
+        == REVERSO_ROUTED_CODEX_PROFILE_PREFIXES
+    )
+    assert reverso_routed_codex_profile_prefixes({CODEX_DIRECT_BACKEND_ENV: "1"}) == (
+        "claude",
+        "copilot",
+        "auggie",
+        "deepseek",
+        "codex-direct",
     )
     direct = {spec.prefix: spec for spec in direct_codex_profile_specs()}
     assert direct_codex_profile_specs() == DIRECT_CODEX_PROFILE_SPECS

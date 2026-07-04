@@ -14,6 +14,7 @@ Anthropic error) requires the CodexAdapter and is DEFERRED to G003 (see the plan
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -201,6 +202,22 @@ def test_token_material_never_appears_in_resolution() -> None:
         assert secret not in serialized
     # The JWT access token itself must not be echoed back either.
     assert "synthetic-signature-not-secret" not in serialized
+
+
+def test_bearer_token_returns_access_token_only_through_explicit_method() -> None:
+    """Direct-backend callers can request the bearer while resolve() stays secret-free."""
+    exp_seconds = _future_seconds()
+    auth = CodexOAuthAuth(
+        credentials_path=None,
+        keychain_reader=lambda: _artifact(exp_seconds=exp_seconds),
+    )
+
+    assert asyncio.run(auth.bearer_token()) == _jwt(exp_seconds)
+
+    serialized = json.dumps(auth.resolve().details)
+    assert _FAKE_ACCESS_SECRET not in serialized
+    assert _FAKE_REFRESH_SECRET not in serialized
+    assert _FAKE_ID_SECRET not in serialized
 
 
 def test_token_material_never_logged_on_unresolved_gate(caplog, tmp_path) -> None:
