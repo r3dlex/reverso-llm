@@ -2,7 +2,7 @@
 
 - **Traceability node:** `issue:reverso-root:copilot-picker-completeness`
 - **Spec:** [`docs/specifications/ACTIVE/copilot-picker-completeness.md`](../../docs/specifications/ACTIVE/copilot-picker-completeness.md)
-- **State:** `in-progress` (S1 staged in working tree; S2 + S3 follow-up)
+- **State:** `shipped` (S1, S2, S3 all merged to main on 2026-07-05; PRs #75, #76, #77)
 - **Owner:** unassigned
 - **Spans repos:** `r3dlex/reverso-llm` (source + tests)
 - **Surface scope:** standalone (reverso only)
@@ -32,9 +32,9 @@ A second-order symptom: an OMX session in a different repo (`rib-workspace`) pro
 
 | Slice | Title | Type | Status |
 |---|---|---|---|
-| S1 | `fix(codex-sync): include copilot chat-route models in picker` | code | in working tree, ready to commit |
-| S2 | `test(codex-sync): live-pinning test for copilot picker completeness` | test | follow-up |
-| S3 | `docs: surface-separation invariant for per-provider catalogs` | docs | follow-up |
+| S1 | `fix(codex-sync): include copilot chat-route models in picker` | code | shipped (PR #75, commit 154ee215) |
+| S2 | `test(codex-sync): live-pinning test for copilot picker completeness` | test | shipped (PR #76, commit 9f0af4e8) |
+| S3 | `docs: surface-separation invariant for per-provider catalogs` | docs | shipped (PR #77, commit 410eb260) |
 
 ## Open questions
 
@@ -44,3 +44,15 @@ A second-order symptom: an OMX session in a different repo (`rib-workspace`) pro
 
 - **What would have prevented this?** An integration test that pins the picker against the live `/copilot/v1/models` (covered by S2).
 - **Architectural hand-off:** function name `codex_responses_compatible_model_ids` is now misleading; rename to `codex_picker_visible_model_ids` is the right follow-up but was explicitly excluded from this scope.
+
+## Shipped via
+
+- PR #75 -- S1 source fix (squash merge, commit 154ee215)
+- PR #76 -- S2 live-pinning integration test (squash merge, commit 9f0af4e8)
+- PR #77 -- S3 surface-separation doc (squash merge, commit 410eb260)
+
+All three ran with peer-review (architect + code-reviewer lanes), 631/631
+unit tests green at every gate, the live-pinning test verified 2/2 pass
+against the live reverso gateway, and all 5 GitHub Actions checks
+(prek, prek self-hosted, test 3.12, test gate, test self-hosted) were
+green on main.

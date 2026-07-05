@@ -249,7 +249,7 @@
       "id": "plan:reverso-root:northstar-copilot-picker-completeness",
       "type": "plan",
       "title": "northstar sliced plan: copilot-picker-completeness",
-      "status": "active",
+      "status": "complete",
       "repo_id": "reverso-root",
       "path": ".ai/handoff/northstar-copilot-picker-completeness.md",
       "backlinks": []
@@ -258,7 +258,7 @@
       "id": "handoff:reverso-root:northstar-copilot-picker-completeness",
       "type": "handoff",
       "title": "northstar A->B handoff: copilot-picker-completeness",
-      "status": "active",
+      "status": "complete",
       "repo_id": "reverso-root",
       "path": ".ai/handoff/northstar-copilot-picker-completeness.md",
       "backlinks": [

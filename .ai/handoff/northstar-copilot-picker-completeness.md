@@ -1,5 +1,8 @@
 # Northstar A→B Handoff: copilot-picker-completeness
 
+Status: complete
+Completion: Implemented by PRs #75 (S1), #76 (S2), and #77 (S3).
+
 - Spec: `docs/specifications/ACTIVE/copilot-picker-completeness.md`
 - Sliced goals: see the `plan:` traceability node and `ralplan` output for this slug.
 - Issue: .ai/work-intake/copilot-picker-completeness.md
