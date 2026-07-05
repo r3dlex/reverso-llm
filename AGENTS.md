@@ -31,6 +31,7 @@ All design decisions live in `docs/`. Read before writing code.
 | `docs/02-prd.md` | Product requirements: all functional requirements by area |
 | `docs/03-architecture.md` | Component architecture, runtime topology, request flow, failure modes |
 | `docs/04-mvp.md` | Phased implementation plan: Phase 0 (spike) through Phase 4 (hardening) |
+| `docs/learning/copilot-picker-surface-separation.md` | Surface-separation invariant for per-provider Codex catalogs (learned during the `copilot-picker-completeness` handoff) |
 
 ## Stack
 
