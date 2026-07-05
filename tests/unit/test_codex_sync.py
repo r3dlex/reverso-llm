@@ -133,7 +133,10 @@ def _prior_clutter_config_text() -> str:
     )
 
 
-def test_fetch_all_keeps_only_upstream_accepted_copilot_responses_models() -> None:
+def test_fetch_all_keeps_copilot_served_models_via_either_route() -> None:
+    # Copilot serves gpt-* on /responses AND claude/gemini on /chat
+    # (ADR 0011, commit 4507019). Both should be kept; injection and
+    # fullwidth payloads must still be rejected.
     payload = {
         "copilot": [
             "claude-fable-5",
@@ -156,8 +159,13 @@ def test_fetch_all_keeps_only_upstream_accepted_copilot_responses_models() -> No
         codex_sync.ProviderModels(
             "copilot",
             (
+                "claude-fable-5",
                 "gpt-4o",
                 "gpt-5.5",
+                "claude-opus-4.8",
+                "claude-opus-4.7",
+                "claude-sonnet-4.6",
+                "gemini-2.5-pro",
                 "gpt-5.4-mini",
                 "gpt-5-mini",
             ),
