@@ -244,6 +244,26 @@
       "backlinks": [
         "handoff:reverso-root:northstar-openai-pass-through-oauth-api-key"
       ]
+    },
+    {
+      "id": "plan:reverso-root:northstar-copilot-picker-completeness",
+      "type": "plan",
+      "title": "northstar sliced plan: copilot-picker-completeness",
+      "status": "active",
+      "repo_id": "reverso-root",
+      "path": ".ai/handoff/northstar-copilot-picker-completeness.md",
+      "backlinks": []
+    },
+    {
+      "id": "handoff:reverso-root:northstar-copilot-picker-completeness",
+      "type": "handoff",
+      "title": "northstar A->B handoff: copilot-picker-completeness",
+      "status": "active",
+      "repo_id": "reverso-root",
+      "path": ".ai/handoff/northstar-copilot-picker-completeness.md",
+      "backlinks": [
+        "plan:reverso-root:northstar-copilot-picker-completeness"
+      ]
     }
   ],
   "edges": [
@@ -365,6 +385,13 @@
       "relation": "implemented-by",
       "created_by": "diagnose-post-merge-hygiene",
       "evidence_path": "https://github.com/r3dlex/reverso-llm/pull/73"
+    },
+    {
+      "source": "plan:reverso-root:northstar-copilot-picker-completeness",
+      "target": "handoff:reverso-root:northstar-copilot-picker-completeness",
+      "relation": "summarized-by",
+      "created_by": "northstar",
+      "evidence_path": ".ai/handoff/northstar-copilot-picker-completeness.md"
     }
   ],
   "coverage": {

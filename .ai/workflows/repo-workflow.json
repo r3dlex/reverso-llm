@@ -105,6 +105,11 @@
       "enabled_when": "northstar_handoff_present",
       "status": "complete",
       "completed_via": "PR #73"
+    },
+    {
+      "id": "northstar-handoff-copilot-picker-completeness",
+      "enabled_when": "northstar_handoff_present",
+      "status": "available"
     }
   ],
   "handoff": ".ai/handoff/init-ai-repo-handoff.md",
