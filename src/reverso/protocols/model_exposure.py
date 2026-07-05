@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
-from reverso.protocols.copilot_models import is_copilot_responses_model_id
+from reverso.protocols.copilot_models import copilot_model_route
 
 CODEX_DEFAULT_MODEL = "gpt-5.5"
 CODEX_BUILTIN_MODELS: tuple[str, ...] = (
@@ -138,11 +138,18 @@ def codex_profile_default_model(prefix: str, models: tuple[str, ...]) -> str:
 def codex_responses_compatible_model_ids(
     prefix: str, model_ids: tuple[str, ...]
 ) -> tuple[str, ...]:
-    """Filter live model ids to the subset Codex can call through Responses."""
+    """Return model ids the Codex picker should expose for ``prefix``.
+
+    For ``copilot``, GitHub Copilot serves ``gpt-*`` on /responses and
+    ``claude-*``/``gemini-*`` on /chat/completions (ADR 0011, commit
+    4507019). ``copilot_model_route`` is the single authority for which ids
+    Copilot serves, so we accept any model with a known route. For other
+    prefixes, all upstream models are exposed unchanged.
+    """
     if prefix != "copilot":
         return model_ids
     return tuple(
-        model_id for model_id in model_ids if is_copilot_responses_model_id(model_id)
+        model_id for model_id in model_ids if copilot_model_route(model_id) is not None
     )
 
 

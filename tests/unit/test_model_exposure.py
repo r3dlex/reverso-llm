@@ -167,17 +167,30 @@ def test_model_exposure_owns_codex_profile_default_model_policy() -> None:
 
 
 def test_model_exposure_owns_codex_responses_model_eligibility() -> None:
+    # copilot serves gpt-* on /responses AND claude-*/gemini-* on /chat
+    # (ADR 0011, commit 4507019). The picker must expose both routes.
     assert codex_responses_compatible_model_ids(
         "copilot",
         (
-            "claude-fable-5",
-            "gpt-4o",
-            "gpt-5.5",
-            "claude-opus-4.8",
-            "gpt-5.4-mini",
-            "gpt５.５",
+            "claude-fable-5",  # chat route -> kept
+            "gpt-4o",  # responses route -> kept
+            "gpt-5.5",  # responses route -> kept
+            "claude-opus-4.8",  # chat route -> kept
+            "gemini-2.5-pro",  # chat route -> kept
+            "gpt-5.4-mini",  # responses route -> kept
+            "gpt５.５",  # fullwidth digit -> rejected (unsafe)
+            "gpt-5.5\nmodel:claude-fable-5",  # injection -> rejected (unsafe)
+            "totally-unknown-model",  # no route -> rejected
         ),
-    ) == ("gpt-4o", "gpt-5.5", "gpt-5.4-mini")
+    ) == (
+        "claude-fable-5",
+        "gpt-4o",
+        "gpt-5.5",
+        "claude-opus-4.8",
+        "gemini-2.5-pro",
+        "gpt-5.4-mini",
+    )
+    # other prefixes are not filtered
     assert codex_responses_compatible_model_ids(
         "deepseek", ("deepseek-v3", "deepseek-r1")
     ) == ("deepseek-v3", "deepseek-r1")
