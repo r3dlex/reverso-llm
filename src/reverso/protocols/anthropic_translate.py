@@ -8,9 +8,15 @@ Responses contract) and performs no ASGI or network work, so it is reused by bot
 the non-streaming handler (G003) and the SSE streaming mapper (G004) and is
 exercised directly by the unit tests.
 
-This is the NON-STREAMING translation core only. Capability gating / feature
-rejection (G005), count_tokens (G006), and /v1/models (G006) are NOT handled here;
-image blocks are passed through (gating is G005, not a translation concern).
+This is the NON-STREAMING translation core plus the consolidated request
+PREPARATION seam. ``prepare_anthropic_request`` composes the whole pre-dispatch
+pipeline in today's exact order -- strip degradable features, per-backend
+capability gating (G005, imported from anthropic_feature_gate, which stays the
+single capability seam), then the Anthropic -> Responses translation -- so the
+"stripped payload is what the gate and the adapter both observe" invariant is
+owned here instead of by inline ordering in the ASGI app. count_tokens (G006)
+and /v1/models (G006) are NOT handled here; the bare translation function keeps
+passing image blocks through (gating happens in prepare, not in translation).
 
 Request mapping (anthropic_request_to_responses):
   - ``model`` -> ResponsesRequest.model.
@@ -47,6 +53,10 @@ import json
 from typing import Any
 
 from reverso.protocols.adapter import ResponseEnvelope, ResponsesRequest
+from reverso.protocols.anthropic_feature_gate import (
+    gate_anthropic_features,
+    strip_degradable_features,
+)
 
 # Responses request fields the translation sets directly; everything else from an
 # Anthropic request that the surface still wants to forward rides in ``extra``.
@@ -55,6 +65,38 @@ _EXTRA_PASSTHROUGH = ("max_tokens", "temperature", "stop_sequences")
 # Anthropic stop_reason values that map straight through; an unknown or absent
 # Responses status falls back to "end_turn".
 _DEFAULT_STOP_REASON = "end_turn"
+
+
+def prepare_anthropic_request(
+    payload: dict[str, Any], backend: str
+) -> tuple[ResponsesRequest, dict[str, Any]]:
+    """Prepare an Anthropic Messages payload for dispatch to ``backend``.
+
+    Consolidates the pre-dispatch pipeline the ASGI app previously orchestrated
+    inline, in the exact same order:
+
+      1. ``strip_degradable_features(payload)`` -- degrades cache_control and
+         extended thinking IN PLACE, so the stripped payload is what the gate
+         and the downstream adapter both observe.
+      2. ``gate_anthropic_features(payload, backend)`` -- raises
+         ``AnthropicFeatureRejected`` for any remaining feature the backend
+         classifies as unsupported (the caller maps it to a 400).
+      3. ``anthropic_request_to_responses(payload)`` -- the translation onto
+         the frozen Responses contract.
+
+    Returns ``(request, payload)``: the translated ``ResponsesRequest`` plus
+    the stripped payload (the SAME dict object, mutated in place). The payload
+    is returned so the caller keeps an explicit handle on exactly what was
+    translated -- e.g. for the stream-flag dispatch check or any input_items
+    recording -- without re-deriving it.
+
+    Stateless and pure of ASGI/network concerns (ADR 0006 D1): no I/O, no
+    stored state; the only side effect is the documented in-place strip.
+    Compression and dispatch remain the app's job.
+    """
+    strip_degradable_features(payload)
+    gate_anthropic_features(payload, backend)
+    return anthropic_request_to_responses(payload), payload
 
 
 def anthropic_request_to_responses(payload: dict[str, Any]) -> ResponsesRequest:

@@ -264,6 +264,26 @@
       "backlinks": [
         "plan:reverso-root:northstar-copilot-picker-completeness"
       ]
+    },
+    {
+      "id": "plan:reverso-root:northstar-anthropic-prepare-request-seam",
+      "type": "plan",
+      "title": "northstar sliced plan: anthropic-prepare-request-seam",
+      "status": "active",
+      "repo_id": "reverso-root",
+      "path": ".ai/handoff/northstar-anthropic-prepare-request-seam.md",
+      "backlinks": []
+    },
+    {
+      "id": "handoff:reverso-root:northstar-anthropic-prepare-request-seam",
+      "type": "handoff",
+      "title": "northstar A->B handoff: anthropic-prepare-request-seam",
+      "status": "active",
+      "repo_id": "reverso-root",
+      "path": ".ai/handoff/northstar-anthropic-prepare-request-seam.md",
+      "backlinks": [
+        "plan:reverso-root:northstar-anthropic-prepare-request-seam"
+      ]
     }
   ],
   "edges": [
@@ -392,6 +412,13 @@
       "relation": "summarized-by",
       "created_by": "northstar",
       "evidence_path": ".ai/handoff/northstar-copilot-picker-completeness.md"
+    },
+    {
+      "source": "plan:reverso-root:northstar-anthropic-prepare-request-seam",
+      "target": "handoff:reverso-root:northstar-anthropic-prepare-request-seam",
+      "relation": "summarized-by",
+      "created_by": "northstar",
+      "evidence_path": ".ai/handoff/northstar-anthropic-prepare-request-seam.md"
     }
   ],
   "coverage": {
