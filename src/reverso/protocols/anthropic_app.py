@@ -51,15 +51,12 @@ import re
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, cast
 
-from reverso.protocols.adapter import ProviderAdapter
-from reverso.protocols.anthropic_feature_gate import (
-    AnthropicFeatureRejected,
-    gate_anthropic_features,
-    strip_degradable_features,
-)
+from reverso.protocols.adapter import ProviderAdapter, ResponsesRequest
+from reverso.protocols.anthropic_feature_gate import AnthropicFeatureRejected
 from reverso.protocols.anthropic_stream import responses_sse_to_anthropic
 from reverso.protocols.anthropic_translate import (
     anthropic_request_to_responses,
+    prepare_anthropic_request,
     responses_envelope_to_anthropic,
 )
 from reverso.protocols.headroom_compression import compress_responses_request
@@ -528,10 +525,11 @@ class AnthropicMessagesApp:
         # apply per-backend capability gating. Gating rejects feature x backend
         # cells that cannot be SERVED; sizing a prompt does not serve anything, so
         # a client may legitimately size a request before deciding to send it.
-        # NOTE: this returns BEFORE strip_degradable_features below, so the payload
-        # here is intentionally un-stripped; that is safe ONLY because count_tokens
-        # does not gate (no 400 risk) and the translator drops cache_control anyway.
-        # If gating is ever added here, move the strip above this branch.
+        # NOTE: this returns BEFORE prepare_anthropic_request below (which strips
+        # degradable features first), so the payload here is intentionally
+        # un-stripped; that is safe ONLY because count_tokens does not gate (no
+        # 400 risk) and the translator drops cache_control anyway. If gating is
+        # ever added here, route this branch through the prepare seam instead.
         if route.kind == _KIND_COUNT_TOKENS:
             if payload is None:
                 await _send_error(
@@ -560,19 +558,18 @@ class AnthropicMessagesApp:
             )
             return
 
-        # Per-backend capability gating (ADR 0006 capability ceiling, G005). Runs
-        # AFTER backend resolution and BEFORE the adapter is dispatched, on BOTH
-        # the streaming and non-streaming paths: a streaming request that requests
-        # an unsupported feature is rejected here with a 400 JSON body, before any
+        # Consolidated request preparation (ADR 0006 D1): strip degradable
+        # features, per-backend capability gating (ADR 0006 capability ceiling,
+        # G005), and the Anthropic -> Responses translation all live in the one
+        # pure seam anthropic_translate.prepare_anthropic_request, in that exact
+        # order (the stripped payload is what the gate and the downstream adapter
+        # both observe; semantic features stay hard-gated). Runs AFTER backend
+        # resolution and BEFORE the adapter is dispatched, on BOTH the streaming
+        # and non-streaming paths: a streaming request that requests an
+        # unsupported feature is rejected here with a 400 JSON body, before any
         # text/event-stream header is committed (never a 200 event-stream).
-        # Degrade transparently-droppable features BEFORE gating and translation:
-        # cache_control is a prompt-caching optimization no backend can honor, so it
-        # is stripped (not 400'd) here, keeping clients like Claude Code that attach
-        # it to every request usable. The stripped payload is what the gate and the
-        # downstream adapter both observe. Semantic features stay hard-gated below.
-        strip_degradable_features(payload)
         try:
-            gate_anthropic_features(payload, backend)
+            request, payload = prepare_anthropic_request(payload, backend)
         except AnthropicFeatureRejected as rejected:
             # Use str(rejected) so the 400 message is rendered by the single
             # source in AnthropicFeatureRejected.__init__; the app never
@@ -603,31 +600,31 @@ class AnthropicMessagesApp:
 
         if payload.get("stream") is True:
             await self._handle_streaming(
-                backend, payload, send, anthropic_version=anthropic_version
+                backend, request, send, anthropic_version=anthropic_version
             )
             return
 
         await self._handle_nonstreaming(
-            backend, payload, send, anthropic_version=anthropic_version
+            backend, request, send, anthropic_version=anthropic_version
         )
 
     async def _handle_nonstreaming(
         self,
         backend: str,
-        payload: dict[str, Any],
+        request: ResponsesRequest,
         send: Send,
         *,
         anthropic_version: str,
     ) -> None:
-        """Translate, dispatch, and map back a non-streaming Messages request.
+        """Compress, dispatch, and map back a non-streaming Messages request.
 
-        The payload is mapped to a ResponsesRequest, dispatched to the resolved
+        ``request`` is the ResponsesRequest already prepared (stripped, gated,
+        translated) by prepare_anthropic_request. It is dispatched to the resolved
         adapter's create_response, and the ResponseEnvelope is mapped back to an
         Anthropic message body (HTTP 200). A backend failure becomes a secret-free
         502 Anthropic error envelope; the request is never silently dropped.
         """
         adapter = self._adapters[backend]
-        request = anthropic_request_to_responses(payload)
         compression_outcome = await compress_responses_request(request)
         dispatch_request = compression_outcome.request
         try:
@@ -654,14 +651,15 @@ class AnthropicMessagesApp:
     async def _handle_streaming(
         self,
         backend: str,
-        payload: dict[str, Any],
+        request: ResponsesRequest,
         send: Send,
         *,
         anthropic_version: str,
     ) -> None:
         """Stream an Anthropic SSE response over the pure anthropic_stream mapper.
 
-        The payload is translated to a ResponsesRequest, the resolved adapter's
+        ``request`` is the ResponsesRequest already prepared (stripped, gated,
+        translated) by prepare_anthropic_request. The resolved adapter's
         stream_response is piped through responses_sse_to_anthropic, and each
         Anthropic event is written as ``event: <type>\\ndata: <json>\\n\\n``.
 
@@ -679,7 +677,6 @@ class AnthropicMessagesApp:
             only safe channel (emitted by the mapper itself).
         """
         adapter = self._adapters[backend]
-        request = anthropic_request_to_responses(payload)
         compression_outcome = await compress_responses_request(request)
         dispatch_request = compression_outcome.request
         message_id = new_message_id()
