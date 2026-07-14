@@ -137,7 +137,7 @@ Security boundaries:
 
 - Claude and Codex subscription credentials remain in their CLIs' normal local credential stores.
 - Auggie runs in an ephemeral sandbox workspace because a global indexing hard-disable has not been proven. Do not treat indexing as disabled.
-- Gateway and usage metrics do not intentionally store prompt or compressed text, but provider CLIs and upstream services retain their own behavior and terms.
+- Prompt content may be retained in process memory for response chaining. Reverso does not intentionally persist prompt or compressed text to disk or metrics, but provider CLIs and upstream services retain their own behavior and terms.
 
 ## Update, stop, and uninstall
 
@@ -204,11 +204,10 @@ The bundled `./scripts/smoke.sh` checks readiness, discovery, usage, and a live 
 Install the development environment and run the local quality gates:
 
 ```bash
-uv sync --frozen
+uv sync --extra dev
 uv run pytest tests/unit -q
 uv run pytest tests/integration -q
-uv run ruff check src tests
-uv run ruff format --check src tests
+uvx prek run --all-files
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. Use [GitHub Issues](https://github.com/r3dlex/reverso-llm/issues) for reproducible bugs and focused proposals, and [GitHub Pull Requests](https://github.com/r3dlex/reverso-llm/pulls) for reviewed changes. Do not include credentials, prompt content, local config, or logs containing sensitive data.
