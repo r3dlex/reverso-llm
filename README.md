@@ -1,294 +1,220 @@
 ---
 type: readme
 project: reverso
-last_updated: 2026-05-27
+last_updated: 2026-07-14
 ---
 
 # Reverso
 
-A subscription-backed local LLM gateway. Runs on `127.0.0.1:64946`. Serves four first-party, path-prefixed Responses endpoints on that single port: `/claude/v1`, `/copilot/v1`, `/auggie/v1`, and `/deepseek/v1`. Claude, Copilot, and Auggie are CLI subprocess workers; DeepSeek is a first-party adapter that calls the DeepSeek API directly (it is no longer routed through LiteLLM). All four can be exposed to Codex through Reverso provider profiles. MiniMax is direct Codex-only and is not routed through Reverso.
+Reverso is a personal, local LLM gateway for using provider subscriptions and credentials through standard HTTP clients. It binds only to `127.0.0.1:64946` and serves OpenAI Responses-compatible provider routes plus an inbound Anthropic Messages surface for Claude Code and the Claude Agent SDK.
 
-The composition root (`reverso.proxy.compose`) owns port 64946: it routes the four first-party prefixes to the Responses gateway and delegates every other path to the legacy LiteLLM stack as a fallthrough. See `docs/architecture/adr/0003-single-port-composition-auggie-deepseek.md`.
+Claude runs through the authenticated Claude Code CLI, Copilot forwards through the logged-in GitHub Copilot surface, Auggie runs through its CLI, and DeepSeek uses its API directly. A first-party gateway owns these routes; LiteLLM remains only as fallthrough for paths Reverso does not own. MiniMax is direct Codex-only and never routes through Reverso.
 
-Reverso also serves an inbound Anthropic Messages API surface (`/v1/messages`) on the same port for clients like Claude Code and the Claude Agent SDK pointed at Reverso via `ANTHROPIC_BASE_URL`. It is inbound only: Reverso does not call `api.anthropic.com`. Messages requests are model-routed by default to the claude, copilot, deepseek, and auggie backends through a single first-party authority (with optional per-profile prefixes such as `/deepseek/v1/messages`); the claude backend is served first-party via the local `claude` CLI under subscription OAuth (ADR 0009, superseding ADR 0006 D2). The spawned CLI has `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_API_KEY` scrubbed from its environment so it reaches `api.anthropic.com` directly and never loops back into Reverso. See `docs/architecture/adr/0009-claude-on-anthropic-surface.md`.
+> Reverso is for one user on one macOS machine. It has no inbound authentication because loopback binding is its security boundary. Do not expose port `64946` to a network.
 
-Milestone 2 also serves gpt-* models (gpt-5.5, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex-spark, gpt-4.1) on this Anthropic surface through a first-party Codex backend. The Codex backend invokes the local Codex CLI under the ChatGPT/Codex OAuth subscription (not an OpenAI API key) and converts its Responses-shaped output to Anthropic Messages by reusing the Milestone 1 translation layer. It is Anthropic-surface-only, the symmetric mirror of the claude backend being Responses-surface-only; gpt-* is never reachable on the Responses surface. See `docs/architecture/adr/0007-codex-anthropic-surface-via-chatgpt-oauth.md`.
+## Recommended path: Claude from Codex
 
-**Personal use only.** Single user, single machine. Not for sharing or resale.
-
-See `docs/01-brd.md` for the full rationale.
-
----
-
-## Quick start
+This path uses an authenticated Claude subscription, Reverso's `/claude/v1` Responses endpoint, and a managed Codex profile. The observable success result is `REVERSO_OK` from a real model call.
 
 ### Prerequisites
 
-- macOS (Apple Silicon or Intel)
-- `uv` installed: `curl -LsSf https://astral.sh/uv/install.sh | sh`
-- Claude Code CLI installed: `npm install -g @anthropic-ai/claude-code`
-- Codex CLI installed: `npm install -g @openai/codex`
-- Both CLIs authenticated under your subscriptions
+- macOS
+- Git and `curl`
+- Python 3.11 or newer and [`uv`](https://docs.astral.sh/uv/)
+- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) with an active subscription login
+- [Codex CLI](https://github.com/openai/codex) for the recommended client path
 
-### 1. Configure Keychain secrets
-
-Reverso reads the DeepSeek API key from macOS Keychain at startup. Store it once:
+Confirm the CLIs and authenticate Claude before installing Reverso:
 
 ```bash
-./scripts/keychain-set.sh DEEPSEEK_API_KEY "sk-..."
+uv --version
+claude --version
+claude auth status || claude auth login
+codex --version
 ```
 
-To verify the stored secret:
-```bash
-security find-generic-password -s reverso -a DEEPSEEK_API_KEY -w
-```
-
-MiniMax is configured directly in Codex and reads `MINIMAX_ANTHROPIC_API_KEY` from your local shell exports, not from Reverso.
-
-Existing local Codex MiniMax profiles that pointed at Reverso must be replaced or archived. MiniMax profiles should use `model_provider = "minimax"` and `model = "MiniMax-M3"`.
-
-### 2. Install and load the LaunchAgent
+### Install and start
 
 ```bash
+git clone https://github.com/r3dlex/reverso-llm.git
+cd reverso-llm
+uv sync --frozen
 ./scripts/install-launchagents.sh
 ```
 
-This expands the plist template with your local paths, creates `~/Library/Logs/reverso/`, and loads the agent via `launchctl`. The gateway starts automatically at login.
+The installer writes and loads two user LaunchAgents, then stores logs under `~/Library/Logs/reverso/`. It is safe to rerun after an update.
 
-To verify it is running:
-```bash
-curl http://127.0.0.1:64946/health/readiness
-```
-
-### 3. Configure Codex CLI providers
-
-Add the Reverso provider endpoints to `~/.codex/config.toml`. Each is a first-party Responses prefix on the single port `127.0.0.1:64946`:
-
-```toml
-[model_providers.reverso_deepseek]
-name = "Reverso DeepSeek profile"
-base_url = "http://127.0.0.1:64946/deepseek/v1"
-wire_api = "responses"
-
-[model_providers.reverso_claude]
-name = "Reverso Claude profile"
-base_url = "http://127.0.0.1:64946/claude/v1"
-wire_api = "responses"
-
-[model_providers.reverso_auggie]
-name = "Reverso Auggie profile"
-base_url = "http://127.0.0.1:64946/auggie/v1"
-wire_api = "responses"
-```
-
-MiniMax is direct Codex-only. Configure it as a direct Codex provider instead of a Reverso profile:
-
-```toml
-[model_providers.minimax]
-name = "MiniMax"
-base_url = "https://api.minimax.io/v1"
-env_key = "MINIMAX_ANTHROPIC_API_KEY"
-wire_api = "responses"
-```
-
-Example direct `~/.codex/minimax.config.toml`:
-
-```toml
-model = "MiniMax-M3"
-model_provider = "minimax"
-model_context_window = 512000
-```
-
-`reverso-codex-sync` writes one provider-name profile file per Reverso-routed
-provider beside `~/.codex/config.toml`: `claude.config.toml`,
-`codex-direct.config.toml`, `copilot.config.toml`, `auggie.config.toml`, and
-`deepseek.config.toml`. Each file pins the Reverso provider and points Codex at a
-provider-scoped catalog. `codex-direct` is local-loopback default-on; set
-`REVERSO_CODEX_DIRECT_BACKEND=0` (or `false`, `no`, `off`) to hide it. Reverso profile files keep GPT-level model names where those names are the
-Codex-facing contract for a provider.
-
-Example generated `~/.codex/codex-direct.config.toml`:
-
-```toml
-model = "gpt-5.5"
-model_provider = "reverso_codex-direct"
-model_catalog_json = "/Users/you/.codex/reverso/codex-direct.json"
-```
-
-Example generated `~/.codex/deepseek.config.toml`:
-
-```toml
-model = "deepseek-v4-pro"
-model_provider = "reverso_deepseek"
-model_catalog_json = "/Users/you/.codex/reverso/deepseek.json"
-```
-
-Example generated `~/.codex/claude.config.toml`:
-
-```toml
-model = "claude-fable-5"
-model_provider = "reverso_claude"
-model_catalog_json = "/Users/you/.codex/reverso/claude.json"
-```
-
-The DeepSeek and Claude adapters still accept GPT-level names because Reverso
-resolves them to the concrete provider model id for that prefix. The generated
-provider-name profile files may pin real provider model ids so the provider
-catalog remains scoped to that profile. On the first-party `/deepseek/v1` path
-the DeepSeek adapter performs this resolution itself (it no longer goes through
-the legacy `ProfileRoutingMiddleware`), so existing hand-written `model =
-"gpt-5.5"` profiles keep working unchanged.
-
-Auggie does not use GPT-level aliases. Its models come from `auggie model list`, so set the Auggie profile `model` to a real Auggie model id. Discover the available ids with `curl http://127.0.0.1:64946/auggie/v1/models`. Example `~/.codex/auggie.config.toml`:
-
-```toml
-model_provider = "reverso_auggie"
-model = "<id from auggie model list>"
-```
-
-Auggie indexing caveat: the Phase 1 spike could not prove a global per-invocation hard-disable for `auggie --print` indexing, so Reverso defaults every Auggie turn to an ephemeral sandbox workspace root (never your caller workspace) and the `/auggie/v1/models` metadata carries the literal caveat `hard-disable unproven`. Do not rely on indexing being disabled; rely on the sandbox isolation.
-
-DeepSeek first-party modes: because `/deepseek/v1` no longer inherits the legacy LiteLLM `drop_params` stripping, `response_format` (JSON mode) reaches DeepSeek unchanged and `reasoning_content` (thinking mode) is preserved on the response and carried forward across a `previous_response_id` chain.
-
-Reverso profile routing keeps Codex metadata stable for hand-written DeepSeek
-and Claude profiles by accepting GPT-level names after they enter a provider
-profile path. The generated sync profiles use provider-scoped catalogs and pin
-their default to a model id returned by that provider's `/v1/models`. MiniMax
-is direct Codex-only and should use `model = "MiniMax-M3"`.
-
-`reverso-codex-sync` also feeds Codex's static `/model` picker. It always keeps
-built-in GPT (Codex) defaults selectable as bare model ids and inserts
-top-level `model = "gpt-5.5"` into the base config only when the user has not
-already selected another model. Reverso provider models are isolated to their
-provider profile files and provider-scoped catalogs; the base `config.toml`
-does not get generated `[profiles.*]`, root `model_catalog_json`, NUX, or
-global Reverso model-list entries. The sync tool also preserves direct
-`openai.config.toml` and `minimax.config.toml` as Codex-provider profiles, not
-Reverso routes.
-
-| Codex profile model | DeepSeek Reverso profile | Claude Reverso profile | MiniMax direct Codex | Direct Codex /v1 |
-|---|---|---|---|---|
-| `gpt-5.5` | `deepseek-v4-pro` | `claude-opus-4-8` | `MiniMax-M3` | `gpt-5.5` |
-| `gpt-5.4` | `deepseek-v4-pro` | `claude-opus-4-8` | `MiniMax-M3` | `gpt-5.4` |
-| `gpt-5.4-mini` | `deepseek-v4-flash` | `claude-sonnet-4-6` | `MiniMax-M3` | `gpt-5.4-mini` |
-| `gpt-5.3-codex-spark` | `deepseek-v4-flash` | `claude-sonnet-4-6` | `MiniMax-M3` | `gpt-5.3-codex-spark` |
-
-Use Direct Codex /v1 only for GPT-backed Codex routing. It is intentionally not a Reverso provider profile and Reverso must not rewrite GPT model names there.
-
----
-
-## Smoke tests
-
-All four providers are Responses-native: smoke them at `/<provider>/v1/responses` with an `input` field, not at `/chat/completions` or `/messages`.
-
-### Test DeepSeek (first-party, direct API):
+Confirm that the loopback gateway is ready:
 
 ```bash
-curl -s http://127.0.0.1:64946/deepseek/v1/responses \
-  -H "Content-Type: application/json" \
-  -d '{"model": "gpt-5.5", "input": "say hello"}' \
-  | python3 -c "import json,sys; r=json.load(sys.stdin); print(r['output'][0]['content'][0]['text'][:100])"
+curl -fsS http://127.0.0.1:64946/health/readiness
 ```
 
-### Test Claude (subscription-backed, CLI wrapper):
+Expected JSON includes:
+
+```json
+{"status":"healthy"}
+```
+
+### Create the managed Codex profiles
+
+With the gateway running:
 
 ```bash
-curl -s http://127.0.0.1:64946/claude/v1/responses \
-  -H "Content-Type: application/json" \
-  -d '{"model": "gpt-5.5", "input": "say hello"}' \
-  | python3 -c "import json,sys; r=json.load(sys.stdin); print(r['output'][0]['content'][0]['text'][:100])"
+uv run reverso-codex-sync --dry-run
+uv run reverso-codex-sync
 ```
 
-### Test Auggie (subscription-backed, CLI wrapper):
+The sync reads each live provider's `/v1/models`, updates `~/.codex/config.toml`, writes provider profiles such as `~/.codex/claude.config.toml`, and writes provider-scoped catalogs under `~/.codex/reverso/`.
+
+Now prove the complete Codex to Reverso to Claude path:
 
 ```bash
-# Discover available Auggie model ids first.
-curl -s http://127.0.0.1:64946/auggie/v1/models \
-  | python3 -c "import json,sys; print([m['id'] for m in json.load(sys.stdin)['data']])"
+codex exec -p claude --skip-git-repo-check \
+  "Reply with exactly: REVERSO_OK"
 ```
 
+Success ends with:
 
-### Inspect Headroom savings and rollback
+```text
+REVERSO_OK
+```
 
-Headroom compression is enabled by default for Reverso-owned Responses and
-Anthropic Messages dispatch. Runtime usage is aggregate-only and prompt-free:
+If the readiness probe passes but the model call fails, start with [Troubleshooting](#troubleshooting) and `~/Library/Logs/reverso/proxy.stderr.log`.
+
+## How routing works
+
+Reverso owns one loopback port and chooses a backend from the request surface and model:
+
+| Client surface | Route | Backend |
+| --- | --- | --- |
+| OpenAI Responses | `/claude/v1` | Claude Code CLI with subscription OAuth |
+| OpenAI Responses | `/copilot/v1` | GitHub Copilot upstream |
+| OpenAI Responses | `/auggie/v1` | Auggie CLI |
+| OpenAI Responses | `/deepseek/v1` | Direct DeepSeek HTTP API |
+| Anthropic Messages | `/v1/messages` | Model-routed to Claude, Codex, Copilot, Auggie, or DeepSeek |
+
+The OpenAI-compatible provider base URL ends at `/<provider>/v1`; clients append `/responses` or `/models`. The inbound Anthropic surface is translation-only: it accepts Messages requests but does not proxy them to `api.anthropic.com`. The Claude worker scrubs Reverso-related Anthropic environment variables before spawning the CLI so it cannot loop back into the gateway.
+
+The experimental local-only Codex Direct route and opt-in OpenAI pass-through route are documented in [ADR 0016](docs/architecture/adr/0016-experimental-codex-direct-oauth-provider.md) and the [archived implementation specification](docs/specifications/ARCHIVED/openai-pass-through-oauth-api-key.md). They are not the recommended onboarding path.
+
+## Codex model selector rules
+
+`reverso-codex-sync` follows these invariants:
+
+- Built-in Codex GPT model IDs remain bare and selectable, such as `gpt-5.5`, `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.3-codex-spark`, and `gpt-4.1`.
+- It adds top-level `model = "gpt-5.5"` only when the user has no top-level `model`. It never replaces an existing choice.
+- Provider models are additive and live in provider-scoped profiles and catalogs. They do not replace the built-in Codex catalog.
+- Collision-prone selector IDs are prefixed: `copilot/<model>`, `auggie/<model>`, and `agy/<model>`.
+- MiniMax, DeepSeek, GPT from Codex, and Claude from Claude Code are not prefixed.
+- Additional experimental surfaces keep their own namespaces, including `codex-direct/<model>` and `openai-pass-through/<model>`.
+
+The catalog slug controls what Codex displays. The provider profile still sends the backend's bare model ID to its own Reverso route. This keeps provider identity visible without leaking one provider's models into another provider's catalog.
+
+Hand-written Reverso profile files keep GPT-level model names when using the documented alias routing. For example, a DeepSeek or Claude profile may send `gpt-5.5`; the provider-specific route resolves it to the configured backend model. Generated profiles instead pin a live provider model and a matching provider-scoped catalog.
+
+| Codex alias | DeepSeek target | Claude target | MiniMax direct |
+| --- | --- | --- | --- |
+| `gpt-5.5` or `gpt-5.4` | `deepseek-v4-pro` | `claude-opus-4-8` | `MiniMax-M3` |
+| `gpt-5.4-mini` or `gpt-5.3-codex-spark` | `deepseek-v4-flash` | `claude-sonnet-4-6` | `MiniMax-M3` |
+
+MiniMax is direct Codex-only. A direct profile uses `model_provider = "minimax"`, `model = "MiniMax-M3"`, `model_context_window = 512000`, and the `MINIMAX_ANTHROPIC_API_KEY` environment variable. It is not a Reverso provider.
+
+## Managed configuration and safety
+
+`reverso-codex-sync` owns only the regions and generated files marked as managed. It validates TOML before writing, preserves user content outside managed regions, makes timestamped backups when the base config changes, retains a bounded backup set, and archives stale managed profiles under `~/.codex/Archive/reverso-codex-sync/`. Unmarked direct OpenAI and MiniMax profiles are not overwritten.
+
+Use `--dry-run` to inspect live discovery without writing. Custom locations are available through `--config`, `--catalog-dir`, and `--base-url`, or their `REVERSO_CODEX_CONFIG`, `REVERSO_CODEX_CATALOG_DIR`, and `REVERSO_CODEX_BASE_URL` environment variables.
+
+Security boundaries:
+
+- Reverso rejects any `REVERSO_HOST` other than `127.0.0.1`.
+- DeepSeek secrets belong in macOS Keychain, not in this repository:
+
+  ```bash
+  ./scripts/keychain-set.sh DEEPSEEK_API_KEY "sk-..."
+  ```
+
+- Claude and Codex subscription credentials remain in their CLIs' normal local credential stores.
+- Auggie runs in an ephemeral sandbox workspace because a global indexing hard-disable has not been proven. Do not treat indexing as disabled.
+- Prompt content may be retained in process memory for response chaining. Reverso does not intentionally persist prompt or compressed text to disk or metrics, but provider CLIs and upstream services retain their own behavior and terms.
+
+## Update, stop, and uninstall
+
+Update the checkout and refresh dependencies, services, and generated model catalogs:
 
 ```bash
-curl -s http://127.0.0.1:64946/usage/headroom \
-  | python3 -m json.tool
-
-curl -s http://127.0.0.1:64946/usage \
-  | python3 -c "import json,sys; print(json.load(sys.stdin)['headroom'])"
+git pull --ff-only
+uv sync --frozen
+./scripts/install-launchagents.sh
+uv run reverso-codex-sync
 ```
 
-To disable compression, set `REVERSO_HEADROOM_ENABLED=0` in the gateway process
-environment and restart the LaunchAgent. The `/usage/headroom` response reports
-`"enabled": false` after the restart. Re-enable by removing the variable or
-setting it to `1` and restarting again. Metrics reset on process restart and never
-store prompt text or compressed text.
-
-Or run the bundled smoke script:
+Restart without changing files:
 
 ```bash
-./scripts/smoke.sh
+launchctl unload ~/Library/LaunchAgents/com.user.reverso-proxy.plist
+launchctl load ~/Library/LaunchAgents/com.user.reverso-proxy.plist
 ```
 
----
-
-## Decommissioning the existing codex-litellm shim
-
-Reverso replaces the existing shim setup (`codex-litellm-responses-shim`) that previously handled MiniMax and DeepSeek on ports 48731/49731 and 48737/49737.
-
-Once Reverso is verified working, decommission the old agents:
-
-```bash
-launchctl unload ~/Library/LaunchAgents/com.andres.codex-litellm-minimax.plist
-launchctl unload ~/Library/LaunchAgents/com.andres.codex-litellm-deepseek.plist
-```
-
-Update `~/.codex/config.toml`: point DeepSeek and Claude profiles at `reverso_deepseek` or `reverso_claude` instead of legacy gateway providers. Configure MiniMax as the direct `minimax` Codex provider with `model = "MiniMax-M3"`. Hand-written DeepSeek and Claude Reverso profiles may keep GPT alias `model` values so Codex loads its own model metadata and Reverso resolves provider ids internally; generated provider-name profile files may pin provider-scoped model ids because their catalogs are scoped to that profile.
-
-**Do not remove the old plist files until Reverso has been running stably for at least a week.**
-
----
-
-## Uninstall
+Uninstall the LaunchAgents:
 
 ```bash
 ./scripts/uninstall-launchagents.sh
 ```
 
----
+The uninstall script removes generated user LaunchAgent files. It does not delete the repository, logs, Keychain secrets, or Codex profile files.
 
-## Architecture
+## Troubleshooting
 
-Two processes, both managed by launchd:
+| Symptom | Check | Resolution |
+| --- | --- | --- |
+| Readiness connection refused | `launchctl list | grep reverso` | Rerun `./scripts/install-launchagents.sh`, then inspect `~/Library/Logs/reverso/proxy.stderr.log`. |
+| Gateway exits at startup | `tail -n 100 ~/Library/Logs/reverso/proxy.stderr.log` | Run `uv sync --frozen`; confirm the checkout has not moved since the LaunchAgents were installed. |
+| Claude returns an auth error | `claude auth status` | Run `claude auth login` in the same user account, then retry. |
+| A Codex provider profile is missing | `uv run reverso-codex-sync --dry-run` | Start the gateway, confirm `/<provider>/v1/models` responds, then rerun the sync without `--dry-run`. |
+| Wrong models appear in a provider picker | Inspect `~/.codex/reverso/<provider>.json` | Do not edit generated catalogs. Rerun `uv run reverso-codex-sync`; catalogs are surface-scoped. |
+| DeepSeek returns 503 | `security find-generic-password -s reverso/DEEPSEEK_API_KEY -w` | Store the key with `./scripts/keychain-set.sh`, then restart the proxy LaunchAgent. |
+| A managed config edit is unexpected | Inspect `~/.codex/config.toml.reverso-sync.*` | Restore the newest backup if needed, then use `--dry-run` before syncing again. |
 
-1. **Gateway proxy** (`com.user.reverso-proxy`) - inbound HTTP on `127.0.0.1:64946`. The composition root (`reverso.proxy.compose`) routes the first-party prefixes `/claude`, `/copilot`, `/auggie`, and `/deepseek` to the Responses gateway (`reverso.protocols.responses_app`) and delegates every other path to the legacy LiteLLM stack. The gateway handles routing, body translation, and streaming for first-party providers.
-2. **Session daemon** (`com.user.reverso-daemon`) - owns wrapped CLI subprocesses, session table, idle detection. *(Phase 2, not yet active)*
-
-See `docs/03-architecture.md` and `docs/architecture/adr/0003-single-port-composition-auggie-deepseek.md` for the full component diagram and the composition decision.
-
----
-
-## Development
-
-```bash
-uv sync
-uv run pytest tests/
-```
-
-Start the proxy in the foreground for debugging:
+For a foreground traceback, stop the proxy LaunchAgent temporarily and run:
 
 ```bash
 ./scripts/start-fg-proxy.sh
 ```
 
----
+The bundled `./scripts/smoke.sh` checks readiness, discovery, usage, and a live DeepSeek response. It requires a running gateway and a configured DeepSeek key, so it is an additional operator check rather than the recommended Claude onboarding smoke.
+
+## Advanced documentation
+
+- [Business requirements and locked decisions](docs/01-brd.md)
+- [Product requirements](docs/02-prd.md)
+- [Architecture and failure modes](docs/03-architecture.md)
+- [MVP phases and exit criteria](docs/04-mvp.md)
+- [Responses-native provider gateway](docs/architecture/adr/0002-responses-native-provider-gateway.md)
+- [Single-port composition](docs/architecture/adr/0003-single-port-composition-auggie-deepseek.md)
+- [Provider-qualified Anthropic routing](docs/architecture/adr/0008-provider-qualified-model-routing.md)
+- [Claude on the Anthropic surface](docs/architecture/adr/0009-claude-on-anthropic-surface.md)
+- [Codex Responses parity matrix](docs/architecture/codex-responses-parity-matrix.md)
+- [Anthropic surface verification](docs/anthropic-surface-verification.md)
+- [Copilot picker surface separation](docs/learning/copilot-picker-surface-separation.md)
+
+## Development and community
+
+Install the development environment and run the local quality gates:
+
+```bash
+uv sync --extra dev
+uv run pytest tests/unit -q
+uv run pytest tests/integration -q
+uvx prek run --all-files
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. Use [GitHub Issues](https://github.com/r3dlex/reverso-llm/issues) for reproducible bugs and focused proposals, and [GitHub Pull Requests](https://github.com/r3dlex/reverso-llm/pulls) for reviewed changes. Do not include credentials, prompt content, local config, or logs containing sensitive data.
 
 ## License
 
-Personal use. Public repository so others can adapt it for their own subscriptions. Not for commercial use.
+This repository does not currently include a license file. No permission to copy, modify, or redistribute is granted beyond applicable law. The project policy is personal use only, for one user on one machine, and not for sharing or resale.
 
 <!-- v3-ai-sdlc-init:start -->
 ## AI SDLC v3
@@ -301,20 +227,3 @@ This repo follows the v3 AI-SDLC layout (`topology_type: standalone`, depth 0). 
 
 See `.ai/matrix.json`, `.memory/human-override/`, and `docs/architecture/adr/`. Modules at `r3dlex/skills/init-ai-repo/modules/`.
 <!-- v3-ai-sdlc-init:end -->
-
-
-## Operator status: codex-direct and OpenAI pass-through
-
-As of PR #73, `codex-direct` is complete for local-loopback default use and
-OpenAI pass-through is merged as a local-loopback opt-in provider.
-
-- `codex-direct` remains local-loopback default-on for `REVERSO_HOST=127.0.0.1`
-  and can be disabled with `REVERSO_CODEX_DIRECT_BACKEND=0`. Non-loopback or
-  hosted default-on remains a no-go under ADR 0016.
-- OpenAI pass-through is opt-in only. Set `REVERSO_OPENAI_BACKEND=1` on
-  `REVERSO_HOST=127.0.0.1` to expose `/openai/v1/responses` and
-  `/openai/v1/models`.
-- Codex-sync pass-through profiles use `openai-pass-through.config.toml` and
-  `~/.codex/reverso/openai-pass-through.json`, routed through
-  `/openai-pass-through/v1/...`, so built-in `openai.config.toml` GPT defaults
-  remain bare and default-safe.

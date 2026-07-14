@@ -42,3 +42,42 @@ def test_readme_reverso_profile_examples_do_not_use_provider_model_ids_as_codex_
     ]
     for needle in forbidden_reverso_examples:
         assert needle not in text
+
+
+def test_readme_documents_prompt_retention_boundary() -> None:
+    text = Path("README.md").read_text()
+
+    assert (
+        "Prompt content may be retained in process memory for response chaining" in text
+    )
+    assert (
+        "does not intentionally persist prompt or compressed text to disk or metrics"
+        in text
+    )
+
+
+def test_readme_development_commands_use_supported_dev_and_prek_paths() -> None:
+    text = Path("README.md").read_text()
+    development = text.split("## Development and community", 1)[1].split(
+        "## License", 1
+    )[0]
+
+    assert "uv sync --extra dev" in development
+    assert "uvx prek run --all-files" in development
+    assert "uv run ruff" not in development
+
+
+def test_readme_preserves_codex_selector_invariants() -> None:
+    text = Path("README.md").read_text()
+    selector_rules = text.split("## Codex model selector rules", 1)[1].split(
+        "## Managed configuration and safety", 1
+    )[0]
+
+    expected = [
+        "Built-in Codex GPT model IDs remain bare and selectable",
+        'top-level `model = "gpt-5.5"` only when the user has no top-level `model`',
+        "`copilot/<model>`, `auggie/<model>`, and `agy/<model>`",
+        "MiniMax, DeepSeek, GPT from Codex, and Claude from Claude Code are not prefixed",
+    ]
+    for needle in expected:
+        assert needle in selector_rules
