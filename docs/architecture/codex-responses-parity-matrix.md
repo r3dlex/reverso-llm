@@ -126,7 +126,7 @@ The B2 incremental path on claude and the D1 incremental path on deepseek emit t
 | `reasoning.summary` | unsupported | native | unsupported | translated | copilot forwards. deepseek surfaces `reasoning_content` on the envelope (`_map_completion`) and re-injects it on `previous_response_id` chains (`_prior_turn`). claude/auggie CLIs have no equivalent. |
 | `sampling.temperature` | unsupported | native | unsupported | translated | copilot forwards. deepseek carries `temperature` through the `extra` loop in `_build_body`. The claude/auggie CLIs do not expose a temperature flag. |
 | `sampling.top_p` | unsupported | native | unsupported | translated | Same shape as temperature. |
-| `max_output_tokens` | unsupported | native | unsupported | translated | deepseek translates `max_output_tokens` to chat `max_tokens` in `_translate_extras`; the raw key is denied via `_NON_FORWARDED_EXTRA` so the translation is the only path. claude/auggie CLIs have no max-tokens flag. |
+| `max_output_tokens` | partial | native | unsupported | translated | claude accepts and ignores the field so OpenAI Responses and Codex clients are not rejected; the claude CLI has no max-tokens flag, so the limit is best-effort and not enforced. deepseek translates `max_output_tokens` to chat `max_tokens` in `_translate_extras`; the raw key is denied via `_NON_FORWARDED_EXTRA` so the translation is the only path. auggie's CLI has no max-tokens flag and remains unsupported. |
 
 ### Misc request fields
 

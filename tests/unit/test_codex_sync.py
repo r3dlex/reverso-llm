@@ -660,6 +660,9 @@ def test_sync_inserts_missing_reverso_provider_tables(tmp_path: Path) -> None:
         provider = providers[f"reverso_{prefix}"]
         assert provider["base_url"] == f"http://127.0.0.1:64946/{prefix}/v1"
         assert provider["wire_api"] == "responses"
+    assert providers["reverso_claude"]["env_key"] == "REVERSO_AUTH_TOKEN"
+    for prefix in ("copilot", "auggie", "deepseek"):
+        assert "env_key" not in providers[f"reverso_{prefix}"]
     assert codex_sync.GATEWAY_PROVIDERS_BEGIN in text
     assert '[tui]\nstatus_line = ["model"]' in text
 
@@ -669,6 +672,22 @@ def test_sync_inserts_missing_reverso_provider_tables(tmp_path: Path) -> None:
         catalog_dir=catalog_dir,
     )
     assert second.changed is False
+
+
+def test_sync_adds_claude_env_key_to_existing_provider_table(tmp_path: Path) -> None:
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+
+    codex_sync.sync(
+        target=target,
+        fetcher=_make_fetcher(),
+        catalog_dir=tmp_path / "reverso",
+    )
+
+    providers = tomllib.loads(target.read_text(encoding="utf-8"))["model_providers"]
+    assert providers["reverso_claude"]["env_key"] == "REVERSO_AUTH_TOKEN"
+    for prefix in ("copilot", "auggie", "deepseek"):
+        assert "env_key" not in providers[f"reverso_{prefix}"]
 
 
 def test_sync_strips_legacy_block_and_creates_config_backup(tmp_path: Path) -> None:

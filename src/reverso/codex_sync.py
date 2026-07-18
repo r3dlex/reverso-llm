@@ -383,14 +383,39 @@ def _gateway_provider_table(prefix: str, *, base_url: str = GATEWAY_BASE_URL) ->
     """Render one required Reverso Codex provider table."""
     provider = f"reverso_{prefix}"
     display = prefix.capitalize()
-    return "\n".join(
-        [
-            f"[model_providers.{provider}]",
-            f"name = {_toml_string(f'Reverso {display} profile')}",
-            f"base_url = {_toml_string(f'{base_url}/{prefix}/v1')}",
-            'wire_api = "responses"',
-        ]
-    )
+    lines = [
+        f"[model_providers.{provider}]",
+        f"name = {_toml_string(f'Reverso {display} profile')}",
+        f"base_url = {_toml_string(f'{base_url}/{prefix}/v1')}",
+    ]
+    if prefix == "claude":
+        lines.append(f"env_key = {_toml_string('REVERSO_AUTH_TOKEN')}")
+    lines.append('wire_api = "responses"')
+    return "\n".join(lines)
+
+
+def _ensure_claude_provider_env_key(text: str) -> str:
+    """Add the Codex Bearer-token env key to an existing Claude table."""
+    header = re.compile(
+        r"^[ \t]*\[model_providers\.reverso_claude\][ \t]*(?:#.*)?\r?$",
+        re.MULTILINE,
+    ).search(text)
+    if header is None:
+        return text
+
+    line_end = text.find("\n", header.end())
+    body_start = line_end + 1 if line_end != -1 else len(text)
+    next_header = _TABLE_HEADER_LINE_RE.search(text, body_start)
+    body_end = next_header.start() if next_header is not None else len(text)
+    body = text[body_start:body_end]
+    if re.search(r"^[ \t]*env_key[ \t]*=", body, re.MULTILINE):
+        return text
+
+    newline = "\r\n" if "\r\n" in text[header.start() : body_end] else "\n"
+    env_line = f"env_key = {_toml_string('REVERSO_AUTH_TOKEN')}{newline}"
+    wire_api = re.search(r"^[ \t]*wire_api[ \t]*=", body, re.MULTILINE)
+    insert_at = body_start + wire_api.start() if wire_api is not None else body_end
+    return text[:insert_at] + env_line + text[insert_at:]
 
 
 def _ensure_gateway_provider_tables(
@@ -407,7 +432,7 @@ def _ensure_gateway_provider_tables(
 
     missing = [prefix for prefix in prefixes if f"reverso_{prefix}" not in providers]
     if not missing:
-        return text
+        return _ensure_claude_provider_env_key(text)
 
     block = "\n".join(
         [
@@ -419,8 +444,10 @@ def _ensure_gateway_provider_tables(
     if text and not text.endswith("\n"):
         text += "\n"
     if text:
-        return text + "\n" + block + "\n"
-    return block + "\n"
+        text = text + "\n" + block + "\n"
+    else:
+        text = block + "\n"
+    return _ensure_claude_provider_env_key(text)
 
 
 def _strip_overlay_tables(text: str) -> str:

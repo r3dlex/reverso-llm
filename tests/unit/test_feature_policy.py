@@ -248,6 +248,12 @@ def test_check_features_passes_when_codex_default_surface_partial() -> None:
     check_features("deepseek", codex_default_features)
 
 
+def test_claude_accepts_max_output_tokens_as_best_effort() -> None:
+    """Claude accepts the Responses limit even though its CLI cannot enforce it."""
+    assert CAPABILITY_TABLES["claude"]["max_output_tokens"] == "partial"
+    check_features("claude", {"max_output_tokens"})
+
+
 # --- extract_features ----------------------------------------------------
 
 
