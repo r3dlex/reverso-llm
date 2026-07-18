@@ -299,6 +299,20 @@ async def test_tools_web_search_partial_text_only(provider: str) -> None:
 
 
 @pytest.mark.asyncio
+async def test_claude_accepts_max_output_tokens_best_effort() -> None:
+    """Codex may send max_output_tokens; Claude must not reject the whole turn."""
+    body_in = {
+        "model": "claude-haiku-4-5-20251001",
+        "input": "Reply with one word.",
+        "max_output_tokens": 32,
+    }
+    async with _build_client() as client:
+        resp = await client.post("/claude/v1/responses", json=body_in)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "completed"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("provider", TOOL_PARTIAL_PROVIDERS)
 async def test_still_unsupported_tool_returns_400(provider: str) -> None:
     """A tool type the capability table still classifies as unsupported keeps the 400.

@@ -164,7 +164,7 @@
       "codex": "unsupported"
     },
     "max_output_tokens": {
-      "claude": "unsupported",
+      "claude": "partial",
       "copilot": "native",
       "auggie": "unsupported",
       "deepseek": "translated",
