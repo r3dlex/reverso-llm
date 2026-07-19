@@ -116,8 +116,8 @@ def test_kimi_release_runbook_covers_install_live_proof_and_rollback() -> None:
         "REVERSO_CODEX_CATALOG_DIR",
         "$HOME/.codex-reverso/auth.json",
         "chmod 600",
-        "trap cleanup_codex_home EXIT",
-        "trap restore_launchagents EXIT",
+        "cleanup_release_candidate()",
+        "trap cleanup_release_candidate EXIT",
         "scripts/kimi-live-proof.py",
         ".omx/evidence/kimi-live-proof.json",
         "uv run reverso-codex-sync --dry-run",
@@ -130,6 +130,29 @@ def test_kimi_release_runbook_covers_install_live_proof_and_rollback() -> None:
         assert needle in text
 
     assert "KIMI_BEARER_TOKEN=" not in text
+
+
+def test_kimi_release_runbook_keeps_rollback_armed_until_health_proof() -> None:
+    text = Path("docs/kimi-release-runbook.md").read_text()
+    cleanup = text.split("cleanup_release_candidate() {", 1)[1].split("}", 1)[0]
+
+    assert 'rm -rf "$temp_codex_home"' in cleanup
+    assert "restore_launchagents" in cleanup
+    assert text.count("trap cleanup_release_candidate EXIT") == 1
+    assert "trap cleanup_codex_home EXIT" not in text
+    assert text.index("trap cleanup_release_candidate EXIT") < text.index(
+        "REVERSO_KIMI_LIVE_PROOF=1"
+    )
+    assert text.index(
+        "restore_launchagents\nrelease_candidate_restored=1"
+    ) < text.index(
+        "curl -fsS http://127.0.0.1:64946/health/readiness",
+        text.index("## Rollback"),
+    )
+    assert text.index(
+        "curl -fsS http://127.0.0.1:64946/health/readiness",
+        text.index("## Rollback"),
+    ) < text.index("trap - EXIT")
 
 
 def test_kimi_traceability_chain_has_no_dangling_links() -> None:

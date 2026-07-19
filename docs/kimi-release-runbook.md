@@ -40,7 +40,19 @@ the credentialed proof gate are green. Reverso must remain bound only to
        fi
      done
    }
-   trap restore_launchagents EXIT
+   temp_codex_home=""
+   release_candidate_restored=0
+   cleanup_release_candidate() {
+     exit_status=$?
+     if [[ -n "$temp_codex_home" ]]; then
+       rm -rf "$temp_codex_home"
+     fi
+     if [[ "$release_candidate_restored" -ne 1 ]]; then
+       restore_launchagents
+     fi
+     return "$exit_status"
+   }
+   trap cleanup_release_candidate EXIT
    ```
 
 The backup contains local paths but no Kimi token. Keep it outside the
@@ -84,8 +96,6 @@ home. Never print or commit the copied authentication file.
 
 ```bash
 temp_codex_home="$(mktemp -d)"
-cleanup_codex_home() { rm -rf "$temp_codex_home"; }
-trap cleanup_codex_home EXIT
 chmod 700 "$temp_codex_home"
 cp -p "$HOME/.codex-reverso/config.toml" "$temp_codex_home/config.toml"
 cp -p "$HOME/.codex-reverso/auth.json" "$temp_codex_home/auth.json"
@@ -104,8 +114,8 @@ REVERSO_KIMI_LIVE_PROOF=1 \
   REVERSO_CODEX_CONFIG="$temp_codex_home/config.toml" \
   .venv/bin/python scripts/kimi-live-proof.py \
   --manifest .omx/evidence/kimi-live-proof.json
-cleanup_codex_home
-trap - EXIT
+rm -rf "$temp_codex_home"
+temp_codex_home=""
 ```
 
 A release candidate is eligible for review only when the manifest is mode
@@ -122,8 +132,7 @@ Claude authentication, or built-in Codex models.
 
 ```bash
 restore_launchagents
-trap - EXIT
-rm -rf "$backup_dir"
+release_candidate_restored=1
 ```
 
 After restoration, prove the prior runtime is healthy and its generated plist
@@ -133,6 +142,8 @@ no longer points at the candidate checkout:
 curl -fsS http://127.0.0.1:64946/health/readiness
 /usr/libexec/PlistBuddy -c 'Print :WorkingDirectory' \
   "$HOME/Library/LaunchAgents/com.user.reverso-proxy.plist"
+rm -rf "$backup_dir"
+trap - EXIT
 ```
 
 For client-only rollback, stop the Kimi Codex profile and run normal Codex with
