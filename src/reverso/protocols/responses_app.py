@@ -63,6 +63,7 @@ APP_PROVIDER_PREFIXES = frozenset(
         "copilot",
         "auggie",
         "deepseek",
+        "kimi",
         "codex-direct",
         "openai",
         "openai-pass-through",

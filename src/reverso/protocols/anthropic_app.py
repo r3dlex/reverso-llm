@@ -840,6 +840,7 @@ def build_anthropic_adapters() -> dict[str, ProviderAdapter]:
     from reverso.protocols.adapters.codex import CodexAdapter
     from reverso.protocols.adapters.copilot import CopilotAdapter
     from reverso.protocols.adapters.deepseek import DeepSeekAdapter
+    from reverso.protocols.adapters.kimi import KimiAdapter
 
     return {
         "copilot": CopilotAdapter(),
@@ -847,6 +848,7 @@ def build_anthropic_adapters() -> dict[str, ProviderAdapter]:
         "auggie": AuggieAdapter(),
         "codex": CodexAdapter(),
         "claude": ClaudeAdapter(),
+        "kimi": KimiAdapter(),
     }
 
 

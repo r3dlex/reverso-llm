@@ -39,7 +39,9 @@ from reverso.protocols.model_exposure import codex_builtin_model_backends
 # token, which is unambiguous only while this holds (adding e.g. "code" alongside
 # "codex" would make the match order-dependent).
 SURFACE_BACKENDS: dict[str, frozenset[str]] = {
-    "anthropic": frozenset({"copilot", "deepseek", "auggie", "codex", "claude"}),
+    "anthropic": frozenset(
+        {"copilot", "deepseek", "auggie", "codex", "claude", "kimi"}
+    ),
 }
 
 # Model-name substring that identifies the claude family. A normalized model id
@@ -177,6 +179,7 @@ _DISCOVERY_ALIAS_PREFIX = "anthropic-"
 _DISCOVERY_ROWLESS_MODELS: dict[str, tuple[str, ...]] = {
     "copilot": ("gpt-5.5", "gpt-5.4", "gpt-5.4-mini"),
     "auggie": ("opus4.7", "haiku4.5"),
+    "kimi": ("kimi-k2.5",),
 }
 
 

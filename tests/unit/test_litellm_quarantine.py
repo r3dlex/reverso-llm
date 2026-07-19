@@ -108,10 +108,11 @@ async def test_litellm_proxy_app_not_invoked_during_provider_handling(
             "copilot": _StubAdapter(),
             "auggie": _StubAdapter(),
             "deepseek": _StubAdapter(),
+            "kimi": _StubAdapter(),
         }
     )
 
-    for provider in ("claude", "copilot", "auggie", "deepseek"):
+    for provider in ("claude", "copilot", "auggie", "deepseek", "kimi"):
         status = await _drive(
             app,
             "POST",
@@ -246,11 +247,12 @@ async def test_composition_root_bypasses_legacy_for_first_party_prefixes() -> No
             "copilot": _StubAdapter(),
             "auggie": _StubAdapter(),
             "deepseek": _StubAdapter(),
+            "kimi": _StubAdapter(),
         }
     )
     root = CompositionRoot(gateway=gateway, legacy_app=_legacy_tripwire)
 
-    for provider in ("claude", "copilot", "auggie", "deepseek"):
+    for provider in ("claude", "copilot", "auggie", "deepseek", "kimi"):
         status = await _drive(
             root,
             "POST",
