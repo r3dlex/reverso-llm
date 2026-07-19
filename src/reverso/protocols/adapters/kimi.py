@@ -356,7 +356,7 @@ class KimiAdapter(DeepSeekAdapter):
                     )
                 if data:
                     self._model_discovery_source = "live"
-                    return ModelList(data=data)
+                    return ModelList(data=data, discovery_source="live")
         except (KimiError, httpx.HTTPError, ValueError) as exc:
             logger.warning("kimi model listing unavailable (%s)", type(exc).__name__)
         return ModelList(
@@ -367,7 +367,8 @@ class KimiAdapter(DeepSeekAdapter):
                     "created": int(time.time()),
                     "owned_by": "moonshotai",
                 }
-            ]
+            ],
+            discovery_source="fallback",
         )
 
 
