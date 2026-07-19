@@ -95,7 +95,7 @@ class KimiOAuthAuth:
 
     async def _refresh(self, artifact: dict[str, Any]) -> str | None:
         refresh_token = artifact.get("refresh_token")
-        if not isinstance(refresh_token, str) or not refresh_token:
+        if not isinstance(refresh_token, str) or not refresh_token.strip():
             return None
         try:
             async with self._client_factory() as client:
@@ -158,7 +158,7 @@ class KimiOAuthAuth:
         if artifact is not None:
             access_token = artifact.get("access_token")
             expiry_valid, expires_at = self._expiry(artifact)
-            has_access = isinstance(access_token, str) and bool(access_token)
+            has_access = isinstance(access_token, str) and bool(access_token.strip())
             needs_refresh = (
                 expiry_valid
                 and expires_at is not None

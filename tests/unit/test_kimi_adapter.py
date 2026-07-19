@@ -121,6 +121,82 @@ async def test_invalid_artifacts_fall_back_without_crashing(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("access_token", [42, True, "", " "])
+async def test_invalid_persisted_access_token_uses_bearer_without_refresh(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    access_token: object,
+) -> None:
+    token_path = tmp_path / "kimi-code.json"
+    token_path.write_text(
+        json.dumps(
+            {
+                "access_token": access_token,
+                "refresh_token": "refresh-sentinel",
+                "expires_at": time.time() + 3600,
+            }
+        )
+    )
+    monkeypatch.setenv("KIMI_BEARER_TOKEN", BEARER_SENTINEL)
+    auth = KimiOAuthAuth(
+        credentials_path=token_path,
+        client_factory=lambda: pytest.fail("invalid artifact must not refresh"),
+    )
+
+    assert await auth.resolve_bearer_token() == BEARER_SENTINEL
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("refresh_token", [42, True, "", " "])
+async def test_invalid_persisted_refresh_token_uses_bearer_without_network(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    refresh_token: object,
+) -> None:
+    token_path = tmp_path / "kimi-code.json"
+    token_path.write_text(
+        json.dumps(
+            {
+                "access_token": "expired",
+                "refresh_token": refresh_token,
+                "expires_at": 0,
+            }
+        )
+    )
+    monkeypatch.setenv("KIMI_BEARER_TOKEN", BEARER_SENTINEL)
+    auth = KimiOAuthAuth(
+        credentials_path=token_path,
+        client_factory=lambda: pytest.fail("invalid artifact must not refresh"),
+    )
+
+    assert await auth.resolve_bearer_token() == BEARER_SENTINEL
+
+
+@pytest.mark.asyncio
+async def test_whitespace_artifact_without_fallback_raises_actionable_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    token_path = tmp_path / "kimi-code.json"
+    token_path.write_text(
+        json.dumps(
+            {
+                "access_token": " ",
+                "refresh_token": " ",
+                "expires_at": 0,
+            }
+        )
+    )
+    monkeypatch.delenv("KIMI_BEARER_TOKEN", raising=False)
+    auth = KimiOAuthAuth(
+        credentials_path=token_path,
+        client_factory=lambda: pytest.fail("invalid artifact must not refresh"),
+    )
+
+    with pytest.raises(KimiError, match=r"kimi /login.*KIMI_BEARER_TOKEN"):
+        await auth.resolve_bearer_token()
+
+
+@pytest.mark.asyncio
 async def test_cli_artifact_without_expiry_keeps_static_access_token(
     tmp_path: Path,
 ) -> None:
