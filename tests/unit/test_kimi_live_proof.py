@@ -24,6 +24,19 @@ from reverso.kimi_live_proof import (
     write_manifest,
 )
 
+CLIENT_PROMPT = (
+    "Reverse this lowercase hexadecimal token and output only the result: abc123"
+)
+CLIENT_EXPECTED = "321cba"
+
+
+@pytest.fixture(autouse=True)
+def _fixed_client_challenge(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "reverso.kimi_live_proof._client_challenge",
+        lambda: (CLIENT_PROMPT, CLIENT_EXPECTED),
+    )
+
 
 class FakeProbe:
     def __init__(
@@ -121,7 +134,7 @@ def _write_codex_fixture(tmp_path: Path, *, base_url: str | None = None) -> Path
     return config_path
 
 
-def _codex_success_output(marker: str = "KIMI_PROOF_OK") -> str:
+def _codex_success_output(marker: str = CLIENT_EXPECTED) -> str:
     return (
         json.dumps(
             {
@@ -367,7 +380,15 @@ def test_http_probe_codex_rejects_non_loopback_provider_before_subprocess(
         probe.codex("kimi-k2.5")
 
 
-@pytest.mark.parametrize("stdout", ["", "not-json\n", _codex_success_output("WRONG")])
+@pytest.mark.parametrize(
+    "stdout",
+    [
+        "",
+        "not-json\n",
+        _codex_success_output("WRONG"),
+        _codex_success_output(CLIENT_PROMPT),
+    ],
+)
 def test_http_probe_codex_zero_exit_requires_completed_controlled_marker(
     stdout: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -384,7 +405,21 @@ def test_http_probe_codex_zero_exit_requires_completed_controlled_marker(
         probe.codex("kimi-k2.5")
 
 
-@pytest.mark.parametrize("stdout", ["", "WRONG\n"])
+@pytest.mark.parametrize(
+    "stdout",
+    [
+        "",
+        "WRONG\n",
+        json.dumps(
+            {
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "result": CLIENT_PROMPT,
+            }
+        ),
+    ],
+)
 def test_http_probe_claude_zero_exit_requires_controlled_marker(stdout: str) -> None:
     def runner(argv: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(argv, 0, stdout=stdout, stderr="")
@@ -393,6 +428,27 @@ def test_http_probe_claude_zero_exit_requires_controlled_marker(stdout: str) -> 
 
     with pytest.raises(ProofFailure, match="client_completion_invalid"):
         probe.claude_code("kimi-k2.5")
+
+
+def test_http_probe_claude_requires_exact_parsed_success_result() -> None:
+    stdout = json.dumps(
+        {
+            "type": "result",
+            "subtype": "success",
+            "is_error": False,
+            "result": CLIENT_EXPECTED,
+        }
+    )
+
+    def runner(argv: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        assert argv[-1] == CLIENT_PROMPT
+        return subprocess.CompletedProcess(argv, 0, stdout=stdout, stderr="")
+
+    observation = HttpLiveProofProbe(runner=runner, log_paths=()).claude_code(
+        "kimi-k2.5"
+    )
+
+    assert observation["status"] == 0
 
 
 def test_unrelated_headroom_traffic_cannot_mask_missing_controlled_increment(
@@ -446,6 +502,35 @@ def test_redaction_rejects_unlabeled_active_credential_value(
     with pytest.raises(ProofFailure, match="redaction_failure") as exc_info:
         probe.redaction()
     assert sentinel not in str(exc_info.value)
+
+
+def test_redaction_scans_from_start_after_log_truncation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sentinel = "opaque-active-kimi-value-truncated"
+    monkeypatch.setenv("KIMI_BEARER_TOKEN", sentinel)
+    log = tmp_path / "proxy.log"
+    log.write_text("historical line\n" * 20, encoding="utf-8")
+    probe = HttpLiveProofProbe(log_paths=(log,))
+    log.write_text(sentinel, encoding="utf-8")
+
+    with pytest.raises(ProofFailure, match="redaction_failure"):
+        probe.redaction()
+
+
+def test_redaction_scans_replacement_log_after_rotation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sentinel = "opaque-active-kimi-value-rotated"
+    monkeypatch.setenv("KIMI_BEARER_TOKEN", sentinel)
+    log = tmp_path / "proxy.log"
+    log.write_text("historical line\n", encoding="utf-8")
+    probe = HttpLiveProofProbe(log_paths=(log,))
+    log.rename(tmp_path / "proxy.log.1")
+    log.write_text(sentinel, encoding="utf-8")
+
+    with pytest.raises(ProofFailure, match="redaction_failure"):
+        probe.redaction()
 
 
 def test_runner_without_opt_in_writes_no_manifest(tmp_path: Path) -> None:

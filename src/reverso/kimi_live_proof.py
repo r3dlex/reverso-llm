@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -69,11 +70,23 @@ _RESPONSE_ID_RE = re.compile(r"^resp_[A-Za-z0-9_-]+$")
 _CONTROLLED_PROMPT = (
     "Reply with exactly KIMI_PROOF_OK after reading this controlled proof request."
 )
-_CONTROLLED_MARKER = "KIMI_PROOF_OK"
 _PROOF_HEADER = "x-reverso-kimi-proof"
 _KIMI_CREDENTIAL_FIELDS = frozenset(
     {"access_token", "refresh_token", "token", "api_key", "auth_token"}
 )
+
+
+def _client_challenge() -> tuple[str, str]:
+    """Return a prompt and exact answer where the answer is absent from the prompt."""
+    while True:
+        token = secrets.token_hex(16)
+        expected = token[::-1]
+        prompt = (
+            "Reverse this lowercase hexadecimal token and output only the result: "
+            f"{token}"
+        )
+        if expected not in prompt:
+            return prompt, expected
 
 
 class ProofFailure(RuntimeError):
@@ -277,14 +290,45 @@ class HttpLiveProofProbe:
         self._headroom_deltas: dict[str, int] = {}
         self._live_models: tuple[str, ...] = ()
         self._credential_sentinels: set[str] = set()
-        self._log_offsets = {path: self._log_offset(path) for path in self.log_paths}
+        self._log_checkpoints = {
+            path: self._log_checkpoint(path) for path in self.log_paths
+        }
 
     @staticmethod
-    def _log_offset(path: Path) -> int | None:
+    def _log_checkpoint(path: Path) -> tuple[int, int, int, str] | None:
         try:
-            return path.stat().st_size
+            stat_result = path.stat()
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
         except OSError:
             return None
+        return (
+            stat_result.st_dev,
+            stat_result.st_ino,
+            stat_result.st_size,
+            digest,
+        )
+
+    def _read_log_window(self, path: Path) -> str:
+        checkpoint = self._log_checkpoints[path]
+        try:
+            stat_result = path.stat()
+            start = 0
+            if checkpoint is not None:
+                old_device, old_inode, old_size, old_digest = checkpoint
+                if (
+                    stat_result.st_dev == old_device
+                    and stat_result.st_ino == old_inode
+                    and stat_result.st_size >= old_size
+                ):
+                    with path.open("rb") as handle:
+                        unchanged = hashlib.sha256(handle.read(old_size)).hexdigest()
+                    if unchanged == old_digest:
+                        start = old_size
+            with path.open("r", encoding="utf-8") as handle:
+                handle.seek(start)
+                return handle.read()
+        except (OSError, UnicodeError) as exc:
+            raise ProofFailure("log_scan_unavailable") from exc
 
     def _json_request(
         self,
@@ -473,7 +517,7 @@ class HttpLiveProofProbe:
         return result, round((time.monotonic() - started) * 1000)
 
     @staticmethod
-    def _codex_completed_marker(stdout: str) -> bool:
+    def _codex_completed_marker(stdout: str, expected: str) -> bool:
         saw_completed = False
         texts: list[str] = []
         for line in stdout.splitlines():
@@ -490,10 +534,11 @@ class HttpLiveProofProbe:
                 event.get("type") == "item.completed"
                 and isinstance(item, dict)
                 and item.get("type") == "agent_message"
+                and item.get("role", "assistant") == "assistant"
                 and isinstance(item.get("text"), str)
             ):
                 texts.append(item["text"])
-        return saw_completed and _CONTROLLED_MARKER in "\n".join(texts)
+        return saw_completed and len(texts) == 1 and texts[0].strip() == expected
 
     def codex(self, model_id: str | None) -> dict[str, Any]:
         model = self._model(model_id)
@@ -536,6 +581,7 @@ class HttpLiveProofProbe:
             raise ProofFailure("codex_profile_mismatch")
         env = os.environ.copy()
         env["CODEX_HOME"] = str(config_path.parent)
+        prompt, expected = _client_challenge()
         result, duration = self._subprocess(
             [
                 "codex",
@@ -544,11 +590,11 @@ class HttpLiveProofProbe:
                 "kimi",
                 "--skip-git-repo-check",
                 "--json",
-                _CONTROLLED_PROMPT,
+                prompt,
             ],
             env=env,
         )
-        if not self._codex_completed_marker(result.stdout):
+        if not self._codex_completed_marker(result.stdout, expected):
             raise ProofFailure("client_completion_invalid")
         return {
             "provider": "kimi",
@@ -562,10 +608,29 @@ class HttpLiveProofProbe:
         model = self._model(model_id)
         env = os.environ.copy()
         env["REVERSO_KIMI_MODEL"] = model
+        prompt, expected = _client_challenge()
         result, duration = self._subprocess(
-            ["scripts/claude-kimi.sh", "--print", _CONTROLLED_PROMPT], env=env
+            [
+                "scripts/claude-kimi.sh",
+                "--print",
+                "--output-format",
+                "json",
+                prompt,
+            ],
+            env=env,
         )
-        if _CONTROLLED_MARKER not in result.stdout:
+        try:
+            payload = json.loads(result.stdout)
+        except json.JSONDecodeError as exc:
+            raise ProofFailure("client_completion_invalid") from exc
+        if (
+            not isinstance(payload, dict)
+            or payload.get("type") != "result"
+            or payload.get("subtype") != "success"
+            or payload.get("is_error") is not False
+            or not isinstance(payload.get("result"), str)
+            or payload["result"].strip() != expected
+        ):
             raise ProofFailure("client_completion_invalid")
         return {
             "provider": "kimi",
@@ -582,14 +647,7 @@ class HttpLiveProofProbe:
 
     def redaction(self) -> dict[str, Any]:
         for path in self.log_paths:
-            try:
-                offset = self._log_offsets[path]
-                with path.open("r", encoding="utf-8") as handle:
-                    if offset is not None:
-                        handle.seek(offset)
-                    self._captured_text.append(handle.read())
-            except (OSError, UnicodeError) as exc:
-                raise ProofFailure("log_scan_unavailable") from exc
+            self._captured_text.append(self._read_log_window(path))
         self._credential_sentinels.update(self._load_credential_sentinels())
         if not self._credential_sentinels:
             raise ProofFailure("redaction_sentinel_unavailable")
