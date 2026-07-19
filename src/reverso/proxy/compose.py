@@ -37,6 +37,7 @@ from reverso.protocols.headroom_compression import (
     DEFAULT_HEADROOM_METRICS,
     HeadroomCompressionConfig,
 )
+from reverso.protocols.proof_correlation import DEFAULT_PROOF_CORRELATION
 from reverso.protocols.anthropic_app import (
     build_anthropic_app,
     route_is_anthropic_surface,
@@ -189,6 +190,18 @@ class CompositionRoot:
             # only - never spawns codex, Headroom, or provider subprocesses.
             if path == "/usage/headroom" and scope.get("method", "GET") == "GET":
                 await _send_json(send, _headroom_usage_response())
+                return
+
+            proof_prefix = "/usage/headroom/proof/"
+            if path.startswith(proof_prefix) and scope.get("method", "GET") == "GET":
+                counts = DEFAULT_PROOF_CORRELATION.consume(path[len(proof_prefix) :])
+                if counts is None:
+                    await _send_json(send, {"error": "invalid proof nonce"}, 400)
+                else:
+                    await _send_json(
+                        send,
+                        {"schema_version": 1, "provider": "headroom", "proof": counts},
+                    )
                 return
 
             if path == "/usage" and scope.get("method", "GET") == "GET":

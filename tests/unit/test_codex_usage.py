@@ -682,6 +682,30 @@ async def test_get_usage_headroom_returns_aggregate_snapshot(monkeypatch) -> Non
 
 
 @pytest.mark.asyncio
+async def test_get_usage_headroom_proof_consumes_nonce_bound_counts() -> None:
+    from reverso.protocols.proof_correlation import DEFAULT_PROOF_CORRELATION
+    from reverso.proxy.compose import CompositionRoot
+
+    nonce = "a" * 64
+    DEFAULT_PROOF_CORRELATION.reset()
+    DEFAULT_PROOF_CORRELATION.record(nonce, "responses")
+
+    async def _tripwire(scope, receive, send):
+        raise AssertionError("proof metrics must not delegate")
+
+    root = CompositionRoot(
+        gateway=_tripwire,
+        anthropic_app=_tripwire,
+        legacy_app=_tripwire,
+    )
+    first = await _asgi_get_usage(root, path=f"/usage/headroom/proof/{nonce}")
+    second = await _asgi_get_usage(root, path=f"/usage/headroom/proof/{nonce}")
+
+    assert first["proof"] == {"responses": 1, "messages": 0}
+    assert second["proof"] == {"responses": 0, "messages": 0}
+
+
+@pytest.mark.asyncio
 async def test_get_usage_headroom_disabled_reflects_config(monkeypatch) -> None:
     """GET /usage/headroom reports the env rollback switch without side effects."""
     from reverso.proxy.compose import CompositionRoot

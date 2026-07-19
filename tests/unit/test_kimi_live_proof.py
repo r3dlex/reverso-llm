@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import httpx
 
 from reverso.kimi_live_proof import (
     ALLOWED_CHECK_KEYS,
@@ -96,6 +97,42 @@ class FakeProbe:
     def loopback(self) -> dict[str, Any]:
         self._maybe_fail("loopback")
         return {"provider": "kimi", "route": self.loopback_route, "status": 0}
+
+
+def _write_codex_fixture(tmp_path: Path, *, base_url: str | None = None) -> Path:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        '[model_providers.reverso_kimi]\n'
+        f'base_url = "{base_url or "http://127.0.0.1:64946/kimi/v1"}"\n'
+        'wire_api = "responses"\n',
+        encoding="utf-8",
+    )
+    catalog_path = tmp_path / "kimi.json"
+    catalog_path.write_text(
+        json.dumps({"models": [{"slug": "kimi-k2.5"}, {"slug": "kimi-k2"}]}),
+        encoding="utf-8",
+    )
+    (tmp_path / "kimi.config.toml").write_text(
+        'model = "kimi-k2.5"\n'
+        'model_provider = "reverso_kimi"\n'
+        f'model_catalog_json = "{catalog_path}"\n',
+        encoding="utf-8",
+    )
+    return config_path
+
+
+def _codex_success_output(marker: str = "KIMI_PROOF_OK") -> str:
+    return (
+        json.dumps(
+            {
+                "type": "item.completed",
+                "item": {"type": "agent_message", "text": marker},
+            }
+        )
+        + "\n"
+        + json.dumps({"type": "turn.completed"})
+        + "\n"
+    )
 
 
 def test_live_opt_in_requires_exact_value() -> None:
@@ -249,28 +286,41 @@ def test_http_probe_rejects_non_loopback_before_network(
         probe.model_discovery()
 
 
+def test_public_live_discovery_claim_without_nonce_bound_proof_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("reverso.kimi_live_proof.secrets.token_hex", lambda _: "a" * 64)
+
+    def request(method: str, url: str, **_: Any) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "model_discovery_source": "live",
+                "data": [{"id": "kimi-k2.5"}],
+            },
+            request=httpx.Request(method, url),
+        )
+
+    monkeypatch.setattr("reverso.kimi_live_proof.httpx.request", request)
+    probe = HttpLiveProofProbe(log_paths=())
+
+    with pytest.raises(ProofFailure, match="fallback_model_discovery"):
+        probe.model_discovery()
+
+
 def test_http_probe_codex_requires_profile_catalog_to_match_live_models(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    config_path = tmp_path / "config.toml"
-    config_path.write_text("", encoding="utf-8")
-    catalog_path = tmp_path / "kimi.json"
-    catalog_path.write_text(
-        json.dumps({"models": [{"slug": "kimi-k2.5"}, {"slug": "kimi-k2"}]}),
-        encoding="utf-8",
-    )
-    (tmp_path / "kimi.config.toml").write_text(
-        'model = "kimi-k2.5"\n'
-        'model_provider = "reverso_kimi"\n'
-        f'model_catalog_json = "{catalog_path}"\n',
-        encoding="utf-8",
-    )
+    config_path = _write_codex_fixture(tmp_path)
     monkeypatch.setenv("REVERSO_CODEX_CONFIG", str(config_path))
     calls: list[list[str]] = []
 
-    def runner(argv: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+    def runner(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
         calls.append(argv)
-        return subprocess.CompletedProcess(argv, 0, stdout="{}\n", stderr="")
+        assert kwargs["env"]["CODEX_HOME"] == str(tmp_path)
+        return subprocess.CompletedProcess(
+            argv, 0, stdout=_codex_success_output(), stderr=""
+        )
 
     probe = HttpLiveProofProbe(runner=runner, log_paths=())
     probe._live_models = ("kimi-k2.5", "kimi-k2")
@@ -284,17 +334,10 @@ def test_http_probe_codex_requires_profile_catalog_to_match_live_models(
 def test_http_probe_codex_rejects_catalog_drift_before_subprocess(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    config_path = tmp_path / "config.toml"
-    config_path.write_text("", encoding="utf-8")
+    config_path = _write_codex_fixture(tmp_path)
     catalog_path = tmp_path / "kimi.json"
     catalog_path.write_text(
         json.dumps({"models": [{"slug": "stale-kimi"}]}), encoding="utf-8"
-    )
-    (tmp_path / "kimi.config.toml").write_text(
-        'model = "kimi-k2.5"\n'
-        'model_provider = "reverso_kimi"\n'
-        f'model_catalog_json = "{catalog_path}"\n',
-        encoding="utf-8",
     )
     monkeypatch.setenv("REVERSO_CODEX_CONFIG", str(config_path))
 
@@ -306,6 +349,103 @@ def test_http_probe_codex_rejects_catalog_drift_before_subprocess(
 
     with pytest.raises(ProofFailure, match="codex_profile_mismatch"):
         probe.codex("kimi-k2.5")
+
+
+def test_http_probe_codex_rejects_non_loopback_provider_before_subprocess(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_path = _write_codex_fixture(tmp_path, base_url="https://example.com/kimi/v1")
+    monkeypatch.setenv("REVERSO_CODEX_CONFIG", str(config_path))
+
+    def tripwire(*_: Any, **__: Any) -> subprocess.CompletedProcess[str]:
+        raise AssertionError("subprocess must not run for a non-loopback provider")
+
+    probe = HttpLiveProofProbe(runner=tripwire, log_paths=())
+    probe._live_models = ("kimi-k2.5", "kimi-k2")
+
+    with pytest.raises(ProofFailure, match="codex_profile_mismatch"):
+        probe.codex("kimi-k2.5")
+
+
+@pytest.mark.parametrize("stdout", ["", "not-json\n", _codex_success_output("WRONG")])
+def test_http_probe_codex_zero_exit_requires_completed_controlled_marker(
+    stdout: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_path = _write_codex_fixture(tmp_path)
+    monkeypatch.setenv("REVERSO_CODEX_CONFIG", str(config_path))
+
+    def runner(argv: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(argv, 0, stdout=stdout, stderr="")
+
+    probe = HttpLiveProofProbe(runner=runner, log_paths=())
+    probe._live_models = ("kimi-k2.5", "kimi-k2")
+
+    with pytest.raises(ProofFailure, match="client_completion_invalid"):
+        probe.codex("kimi-k2.5")
+
+
+@pytest.mark.parametrize("stdout", ["", "WRONG\n"])
+def test_http_probe_claude_zero_exit_requires_controlled_marker(stdout: str) -> None:
+    def runner(argv: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(argv, 0, stdout=stdout, stderr="")
+
+    probe = HttpLiveProofProbe(runner=runner, log_paths=())
+
+    with pytest.raises(ProofFailure, match="client_completion_invalid"):
+        probe.claude_code("kimi-k2.5")
+
+
+def test_unrelated_headroom_traffic_cannot_mask_missing_controlled_increment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    probe = HttpLiveProofProbe(log_paths=())
+
+    def fake_request(method: str, route: str, **_: Any) -> tuple[dict[str, Any], int]:
+        assert method == "GET"
+        assert route.startswith("/usage/headroom/proof/")
+        return {"proof": {"responses": 0, "messages": 0}}, 1
+
+    monkeypatch.setattr(probe, "_json_request", fake_request)
+    probe._headroom_deltas = {
+        "responses": probe._correlated_headroom("a" * 64, "responses"),
+        "messages": 1,
+    }
+
+    with pytest.raises(ProofFailure, match="non_attributable_headroom"):
+        probe.headroom()
+
+
+def test_redaction_requires_known_credential_sentinel(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("KIMI_BEARER_TOKEN", raising=False)
+    monkeypatch.setenv("KIMI_CODE_HOME", str(tmp_path / "missing"))
+    log = tmp_path / "proxy.log"
+    log.write_text("", encoding="utf-8")
+    probe = HttpLiveProofProbe(log_paths=(log,))
+
+    with pytest.raises(ProofFailure, match="redaction_sentinel_unavailable"):
+        probe.redaction()
+
+
+@pytest.mark.parametrize("source", ["captured", "log"])
+def test_redaction_rejects_unlabeled_active_credential_value(
+    source: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sentinel = "opaque-active-kimi-value-7f0c9a"
+    monkeypatch.setenv("KIMI_BEARER_TOKEN", sentinel)
+    log = tmp_path / "proxy.log"
+    log.write_text("existing historical text\n", encoding="utf-8")
+    probe = HttpLiveProofProbe(log_paths=(log,))
+    if source == "captured":
+        probe._captured_text.append(sentinel)
+    else:
+        with log.open("a", encoding="utf-8") as handle:
+            handle.write(sentinel)
+
+    with pytest.raises(ProofFailure, match="redaction_failure") as exc_info:
+        probe.redaction()
+    assert sentinel not in str(exc_info.value)
 
 
 def test_runner_without_opt_in_writes_no_manifest(tmp_path: Path) -> None:

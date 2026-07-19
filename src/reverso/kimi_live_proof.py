@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import secrets
 import subprocess
 import time
 import tomllib
@@ -67,6 +68,11 @@ _SECRET_VALUE_RE = re.compile(
 _RESPONSE_ID_RE = re.compile(r"^resp_[A-Za-z0-9_-]+$")
 _CONTROLLED_PROMPT = (
     "Reply with exactly KIMI_PROOF_OK after reading this controlled proof request."
+)
+_CONTROLLED_MARKER = "KIMI_PROOF_OK"
+_PROOF_HEADER = "x-reverso-kimi-proof"
+_KIMI_CREDENTIAL_FIELDS = frozenset(
+    {"access_token", "refresh_token", "token", "api_key", "auth_token"}
 )
 
 
@@ -270,9 +276,23 @@ class HttpLiveProofProbe:
         self._captured_text: list[str] = []
         self._headroom_deltas: dict[str, int] = {}
         self._live_models: tuple[str, ...] = ()
+        self._credential_sentinels: set[str] = set()
+        self._log_offsets = {path: self._log_offset(path) for path in self.log_paths}
+
+    @staticmethod
+    def _log_offset(path: Path) -> int | None:
+        try:
+            return path.stat().st_size
+        except OSError:
+            return None
 
     def _json_request(
-        self, method: str, route: str, *, payload: dict[str, Any] | None = None
+        self,
+        method: str,
+        route: str,
+        *,
+        payload: dict[str, Any] | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> tuple[dict[str, Any], int]:
         self._require_loopback()
         started = time.monotonic()
@@ -281,6 +301,7 @@ class HttpLiveProofProbe:
                 method,
                 f"{self.base_url}{route}",
                 json=payload,
+                headers=dict(headers) if headers is not None else None,
                 timeout=self.timeout,
             )
             self._captured_text.append(response.text)
@@ -292,12 +313,15 @@ class HttpLiveProofProbe:
             raise ProofFailure("invalid_gateway_payload")
         return body, round((time.monotonic() - started) * 1000)
 
-    def _headroom_requests_seen(self) -> int:
-        body, _ = self._json_request("GET", "/usage/headroom")
-        headroom = body.get("headroom")
-        value = headroom.get("requests_seen") if isinstance(headroom, dict) else None
-        if not isinstance(value, int):
+    def _correlated_headroom(self, nonce: str, lane: str) -> int:
+        body, _ = self._json_request("GET", f"/usage/headroom/proof/{nonce}")
+        proof = body.get("proof")
+        if not isinstance(proof, dict) or set(proof) != {"responses", "messages"}:
             raise ProofFailure("invalid_headroom_metrics")
+        other = "messages" if lane == "responses" else "responses"
+        value = proof.get(lane)
+        if not isinstance(value, int) or proof.get(other) != 0:
+            raise ProofFailure("non_attributable_headroom")
         return value
 
     @staticmethod
@@ -316,8 +340,25 @@ class HttpLiveProofProbe:
             raise ProofFailure("non_loopback_route")
 
     def model_discovery(self) -> dict[str, Any]:
-        body, duration = self._json_request("GET", "/kimi/v1/models")
-        if body.get("model_discovery_source") != "live":
+        self._credential_sentinels.update(self._load_credential_sentinels())
+        nonce = secrets.token_hex(32)
+        body, duration = self._json_request(
+            "GET", "/kimi/v1/models", headers={_PROOF_HEADER: nonce}
+        )
+        proof = body.get("proof")
+        upstream_status = (
+            proof.get("authenticated_upstream_status")
+            if isinstance(proof, dict)
+            else None
+        )
+        if (
+            body.get("model_discovery_source") != "live"
+            or not isinstance(proof, dict)
+            or proof.get("nonce") != nonce
+            or not isinstance(upstream_status, int)
+            or not 200 <= upstream_status < 300
+            or proof.get("payload_validated") is not True
+        ):
             raise ProofFailure("fallback_model_discovery")
         data = body.get("data")
         ids = (
@@ -345,11 +386,13 @@ class HttpLiveProofProbe:
 
     def responses_continuity(self, model_id: str | None) -> dict[str, Any]:
         model = self._model(model_id)
-        before = self._headroom_requests_seen()
+        nonce = secrets.token_hex(32)
+        proof_headers = {_PROOF_HEADER: nonce}
         first, first_ms = self._json_request(
             "POST",
             "/kimi/v1/responses",
             payload={"model": model, "input": _CONTROLLED_PROMPT},
+            headers=proof_headers,
         )
         response_id = first.get("id")
         if not isinstance(response_id, str) or not _RESPONSE_ID_RE.match(response_id):
@@ -362,10 +405,13 @@ class HttpLiveProofProbe:
                 "input": _CONTROLLED_PROMPT,
                 "previous_response_id": response_id,
             },
+            headers=proof_headers,
         )
         if second.get("previous_response_id") != response_id:
             raise ProofFailure("continuity_failed")
-        self._headroom_deltas["responses"] = self._headroom_requests_seen() - before
+        self._headroom_deltas["responses"] = self._correlated_headroom(
+            nonce, "responses"
+        )
         usage = second.get("usage") if isinstance(second.get("usage"), dict) else {}
         return {
             "provider": "kimi",
@@ -381,7 +427,7 @@ class HttpLiveProofProbe:
 
     def messages(self, model_id: str | None) -> dict[str, Any]:
         model = self._model(model_id)
-        before = self._headroom_requests_seen()
+        nonce = secrets.token_hex(32)
         body, duration = self._json_request(
             "POST",
             "/kimi/v1/messages",
@@ -390,10 +436,11 @@ class HttpLiveProofProbe:
                 "max_tokens": 64,
                 "messages": [{"role": "user", "content": _CONTROLLED_PROMPT}],
             },
+            headers={_PROOF_HEADER: nonce},
         )
         if body.get("type") != "message":
             raise ProofFailure("invalid_messages_payload")
-        self._headroom_deltas["messages"] = self._headroom_requests_seen() - before
+        self._headroom_deltas["messages"] = self._correlated_headroom(nonce, "messages")
         usage = body.get("usage") if isinstance(body.get("usage"), dict) else {}
         return {
             "provider": "kimi",
@@ -407,7 +454,7 @@ class HttpLiveProofProbe:
 
     def _subprocess(
         self, argv: list[str], *, env: Mapping[str, str] | None = None
-    ) -> int:
+    ) -> tuple[subprocess.CompletedProcess[str], int]:
         started = time.monotonic()
         try:
             result = self.runner(
@@ -423,15 +470,42 @@ class HttpLiveProofProbe:
         self._captured_text.extend((result.stdout, result.stderr))
         if result.returncode != 0:
             raise ProofFailure("client_failed")
-        return round((time.monotonic() - started) * 1000)
+        return result, round((time.monotonic() - started) * 1000)
+
+    @staticmethod
+    def _codex_completed_marker(stdout: str) -> bool:
+        saw_completed = False
+        texts: list[str] = []
+        for line in stdout.splitlines():
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(event, dict):
+                continue
+            if event.get("type") == "turn.completed":
+                saw_completed = True
+            item = event.get("item")
+            if (
+                event.get("type") == "item.completed"
+                and isinstance(item, dict)
+                and item.get("type") == "agent_message"
+                and isinstance(item.get("text"), str)
+            ):
+                texts.append(item["text"])
+        return saw_completed and _CONTROLLED_MARKER in "\n".join(texts)
 
     def codex(self, model_id: str | None) -> dict[str, Any]:
         model = self._model(model_id)
         config_path = Path(
             os.environ.get("REVERSO_CODEX_CONFIG", Path.home() / ".codex/config.toml")
         ).expanduser()
+        if config_path.name != "config.toml":
+            raise ProofFailure("codex_profile_unavailable")
         profile_path = config_path.with_name("kimi.config.toml")
         try:
+            config_text = config_path.read_text(encoding="utf-8")
+            config = tomllib.loads(config_text)
             profile_text = profile_path.read_text(encoding="utf-8")
             profile = tomllib.loads(profile_text)
             catalog_path = Path(profile["model_catalog_json"]).expanduser()
@@ -439,7 +513,11 @@ class HttpLiveProofProbe:
             catalog = json.loads(catalog_text)
         except (OSError, KeyError, ValueError, tomllib.TOMLDecodeError) as exc:
             raise ProofFailure("codex_profile_unavailable") from exc
-        self._captured_text.extend((profile_text, catalog_text))
+        self._captured_text.extend((config_text, profile_text, catalog_text))
+        providers = config.get("model_providers") if isinstance(config, dict) else None
+        provider = (
+            providers.get("reverso_kimi") if isinstance(providers, dict) else None
+        )
         catalog_models = catalog.get("models") if isinstance(catalog, dict) else None
         catalog_slugs = (
             {row.get("slug") for row in catalog_models if isinstance(row, dict)}
@@ -449,11 +527,16 @@ class HttpLiveProofProbe:
         if (
             profile.get("model") != model
             or profile.get("model_provider") != "reverso_kimi"
+            or not isinstance(provider, dict)
+            or provider.get("base_url") != "http://127.0.0.1:64946/kimi/v1"
+            or provider.get("wire_api") != "responses"
             or not self._live_models
             or catalog_slugs != set(self._live_models)
         ):
             raise ProofFailure("codex_profile_mismatch")
-        duration = self._subprocess(
+        env = os.environ.copy()
+        env["CODEX_HOME"] = str(config_path.parent)
+        result, duration = self._subprocess(
             [
                 "codex",
                 "exec",
@@ -462,8 +545,11 @@ class HttpLiveProofProbe:
                 "--skip-git-repo-check",
                 "--json",
                 _CONTROLLED_PROMPT,
-            ]
+            ],
+            env=env,
         )
+        if not self._codex_completed_marker(result.stdout):
+            raise ProofFailure("client_completion_invalid")
         return {
             "provider": "kimi",
             "route": "/kimi/v1/responses",
@@ -476,9 +562,11 @@ class HttpLiveProofProbe:
         model = self._model(model_id)
         env = os.environ.copy()
         env["REVERSO_KIMI_MODEL"] = model
-        duration = self._subprocess(
+        result, duration = self._subprocess(
             ["scripts/claude-kimi.sh", "--print", _CONTROLLED_PROMPT], env=env
         )
+        if _CONTROLLED_MARKER not in result.stdout:
+            raise ProofFailure("client_completion_invalid")
         return {
             "provider": "kimi",
             "route": "/kimi/v1/messages",
@@ -495,14 +583,44 @@ class HttpLiveProofProbe:
     def redaction(self) -> dict[str, Any]:
         for path in self.log_paths:
             try:
-                self._captured_text.append(path.read_text(encoding="utf-8"))
+                offset = self._log_offsets[path]
+                with path.open("r", encoding="utf-8") as handle:
+                    if offset is not None:
+                        handle.seek(offset)
+                    self._captured_text.append(handle.read())
             except (OSError, UnicodeError) as exc:
                 raise ProofFailure("log_scan_unavailable") from exc
-        sentinel = os.environ.get("REVERSO_KIMI_SECRET_SENTINEL")
+        self._credential_sentinels.update(self._load_credential_sentinels())
+        if not self._credential_sentinels:
+            raise ProofFailure("redaction_sentinel_unavailable")
         for text in self._captured_text:
-            if _SECRET_VALUE_RE.search(text) or (sentinel and sentinel in text):
+            if _SECRET_VALUE_RE.search(text) or any(
+                sentinel in text for sentinel in self._credential_sentinels
+            ):
                 raise ProofFailure("redaction_failure")
         return {"provider": "kimi", "status": 0}
+
+    @staticmethod
+    def _load_credential_sentinels() -> set[str]:
+        sentinels: set[str] = set()
+        bearer = os.environ.get("KIMI_BEARER_TOKEN", "").strip()
+        if bearer:
+            sentinels.add(bearer)
+        kimi_home = Path(os.environ.get("KIMI_CODE_HOME") or Path.home() / ".kimi-code")
+        path = kimi_home / "credentials" / "kimi-code.json"
+        try:
+            artifact = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            artifact = None
+        if isinstance(artifact, dict):
+            for key, value in artifact.items():
+                if (
+                    key.lower() in _KIMI_CREDENTIAL_FIELDS
+                    and isinstance(value, str)
+                    and value.strip()
+                ):
+                    sentinels.add(value.strip())
+        return sentinels
 
     def loopback(self) -> dict[str, Any]:
         self._require_loopback()

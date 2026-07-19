@@ -473,6 +473,51 @@ async def test_live_model_listing_uses_kimi_bearer(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_live_model_proof_binds_validated_upstream_to_nonce(
+    tmp_path: Path,
+) -> None:
+    token_path = tmp_path / "kimi-code.json"
+    _write_token(token_path, access_token=OAUTH_SENTINEL, expires_at=time.time() + 3600)
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": [{"id": "kimi-k2.5"}]})
+
+    adapter = KimiAdapter(
+        auth=KimiOAuthAuth(credentials_path=token_path),
+        client_factory=lambda: _client(handler),
+    )
+    nonce = "a" * 64
+
+    models, proof = await adapter.list_models_with_proof(nonce)
+
+    assert models.discovery_source == "live"
+    assert proof == {
+        "nonce": nonce,
+        "authenticated_upstream_status": 200,
+        "payload_validated": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_model_proof_rejects_fallback_even_with_public_fallback_id(
+    tmp_path: Path,
+) -> None:
+    token_path = tmp_path / "kimi-code.json"
+    _write_token(token_path, access_token=OAUTH_SENTINEL, expires_at=time.time() + 3600)
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": [{"id": ""}]})
+
+    adapter = KimiAdapter(
+        auth=KimiOAuthAuth(credentials_path=token_path),
+        client_factory=lambda: _client(handler),
+    )
+
+    with pytest.raises(KimiError, match="proof unavailable"):
+        await adapter.list_models_with_proof("a" * 64)
+
+
+@pytest.mark.asyncio
 async def test_model_listing_deduplicates_ids_and_marks_fallback_provenance(
     tmp_path: Path,
 ) -> None:

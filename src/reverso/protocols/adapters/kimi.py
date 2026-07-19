@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import tempfile
 import time
 from collections.abc import AsyncIterator
@@ -316,6 +317,25 @@ class KimiAdapter(DeepSeekAdapter):
         return super()._finalize_streaming_envelope(request, **kwargs)
 
     async def list_models(self) -> ModelList:
+        models, _ = await self._list_models_with_provenance()
+        return models
+
+    async def list_models_with_proof(
+        self, nonce: str
+    ) -> tuple[ModelList, dict[str, Any]]:
+        """Return a nonce-bound attestation only for validated live upstream data."""
+        if re.fullmatch(r"[a-f0-9]{64}", nonce) is None:
+            raise KimiError("invalid Kimi proof nonce")
+        models, upstream_status = await self._list_models_with_provenance()
+        if models.discovery_source != "live" or upstream_status is None:
+            raise KimiError("authenticated Kimi model proof unavailable")
+        return models, {
+            "nonce": nonce,
+            "authenticated_upstream_status": upstream_status,
+            "payload_validated": True,
+        }
+
+    async def _list_models_with_provenance(self) -> tuple[ModelList, int | None]:
         self._model_discovery_source = "fallback"
         try:
             headers = await self._headers()
@@ -356,7 +376,9 @@ class KimiAdapter(DeepSeekAdapter):
                     )
                 if data:
                     self._model_discovery_source = "live"
-                    return ModelList(data=data, discovery_source="live")
+                    return ModelList(
+                        data=data, discovery_source="live"
+                    ), response.status_code
         except (KimiError, httpx.HTTPError, ValueError) as exc:
             logger.warning("kimi model listing unavailable (%s)", type(exc).__name__)
         return ModelList(
@@ -369,7 +391,7 @@ class KimiAdapter(DeepSeekAdapter):
                 }
             ],
             discovery_source="fallback",
-        )
+        ), None
 
 
 def _parse_kimi_stream_line(line: bytes) -> dict[str, Any] | None:

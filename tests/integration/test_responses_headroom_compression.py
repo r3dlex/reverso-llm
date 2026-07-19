@@ -18,6 +18,7 @@ from reverso.protocols.adapter import (
     SSEEvent,
 )
 from reverso.protocols.headroom_compression import HeadroomCompressionOutcome
+from reverso.protocols.proof_correlation import DEFAULT_PROOF_CORRELATION
 from reverso.protocols.responses_app import APP_PROVIDER_PREFIXES, build_app
 
 BASE_URL = "http://127.0.0.1:64946"
@@ -105,6 +106,31 @@ def _text_from_input_items(payload: dict[str, Any]) -> str:
     return "".join(
         part["text"] for part in item["content"] if part["type"] == "input_text"
     )
+
+
+@pytest.mark.asyncio
+async def test_responses_proof_nonce_records_only_correlated_headroom_attempt() -> None:
+    DEFAULT_PROOF_CORRELATION.reset()
+    nonce = "a" * 64
+    unrelated = "b" * 64
+    adapters = {name: SpyAdapter() for name in RESPONSES_PROVIDERS}
+
+    async with _client(adapters) as client:
+        response = await client.post(
+            "/kimi/v1/responses",
+            headers={"x-reverso-kimi-proof": nonce},
+            json={"model": "m", "input": "controlled"},
+        )
+
+    assert response.status_code == 200
+    assert DEFAULT_PROOF_CORRELATION.consume(nonce) == {
+        "responses": 1,
+        "messages": 0,
+    }
+    assert DEFAULT_PROOF_CORRELATION.consume(unrelated) == {
+        "responses": 0,
+        "messages": 0,
+    }
 
 
 @pytest.mark.asyncio
