@@ -81,3 +81,23 @@ def test_readme_preserves_codex_selector_invariants() -> None:
     ]
     for needle in expected:
         assert needle in selector_rules
+
+
+def test_kimi_claude_code_guide_is_provider_pinned_and_reversible() -> None:
+    text = Path("docs/claude-code-kimi.md").read_text()
+
+    expected = [
+        "http://127.0.0.1:64946/kimi",
+        "http://127.0.0.1:64946/kimi/v1/messages",
+        "REVERSO_KIMI_MODEL",
+        "kimi-k2.5",
+        "model_discovery_source",
+        "scripts/claude-kimi.sh",
+        "Rollback",
+        "does not write",
+        "reverso-claude-code-sync",
+    ]
+    for needle in expected:
+        assert needle in text
+
+    assert "~/.claude/settings.json" in text

@@ -92,7 +92,8 @@ Reverso owns one loopback port and chooses a backend from the request surface an
 | OpenAI Responses | `/copilot/v1` | GitHub Copilot upstream |
 | OpenAI Responses | `/auggie/v1` | Auggie CLI |
 | OpenAI Responses | `/deepseek/v1` | Direct DeepSeek HTTP API |
-| Anthropic Messages | `/v1/messages` | Model-routed to Claude, Codex, Copilot, Auggie, or DeepSeek |
+| OpenAI Responses | `/kimi/v1` | Kimi Code subscription OAuth |
+| Anthropic Messages | `/v1/messages` | Model-routed to Claude, Codex, Copilot, Auggie, DeepSeek, or Kimi |
 
 The OpenAI-compatible provider base URL ends at `/<provider>/v1`; clients append `/responses` or `/models`. The inbound Anthropic surface is translation-only: it accepts Messages requests but does not proxy them to `api.anthropic.com`. The Claude worker scrubs Reverso-related Anthropic environment variables before spawning the CLI so it cannot loop back into the gateway.
 
@@ -195,6 +196,7 @@ The bundled `./scripts/smoke.sh` checks readiness, discovery, usage, and a live 
 - [Single-port composition](docs/architecture/adr/0003-single-port-composition-auggie-deepseek.md)
 - [Provider-qualified Anthropic routing](docs/architecture/adr/0008-provider-qualified-model-routing.md)
 - [Claude on the Anthropic surface](docs/architecture/adr/0009-claude-on-anthropic-surface.md)
+- [Claude Code with the Kimi provider](docs/claude-code-kimi.md)
 - [Codex Responses parity matrix](docs/architecture/codex-responses-parity-matrix.md)
 - [Anthropic surface verification](docs/anthropic-surface-verification.md)
 - [Copilot picker surface separation](docs/learning/copilot-picker-surface-separation.md)
