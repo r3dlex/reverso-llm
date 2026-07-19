@@ -1,12 +1,13 @@
 {
-  "$schema_note": "Per-feature classification per provider. Values: native | translated | unsupported | partial. 'partial' is used only where the adapter handles a subset of the feature and the remainder is unsupported_feature; the parity doc must spell out the boundary. Source: read of src/reverso/protocols/adapters/{claude,copilot,auggie,deepseek}.py at 2026-06-10. B1 generates capability tables from this JSON. SURFACE NOTE (Milestone 2, G006): the codex column's Responses-side endpoint/event entries are present for TABLE RECTANGULARITY ONLY and are NOT a Responses-surface grant; codex is an Anthropic-surface-only backend (gpt models served first-party via `codex exec` under ChatGPT OAuth, ADR 0007), and its absence from the Responses surface is enforced by tests/integration/test_codex_responses_exclusion.py.",
-  "providers": ["claude", "copilot", "auggie", "deepseek", "codex"],
+  "$schema_note": "Per-feature classification per provider. Values: native | translated | unsupported | partial. 'partial' is used only where the adapter handles a subset of the feature and the remainder is unsupported_feature; the parity doc must spell out the boundary. Source: read of src/reverso/protocols/adapters/{claude,copilot,auggie,deepseek}.py at 2026-06-10. B1 generates capability tables from this JSON. SURFACE NOTE (Milestone 2, G006): the codex column's Responses-side endpoint/event entries are present for TABLE RECTANGULARITY ONLY and are NOT a Responses-surface grant; codex is an Anthropic-surface-only backend (gpt models served first-party via `codex exec` under ChatGPT OAuth, ADR 0007), and its absence from the Responses surface is enforced by tests/integration/test_codex_responses_exclusion.py. Kimi classifications mirror the OpenAI-compatible DeepSeek translation ceiling; Kimi uses subscription OAuth and may expose upstream capabilities that Reverso does not yet translate.",
+  "providers": ["claude", "copilot", "auggie", "deepseek", "codex", "kimi"],
   "features": {
     "input.string": {
       "claude": "native",
       "copilot": "native",
       "auggie": "native",
       "deepseek": "native",
+      "kimi": "native",
       "codex": "native"
     },
     "input.message_list_text": {
@@ -14,6 +15,7 @@
       "copilot": "native",
       "auggie": "translated",
       "deepseek": "translated",
+      "kimi": "translated",
       "codex": "translated"
     },
     "input.image": {
@@ -21,6 +23,7 @@
       "copilot": "native",
       "auggie": "unsupported",
       "deepseek": "unsupported",
+      "kimi": "unsupported",
       "codex": "unsupported"
     },
     "input.file": {
@@ -28,6 +31,7 @@
       "copilot": "native",
       "auggie": "unsupported",
       "deepseek": "unsupported",
+      "kimi": "unsupported",
       "codex": "unsupported"
     },
     "instructions": {
@@ -35,6 +39,7 @@
       "copilot": "native",
       "auggie": "translated",
       "deepseek": "translated",
+      "kimi": "translated",
       "codex": "translated"
     },
     "previous_response_id": {
@@ -42,6 +47,7 @@
       "copilot": "native",
       "auggie": "native",
       "deepseek": "native",
+      "kimi": "native",
       "codex": "native"
     },
     "store": {
@@ -49,6 +55,7 @@
       "copilot": "native",
       "auggie": "native",
       "deepseek": "native",
+      "kimi": "native",
       "codex": "native"
     },
     "stream": {
@@ -56,6 +63,7 @@
       "copilot": "native",
       "auggie": "translated",
       "deepseek": "translated",
+      "kimi": "translated",
       "codex": "translated"
     },
     "stream.incremental_deltas": {
@@ -63,6 +71,7 @@
       "copilot": "native",
       "auggie": "unsupported",
       "deepseek": "translated",
+      "kimi": "translated",
       "codex": "unsupported"
     },
     "tools.function": {
@@ -70,6 +79,7 @@
       "copilot": "native",
       "auggie": "partial",
       "deepseek": "translated",
+      "kimi": "translated",
       "codex": "partial"
     },
     "tools.web_search": {
@@ -77,6 +87,7 @@
       "copilot": "native",
       "auggie": "partial",
       "deepseek": "partial",
+      "kimi": "partial",
       "codex": "partial"
     },
     "tools.file_search": {
@@ -84,6 +95,7 @@
       "copilot": "native",
       "auggie": "unsupported",
       "deepseek": "unsupported",
+      "kimi": "unsupported",
       "codex": "unsupported"
     },
     "tools.computer_use": {
@@ -91,6 +103,7 @@
       "copilot": "unsupported",
       "auggie": "unsupported",
       "deepseek": "unsupported",
+      "kimi": "unsupported",
       "codex": "unsupported"
     },
     "tools.code_interpreter": {
@@ -98,6 +111,7 @@
       "copilot": "unsupported",
       "auggie": "unsupported",
       "deepseek": "unsupported",
+      "kimi": "unsupported",
       "codex": "unsupported"
     },
     "tool_choice.auto": {
@@ -105,6 +119,7 @@
       "copilot": "native",
       "auggie": "partial",
       "deepseek": "translated",
+      "kimi": "translated",
       "codex": "partial"
     },
     "tool_choice.required": {
@@ -112,6 +127,7 @@
       "copilot": "native",
       "auggie": "unsupported",
       "deepseek": "translated",
+      "kimi": "translated",
       "codex": "unsupported"
     },
     "tool_choice.named": {
@@ -119,6 +135,7 @@
       "copilot": "native",
       "auggie": "unsupported",
       "deepseek": "translated",
+      "kimi": "translated",
       "codex": "unsupported"
     },
     "tool_choice.none": {
@@ -126,6 +143,7 @@
       "copilot": "native",
       "auggie": "unsupported",
       "deepseek": "translated",
+      "kimi": "translated",
       "codex": "unsupported"
     },
     "parallel_tool_calls": {
@@ -133,6 +151,7 @@
       "copilot": "native",
       "auggie": "partial",
       "deepseek": "translated",
+      "kimi": "translated",
       "codex": "partial"
     },
     "reasoning.effort": {
@@ -140,6 +159,7 @@
       "copilot": "native",
       "auggie": "unsupported",
       "deepseek": "translated",
+      "kimi": "translated",
       "codex": "unsupported"
     },
     "reasoning.summary": {
@@ -147,6 +167,7 @@
       "copilot": "native",
       "auggie": "unsupported",
       "deepseek": "translated",
+      "kimi": "translated",
       "codex": "unsupported"
     },
     "sampling.temperature": {
@@ -154,6 +175,7 @@
       "copilot": "native",
       "auggie": "unsupported",
       "deepseek": "translated",
+      "kimi": "translated",
       "codex": "unsupported"
     },
     "sampling.top_p": {
@@ -161,6 +183,7 @@
       "copilot": "native",
       "auggie": "unsupported",
       "deepseek": "translated",
+      "kimi": "translated",
       "codex": "unsupported"
     },
     "max_output_tokens": {
@@ -168,6 +191,7 @@
       "copilot": "native",
       "auggie": "unsupported",
       "deepseek": "translated",
+      "kimi": "translated",
       "codex": "unsupported"
     },
     "truncation": {
@@ -175,6 +199,7 @@
       "copilot": "native",
       "auggie": "unsupported",
       "deepseek": "unsupported",
+      "kimi": "unsupported",
       "codex": "unsupported"
     },
     "metadata": {
@@ -182,6 +207,7 @@
       "copilot": "native",
       "auggie": "unsupported",
       "deepseek": "unsupported",
+      "kimi": "unsupported",
       "codex": "unsupported"
     },
     "include": {
@@ -189,6 +215,7 @@
       "copilot": "native",
       "auggie": "unsupported",
       "deepseek": "unsupported",
+      "kimi": "unsupported",
       "codex": "unsupported"
     },
     "background": {
@@ -196,6 +223,7 @@
       "copilot": "native",
       "auggie": "unsupported",
       "deepseek": "unsupported",
+      "kimi": "unsupported",
       "codex": "unsupported"
     },
     "text.format.text": {
@@ -203,6 +231,7 @@
       "copilot": "native",
       "auggie": "native",
       "deepseek": "native",
+      "kimi": "native",
       "codex": "native"
     },
     "text.format.json_schema": {
@@ -210,6 +239,7 @@
       "copilot": "native",
       "auggie": "unsupported",
       "deepseek": "translated",
+      "kimi": "translated",
       "codex": "unsupported"
     },
     "text.format.json_object": {
@@ -217,6 +247,7 @@
       "copilot": "native",
       "auggie": "unsupported",
       "deepseek": "translated",
+      "kimi": "translated",
       "codex": "unsupported"
     },
     "service_tier": {
@@ -224,6 +255,7 @@
       "copilot": "native",
       "auggie": "unsupported",
       "deepseek": "unsupported",
+      "kimi": "unsupported",
       "codex": "unsupported"
     },
     "user": {
@@ -231,6 +263,7 @@
       "copilot": "native",
       "auggie": "unsupported",
       "deepseek": "translated",
+      "kimi": "translated",
       "codex": "unsupported"
     },
     "safety_identifier": {
@@ -238,6 +271,7 @@
       "copilot": "native",
       "auggie": "unsupported",
       "deepseek": "unsupported",
+      "kimi": "unsupported",
       "codex": "unsupported"
     },
     "thinking": {
@@ -245,6 +279,7 @@
       "copilot": "unsupported",
       "auggie": "unsupported",
       "deepseek": "unsupported",
+      "kimi": "unsupported",
       "codex": "unsupported"
     },
     "caching.cache_control": {
@@ -252,6 +287,7 @@
       "copilot": "unsupported",
       "auggie": "unsupported",
       "deepseek": "unsupported",
+      "kimi": "unsupported",
       "codex": "unsupported"
     }
   },
@@ -261,6 +297,7 @@
       "copilot": "native",
       "auggie": "native",
       "deepseek": "native",
+      "kimi": "native",
       "codex": "native"
     },
     "GET /v1/responses/{id}": {
@@ -268,6 +305,7 @@
       "copilot": "native",
       "auggie": "native",
       "deepseek": "native",
+      "kimi": "native",
       "codex": "native"
     },
     "GET /v1/responses/{id}/input_items": {
@@ -275,6 +313,7 @@
       "copilot": "native",
       "auggie": "native",
       "deepseek": "native",
+      "kimi": "native",
       "codex": "native"
     },
     "POST /v1/responses/{id}/cancel": {
@@ -282,6 +321,7 @@
       "copilot": "unsupported",
       "auggie": "unsupported",
       "deepseek": "unsupported",
+      "kimi": "unsupported",
       "codex": "unsupported"
     },
     "GET /v1/models": {
@@ -289,22 +329,23 @@
       "copilot": "native",
       "auggie": "native",
       "deepseek": "native",
+      "kimi": "native",
       "codex": "native"
     }
   },
   "events_emitted": {
-    "response.created": ["claude", "copilot", "auggie", "deepseek", "codex"],
-    "response.in_progress": ["claude", "copilot", "auggie", "deepseek", "codex"],
-    "response.output_item.added": ["claude", "copilot", "auggie", "deepseek", "codex"],
-    "response.content_part.added": ["claude", "copilot", "auggie", "deepseek", "codex"],
-    "response.output_text.delta": ["claude", "copilot", "auggie", "deepseek", "codex"],
-    "response.output_text.done": ["claude", "copilot", "auggie", "deepseek", "codex"],
-    "response.content_part.done": ["claude", "copilot", "auggie", "deepseek", "codex"],
-    "response.output_item.done": ["claude", "copilot", "auggie", "deepseek", "codex"],
-    "response.completed": ["claude", "copilot", "auggie", "deepseek", "codex"],
-    "response.failed": ["claude", "copilot", "auggie", "deepseek", "codex"],
+    "response.created": ["claude", "copilot", "auggie", "deepseek", "codex", "kimi"],
+    "response.in_progress": ["claude", "copilot", "auggie", "deepseek", "codex", "kimi"],
+    "response.output_item.added": ["claude", "copilot", "auggie", "deepseek", "codex", "kimi"],
+    "response.content_part.added": ["claude", "copilot", "auggie", "deepseek", "codex", "kimi"],
+    "response.output_text.delta": ["claude", "copilot", "auggie", "deepseek", "codex", "kimi"],
+    "response.output_text.done": ["claude", "copilot", "auggie", "deepseek", "codex", "kimi"],
+    "response.content_part.done": ["claude", "copilot", "auggie", "deepseek", "codex", "kimi"],
+    "response.output_item.done": ["claude", "copilot", "auggie", "deepseek", "codex", "kimi"],
+    "response.completed": ["claude", "copilot", "auggie", "deepseek", "codex", "kimi"],
+    "response.failed": ["claude", "copilot", "auggie", "deepseek", "codex", "kimi"],
     "response.refusal.delta": ["copilot"],
     "response.reasoning_summary_text.delta": ["copilot"],
-    "response.function_call_arguments.delta": ["copilot", "deepseek"]
+    "response.function_call_arguments.delta": ["copilot", "deepseek", "kimi"]
   }
 }
