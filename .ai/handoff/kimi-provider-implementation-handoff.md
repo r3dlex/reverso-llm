@@ -1,6 +1,6 @@
 ---
 title: Kimi provider implementation handoff
-status: implementation-ready
+status: ready-for-human
 slug: kimi-subscription-provider
 date: 2026-07-19
 ---
@@ -194,6 +194,26 @@ The handoff is complete only when:
 5. A credentialed local smoke passes, or the lack of credentials is explicitly
    recorded as the only remaining validation gap.
 6. Any unrelated baseline failures are reported separately with exact test ids.
+
+## Release candidate evidence
+
+The implementation reached the ready-for-human release boundary on 2026-07-19.
+
+- The trusted-machine manifest passed all eight required Kimi checks: live model
+  discovery, Responses continuity, Messages, Codex, Claude Code, Headroom,
+  redaction, and loopback.
+- The pre-install offline gate passed 770 unit tests and 252 integration tests
+  with 6 documented skips, plus compilation, JSON, TOML, and diff validation.
+- Both generated LaunchAgent plists validated with the candidate checkout and
+  the proxy remained pinned to `127.0.0.1:64946`.
+- The operator smoke and Kimi live proof passed against the installed candidate.
+- Rollback restored both original LaunchAgent plist hashes, both original
+  working directories, and readiness returned HTTP 200.
+- The ignored evidence manifests were written mode `0600`; they contain only
+  allowlisted status metadata and are not committed.
+
+The implementation remains unmerged. Host policy and independent final review
+remain the authority for moving beyond ready-for-human.
 
 ## Human setup handout
 

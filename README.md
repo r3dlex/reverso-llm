@@ -42,7 +42,7 @@ uv sync --frozen
 ./scripts/install-launchagents.sh
 ```
 
-The installer writes and loads two user LaunchAgents, then stores logs under `~/Library/Logs/reverso/`. It is safe to rerun after an update.
+The installer writes and loads two user LaunchAgents, then stores logs under `~/Library/Logs/reverso/`. It is safe to rerun after an update. Kimi release candidates use the backup-first [Kimi release and rollback runbook](docs/kimi-release-runbook.md).
 
 Confirm that the loopback gateway is ready:
 
@@ -176,6 +176,7 @@ The uninstall script removes generated user LaunchAgent files. It does not delet
 | A Codex provider profile is missing | `uv run reverso-codex-sync --dry-run` | Start the gateway, confirm `/<provider>/v1/models` responds, then rerun the sync without `--dry-run`. |
 | Wrong models appear in a provider picker | Inspect `~/.codex/reverso/<provider>.json` | Do not edit generated catalogs. Rerun `uv run reverso-codex-sync`; catalogs are surface-scoped. |
 | DeepSeek returns 503 | `security find-generic-password -s reverso/DEEPSEEK_API_KEY -w` | Store the key with `./scripts/keychain-set.sh`, then restart the proxy LaunchAgent. |
+| Kimi discovery is not live | `curl -fsS http://127.0.0.1:64946/kimi/v1/models` | Run `kimi /login`, restart the proxy LaunchAgent, and require `model_discovery_source` to be `live` before syncing clients. |
 | A managed config edit is unexpected | Inspect `~/.codex/config.toml.reverso-sync.*` | Restore the newest backup if needed, then use `--dry-run` before syncing again. |
 
 For a foreground traceback, stop the proxy LaunchAgent temporarily and run:
@@ -197,6 +198,7 @@ The bundled `./scripts/smoke.sh` checks readiness, discovery, usage, and a live 
 - [Provider-qualified Anthropic routing](docs/architecture/adr/0008-provider-qualified-model-routing.md)
 - [Claude on the Anthropic surface](docs/architecture/adr/0009-claude-on-anthropic-surface.md)
 - [Claude Code with the Kimi provider](docs/claude-code-kimi.md)
+- [Kimi release and rollback runbook](docs/kimi-release-runbook.md)
 - [Codex Responses parity matrix](docs/architecture/codex-responses-parity-matrix.md)
 - [Anthropic surface verification](docs/anthropic-surface-verification.md)
 - [Copilot picker surface separation](docs/learning/copilot-picker-surface-separation.md)

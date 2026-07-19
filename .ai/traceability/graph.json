@@ -2,7 +2,7 @@
   "schema_version": "1.1",
   "root_repo_id": "reverso-root",
   "topology_type": "standalone",
-  "generated_at": "2026-06-28T00:00:00Z",
+  "generated_at": "2026-07-19T09:30:00Z",
   "nodes": [
     {
       "id": "adr:reverso-root:init",
@@ -284,6 +284,69 @@
       "backlinks": [
         "plan:reverso-root:northstar-anthropic-prepare-request-seam"
       ]
+    },
+    {
+      "id": "issue:reverso-root:kimi-subscription-provider",
+      "type": "issue",
+      "title": "Kimi subscription provider for Codex and Claude Code",
+      "status": "ready-for-human",
+      "repo_id": "reverso-root",
+      "path": ".ai/work-intake/kimi-subscription-provider.md",
+      "backlinks": []
+    },
+    {
+      "id": "spec:reverso-root:kimi-subscription-provider",
+      "type": "specification",
+      "title": "Kimi subscription provider",
+      "status": "active",
+      "repo_id": "reverso-root",
+      "path": "docs/specifications/ACTIVE/kimi-subscription-provider.md",
+      "backlinks": [
+        "issue:reverso-root:kimi-subscription-provider",
+        "adr:reverso-root:kimi-code-oauth-provider"
+      ]
+    },
+    {
+      "id": "adr:reverso-root:kimi-code-oauth-provider",
+      "type": "adr",
+      "title": "Kimi Code OAuth provider",
+      "status": "accepted",
+      "repo_id": "reverso-root",
+      "path": "docs/architecture/adr/0017-kimi-code-oauth-provider.md",
+      "backlinks": []
+    },
+    {
+      "id": "handoff:reverso-root:kimi-provider-implementation",
+      "type": "handoff",
+      "title": "Kimi provider implementation handoff",
+      "status": "ready-for-human",
+      "repo_id": "reverso-root",
+      "path": ".ai/handoff/kimi-provider-implementation-handoff.md",
+      "backlinks": [
+        "spec:reverso-root:kimi-subscription-provider"
+      ]
+    },
+    {
+      "id": "plan:reverso-root:northstar-kimi-subscription-provider",
+      "type": "plan",
+      "title": "northstar sliced plan: kimi-subscription-provider",
+      "status": "active",
+      "repo_id": "reverso-root",
+      "path": ".ai/handoff/northstar-kimi-subscription-provider.md",
+      "backlinks": [
+        "issue:reverso-root:kimi-subscription-provider"
+      ]
+    },
+    {
+      "id": "handoff:reverso-root:northstar-kimi-subscription-provider",
+      "type": "handoff",
+      "title": "northstar A-to-B handoff: kimi-subscription-provider",
+      "status": "ready-for-human",
+      "repo_id": "reverso-root",
+      "path": ".ai/handoff/northstar-kimi-subscription-provider.md",
+      "backlinks": [
+        "plan:reverso-root:northstar-kimi-subscription-provider"
+      ]
     }
   ],
   "edges": [
@@ -419,6 +482,41 @@
       "relation": "summarized-by",
       "created_by": "northstar",
       "evidence_path": ".ai/handoff/northstar-anthropic-prepare-request-seam.md"
+    },
+    {
+      "source": "issue:reverso-root:kimi-subscription-provider",
+      "target": "spec:reverso-root:kimi-subscription-provider",
+      "relation": "defined-by",
+      "created_by": "northstar",
+      "evidence_path": ".ai/work-intake/kimi-subscription-provider.md"
+    },
+    {
+      "source": "adr:reverso-root:kimi-code-oauth-provider",
+      "target": "spec:reverso-root:kimi-subscription-provider",
+      "relation": "constrains",
+      "created_by": "northstar",
+      "evidence_path": "docs/architecture/adr/0017-kimi-code-oauth-provider.md"
+    },
+    {
+      "source": "spec:reverso-root:kimi-subscription-provider",
+      "target": "handoff:reverso-root:kimi-provider-implementation",
+      "relation": "summarized-by",
+      "created_by": "diagnose",
+      "evidence_path": ".ai/handoff/kimi-provider-implementation-handoff.md"
+    },
+    {
+      "source": "issue:reverso-root:kimi-subscription-provider",
+      "target": "plan:reverso-root:northstar-kimi-subscription-provider",
+      "relation": "decomposes-to",
+      "created_by": "northstar",
+      "evidence_path": ".ai/handoff/northstar-kimi-subscription-provider.md"
+    },
+    {
+      "source": "plan:reverso-root:northstar-kimi-subscription-provider",
+      "target": "handoff:reverso-root:northstar-kimi-subscription-provider",
+      "relation": "summarized-by",
+      "created_by": "northstar",
+      "evidence_path": ".ai/handoff/northstar-kimi-subscription-provider.md"
     }
   ],
   "coverage": {

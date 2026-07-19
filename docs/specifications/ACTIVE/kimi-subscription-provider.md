@@ -219,6 +219,16 @@ prompt-free.
 15. A credentialed local smoke verifies one Responses request and one
     Anthropic Messages request without exposing the token in logs or output.
 
+## Implementation status
+
+The implementation is a ready-for-human release candidate as of 2026-07-19.
+All acceptance criteria have local evidence. The credentialed proof passed all
+eight required lanes, the installed candidate passed smoke on
+`127.0.0.1:64946`, and rollback restored the original LaunchAgent files and
+healthy runtime. The specification remains active until the stacked pull
+requests are reviewed, pass exact-head hosted CI, receive host-policy merge
+authority, and merge.
+
 ## Test strategy
 
 ### Offline unit tests
