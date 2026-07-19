@@ -50,6 +50,7 @@ REVERSO_ROUTED_CODEX_PROFILE_PREFIXES: tuple[str, ...] = (
     "copilot",
     "auggie",
     "deepseek",
+    "kimi",
 )
 CODEX_DIRECT_BACKEND_ENV = "REVERSO_CODEX_DIRECT_BACKEND"
 OPENAI_BACKEND_ENV = "REVERSO_OPENAI_BACKEND"
@@ -57,6 +58,7 @@ REVERSO_HOST_ENV = "REVERSO_HOST"
 _CODEX_DIRECT_PROFILE_PREFIX = "codex-direct"
 _OPENAI_PROFILE_PREFIX = "openai-pass-through"
 DEEPSEEK_CODEX_PROFILE_DEFAULT = "deepseek-v4-pro"
+KIMI_CODEX_PROFILE_DEFAULT = "kimi-k2.5"
 DIRECT_CODEX_PROFILE_SPECS: tuple[CodexProfileSpec, ...] = (
     CodexProfileSpec(
         prefix="openai",
@@ -132,6 +134,8 @@ def codex_profile_default_model(prefix: str, models: tuple[str, ...]) -> str:
     """Return the default model for a provider-name Codex profile."""
     if prefix == "deepseek" and DEEPSEEK_CODEX_PROFILE_DEFAULT in models:
         return DEEPSEEK_CODEX_PROFILE_DEFAULT
+    if prefix == "kimi" and KIMI_CODEX_PROFILE_DEFAULT in models:
+        return KIMI_CODEX_PROFILE_DEFAULT
     return models[0]
 
 
@@ -215,6 +219,8 @@ def catalog_display_name(prefix: str, model_id: str) -> str:
         return f"Claude (Claude Code) {model_id}"
     if prefix == "deepseek":
         return f"DeepSeek {model_id}"
+    if prefix == "kimi":
+        return f"Kimi {model_id}"
     if prefix == "codex-direct":
         return f"Codex Direct (OAuth) {model_id}"
     if prefix == "openai-pass-through":

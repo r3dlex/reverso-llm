@@ -92,6 +92,7 @@ def test_model_exposure_owns_codex_profile_sync_prefixes() -> None:
         "copilot",
         "auggie",
         "deepseek",
+        "kimi",
         "codex-direct",
     )
     assert reverso_routed_codex_profile_prefixes(
@@ -102,12 +103,14 @@ def test_model_exposure_owns_codex_profile_sync_prefixes() -> None:
         "copilot",
         "auggie",
         "deepseek",
+        "kimi",
     )
     assert reverso_routed_codex_profile_prefixes({REVERSO_HOST_ENV: "0.0.0.0"}) == (
         "claude",
         "copilot",
         "auggie",
         "deepseek",
+        "kimi",
     )
     assert reverso_routed_codex_profile_prefixes(
         {REVERSO_HOST_ENV: "0.0.0.0", CODEX_DIRECT_BACKEND_ENV: "1"}
@@ -116,12 +119,14 @@ def test_model_exposure_owns_codex_profile_sync_prefixes() -> None:
         "copilot",
         "auggie",
         "deepseek",
+        "kimi",
     )
     assert reverso_routed_codex_profile_prefixes({CODEX_DIRECT_BACKEND_ENV: "1"}) == (
         "claude",
         "copilot",
         "auggie",
         "deepseek",
+        "kimi",
         "codex-direct",
     )
     assert reverso_routed_codex_profile_prefixes({OPENAI_BACKEND_ENV: "1"}) == (
@@ -129,6 +134,7 @@ def test_model_exposure_owns_codex_profile_sync_prefixes() -> None:
         "copilot",
         "auggie",
         "deepseek",
+        "kimi",
         "codex-direct",
         "openai-pass-through",
     )
@@ -139,6 +145,7 @@ def test_model_exposure_owns_codex_profile_sync_prefixes() -> None:
         "copilot",
         "auggie",
         "deepseek",
+        "kimi",
     )
     direct = {spec.prefix: spec for spec in direct_codex_profile_specs()}
     assert direct_codex_profile_specs() == DIRECT_CODEX_PROFILE_SPECS
@@ -164,6 +171,12 @@ def test_model_exposure_owns_codex_profile_default_model_policy() -> None:
     assert spec.model == "gpt-5.5"
     assert spec.model_provider == "reverso_copilot"
     assert spec.uses_model_catalog is True
+
+    kimi_spec = reverso_codex_profile_spec(
+        "kimi", ("kimi-k2-thinking", "kimi-k2.5", "kimi-k2")
+    )
+    assert kimi_spec.model == "kimi-k2.5"
+    assert kimi_spec.model_provider == "reverso_kimi"
 
 
 def test_model_exposure_owns_codex_responses_model_eligibility() -> None:
@@ -208,6 +221,7 @@ def test_model_exposure_owns_codex_catalog_and_stale_profile_policy() -> None:
         provider_scoped_catalog_slug("claude", "claude-sonnet-4-6")
         == "claude-sonnet-4-6"
     )
+    assert provider_scoped_catalog_slug("kimi", "kimi-k2.5") == "kimi-k2.5"
     assert codex_catalog_context_window("regular-model") == 128000
     assert codex_catalog_context_window("claude-500k") == 500000
     assert stale_codex_variant_profile_stems() == STALE_CODEX_VARIANT_PROFILE_STEMS

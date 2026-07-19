@@ -26,6 +26,7 @@ def _fixture_payload() -> dict[str, list[str]]:
         "copilot": ["claude-fable-5", "gpt-4o", "gpt-5.5", "claude-opus-4.8"],
         "auggie": ["prism-a"],
         "deepseek": ["deepseek-v3", "deepseek-r1"],
+        "kimi": ["kimi-k2-thinking", "kimi-k2.5", "kimi-k2"],
         "codex-direct": ["gpt-5.5"],
     }
 
@@ -242,6 +243,7 @@ def test_profile_files_emit_one_file_per_live_prefix(
         codex_sync.ProviderModels("copilot", ("gpt-5.5", "gpt-4o")),
         codex_sync.ProviderModels("auggie", ("prism-a",)),
         codex_sync.ProviderModels("deepseek", ("deepseek-v3", "deepseek-v4-pro")),
+        codex_sync.ProviderModels("kimi", ("kimi-k2-thinking", "kimi-k2.5")),
         codex_sync.ProviderModels("codex-direct", ("gpt-5.5",)),
     ]
     catalog_dir = tmp_path / "reverso"
@@ -252,6 +254,7 @@ def test_profile_files_emit_one_file_per_live_prefix(
         "copilot.config.toml",
         "auggie.config.toml",
         "deepseek.config.toml",
+        "kimi.config.toml",
         "codex-direct.config.toml",
     ]
     parsed = {
@@ -265,6 +268,8 @@ def test_profile_files_emit_one_file_per_live_prefix(
     assert parsed["claude"]["model"] == "claude-fable-5"
     assert parsed["copilot"]["model"] == "gpt-5.5"
     assert parsed["deepseek"]["model"] == "deepseek-v4-pro"
+    assert parsed["kimi"]["model"] == "kimi-k2.5"
+    assert parsed["kimi"]["model_provider"] == "reverso_kimi"
     assert parsed["codex-direct"]["model"] == "gpt-5.5"
     assert parsed["codex-direct"]["model_catalog_json"] == str(
         catalog_dir / "codex-direct.json"
@@ -295,7 +300,7 @@ def test_sync_writes_profiles_for_each_live_prefix(tmp_path: Path) -> None:
     )
 
     assert result.changed is True
-    for prefix in ("claude", "copilot", "auggie", "deepseek"):
+    for prefix in ("claude", "copilot", "auggie", "deepseek", "kimi"):
         profile = tomllib.loads((tmp_path / f"{prefix}.config.toml").read_text())
         assert profile["model_provider"] == f"reverso_{prefix}"
         assert profile["model_catalog_json"] == str(catalog_dir / f"{prefix}.json")
@@ -543,6 +548,7 @@ def test_sync_writes_per_provider_catalog_files_with_profile_safe_slugs(
         "copilot.json",
         "auggie.json",
         "deepseek.json",
+        "kimi.json",
     }
 
     copilot = json.loads((catalog_dir / "copilot.json").read_text(encoding="utf-8"))
@@ -571,6 +577,18 @@ def test_sync_writes_per_provider_catalog_files_with_profile_safe_slugs(
         "deepseek-v3",
         "deepseek-r1",
     ]
+
+    kimi = json.loads((catalog_dir / "kimi.json").read_text(encoding="utf-8"))
+    assert [m["slug"] for m in kimi["models"]] == [
+        "kimi-k2-thinking",
+        "kimi-k2.5",
+        "kimi-k2",
+    ]
+    assert all("copilot/" not in m["slug"] for m in kimi["models"])
+    assert all(
+        not any(m["slug"].startswith("kimi") for m in catalog["models"])
+        for catalog in (copilot, direct, claude, auggie, deepseek)
+    )
 
 
 def test_sync_strips_legacy_clutter_blocks(tmp_path: Path) -> None:
@@ -656,7 +674,7 @@ def test_sync_inserts_missing_reverso_provider_tables(tmp_path: Path) -> None:
     text = target.read_text(encoding="utf-8")
     parsed = tomllib.loads(text)
     providers = parsed["model_providers"]
-    for prefix in ("claude", "copilot", "auggie", "deepseek"):
+    for prefix in ("claude", "copilot", "auggie", "deepseek", "kimi"):
         provider = providers[f"reverso_{prefix}"]
         assert provider["base_url"] == f"http://127.0.0.1:64946/{prefix}/v1"
         assert provider["wire_api"] == "responses"
@@ -691,6 +709,7 @@ def test_sync_strips_legacy_block_and_creates_config_backup(tmp_path: Path) -> N
     assert (tmp_path / "copilot.config.toml").exists()
     assert (tmp_path / "auggie.config.toml").exists()
     assert (tmp_path / "deepseek.config.toml").exists()
+    assert (tmp_path / "kimi.config.toml").exists()
 
 
 def test_sync_is_idempotent_no_diff_no_backup(tmp_path: Path) -> None:
@@ -945,6 +964,7 @@ def test_main_writes_when_not_dry_run(
         "codex-direct.json",
         "copilot.json",
         "deepseek.json",
+        "kimi.json",
     ]
     assert sorted(Path(p).name for p in report["profiles"]) == [
         "auggie.config.toml",
@@ -952,6 +972,7 @@ def test_main_writes_when_not_dry_run(
         "codex-direct.config.toml",
         "copilot.config.toml",
         "deepseek.config.toml",
+        "kimi.config.toml",
         "minimax.config.toml",
         "openai.config.toml",
     ]
