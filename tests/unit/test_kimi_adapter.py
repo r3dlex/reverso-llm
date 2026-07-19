@@ -257,6 +257,54 @@ async def test_refresh_errors_do_not_expose_credentials(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("access_token", [42, True, "", " "])
+async def test_refresh_rejects_non_string_or_empty_access_token(
+    tmp_path: Path, access_token: object
+) -> None:
+    token_path = tmp_path / "kimi-code.json"
+    _write_token(token_path, access_token="expired", expires_at=0)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"access_token": access_token, "expires_in": 3600},
+        )
+
+    auth = KimiOAuthAuth(
+        credentials_path=token_path,
+        client_factory=lambda: _client(handler),
+    )
+
+    with pytest.raises(KimiError, match="no access token"):
+        await auth.resolve_bearer_token()
+    assert json.loads(token_path.read_text())["access_token"] == "expired"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("expires_in", [True, False, "invalid", 0, -1])
+async def test_refresh_rejects_boolean_or_invalid_expiry(
+    tmp_path: Path, expires_in: object
+) -> None:
+    token_path = tmp_path / "kimi-code.json"
+    _write_token(token_path, access_token="expired", expires_at=0)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"access_token": OAUTH_SENTINEL, "expires_in": expires_in},
+        )
+
+    auth = KimiOAuthAuth(
+        credentials_path=token_path,
+        client_factory=lambda: _client(handler),
+    )
+
+    with pytest.raises(KimiError, match="invalid expiry"):
+        await auth.resolve_bearer_token()
+    assert json.loads(token_path.read_text())["access_token"] == "expired"
+
+
+@pytest.mark.asyncio
 async def test_adapter_translates_responses_to_kimi_chat_with_bearer(
     tmp_path: Path,
 ) -> None:

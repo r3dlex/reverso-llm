@@ -118,10 +118,16 @@ class KimiOAuthAuth:
             refreshed = response.json()
         except ValueError as exc:
             raise KimiError("kimi OAuth refresh returned invalid JSON") from exc
-        if not isinstance(refreshed, dict) or not refreshed.get("access_token"):
+        access_token = (
+            refreshed.get("access_token") if isinstance(refreshed, dict) else None
+        )
+        if not isinstance(access_token, str) or not access_token.strip():
             raise KimiError("kimi OAuth refresh returned no access token")
+        expires_in_value = refreshed.get("expires_in")
+        if isinstance(expires_in_value, bool):
+            raise KimiError("kimi OAuth refresh returned invalid expiry")
         try:
-            expires_in = float(refreshed.get("expires_in"))
+            expires_in = float(expires_in_value)
         except (TypeError, ValueError) as exc:
             raise KimiError("kimi OAuth refresh returned invalid expiry") from exc
         if not isfinite(expires_in) or expires_in <= 0:
@@ -129,7 +135,7 @@ class KimiOAuthAuth:
         persisted = {**artifact, **refreshed}
         persisted["expires_at"] = time.time() + expires_in
         self._save_artifact(persisted)
-        return str(persisted["access_token"])
+        return access_token
 
     @staticmethod
     def _expiry(artifact: dict[str, Any]) -> tuple[bool, float | None]:
