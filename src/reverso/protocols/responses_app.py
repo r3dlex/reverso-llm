@@ -202,6 +202,8 @@ def _models_to_payload(models: ModelList) -> dict[str, Any]:
         "data": models.data,
         "models": models.models,
     }
+    if models.discovery_source is not None:
+        payload["model_discovery_source"] = models.discovery_source
     return models_with_codex_refresh(payload)
 
 

@@ -13,6 +13,7 @@ import json
 import tomllib
 from pathlib import Path
 
+import httpx
 import pytest
 
 from reverso import codex_sync
@@ -190,6 +191,34 @@ def test_fetch_all_can_skip_unavailable_provider() -> None:
         codex_sync.ProviderModels("claude", ("claude-model",)),
         codex_sync.ProviderModels("deepseek", ("deepseek-model",)),
     ]
+
+
+def test_default_fetcher_accepts_only_live_kimi_discovery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payloads = [
+        {
+            "object": "list",
+            "data": [{"id": "kimi-k2.5"}],
+            "model_discovery_source": "fallback",
+        },
+        {
+            "object": "list",
+            "data": [{"id": "kimi-k2.5"}, {"id": "kimi-k2"}],
+            "model_discovery_source": "live",
+        },
+    ]
+
+    def get(url: str, *, timeout: float) -> httpx.Response:
+        return httpx.Response(
+            200, json=payloads.pop(0), request=httpx.Request("GET", url)
+        )
+
+    monkeypatch.setattr(codex_sync.httpx, "get", get)
+    fetch = codex_sync._default_fetcher("http://127.0.0.1:64946")
+
+    assert fetch("kimi") == []
+    assert fetch("kimi") == ["kimi-k2.5", "kimi-k2"]
 
 
 def test_sync_fails_closed_when_all_default_provider_fetches_fail(
@@ -504,6 +533,41 @@ def test_sync_archives_stale_managed_reverso_profile_and_catalog(
     assert "claude.config.toml" in archived_names
     assert "claude.json" in archived_names
     assert "auggie.config.toml" not in archived_names
+
+
+def test_sync_archives_stale_managed_kimi_profile_and_catalog(tmp_path: Path) -> None:
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+    catalog_dir = tmp_path / "reverso"
+    catalog_dir.mkdir()
+    stale_profile = tmp_path / "kimi.config.toml"
+    stale_catalog = catalog_dir / "kimi.json"
+    stale_profile.write_text(
+        codex_sync._render_profile_file(
+            model="kimi-k2.5",
+            model_provider="reverso_kimi",
+            catalog_path=stale_catalog,
+        ),
+        encoding="utf-8",
+    )
+    stale_catalog.write_text('{"models": []}\n', encoding="utf-8")
+
+    result = codex_sync.sync(
+        target=target,
+        fetcher=_make_fetcher({"claude": ["claude-fable-5"]}),
+        catalog_dir=catalog_dir,
+    )
+
+    assert not stale_profile.exists()
+    assert not stale_catalog.exists()
+    archived_names = {
+        path.name.split(codex_sync.BACKUP_SUFFIX_PREFIX)[0]
+        for path in result.archived_profiles
+    }
+    assert archived_names >= {
+        "kimi.config.toml",
+        "kimi.json",
+    }
 
 
 def test_sync_default_config_exposes_no_reverso_models_globally(

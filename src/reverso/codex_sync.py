@@ -113,6 +113,11 @@ def _default_fetcher(base_url: str) -> ModelFetcher:
         response = httpx.get(url, timeout=5.0)
         response.raise_for_status()
         payload = response.json()
+        if prefix == "kimi" and (
+            not isinstance(payload, dict)
+            or payload.get("model_discovery_source") != "live"
+        ):
+            return []
         return _extract_model_ids(payload)
 
     return _fetch
