@@ -63,8 +63,14 @@ FORBIDDEN_FIELD_FRAGMENTS = (
     "headers",
 )
 _SECRET_VALUE_RE = re.compile(
-    r"(?i)(authorization\s*:|bearer\s+[a-z0-9._~+/=-]+|"
-    r"access[_ -]?token|refresh[_ -]?token|api[_ -]?key|oauth[_ -]?token|sk-[a-z0-9])"
+    r"(?ix)(?:"
+    r"\bauthorization\b[\"']?\s*[:=]\s*[\"']?(?:bearer\s+)?[a-z0-9._~+/=-]+|"
+    r"\bbearer\s+[a-z0-9._~+/=-]+|"
+    r"\b(?:access[_ -]?token|refresh[_ -]?token|auth[_ -]?token|"
+    r"oauth[_ -]?token|api[_ -]?key)\b[\"']?\s*[:=]\s*[\"']?"
+    r"[a-z0-9._~+/=-]+|"
+    r"\bsk-[a-z0-9]"
+    r")"
 )
 _RESPONSE_ID_RE = re.compile(r"^resp_[A-Za-z0-9_-]+$")
 _CONTROLLED_PROMPT = (
@@ -78,15 +84,14 @@ _KIMI_CREDENTIAL_FIELDS = frozenset(
 
 def _client_challenge() -> tuple[str, str]:
     """Return a prompt and exact answer where the answer is absent from the prompt."""
-    while True:
-        token = secrets.token_hex(16)
-        expected = token[::-1]
-        prompt = (
-            "Reverse this lowercase hexadecimal token and output only the result: "
-            f"{token}"
-        )
-        if expected not in prompt:
-            return prompt, expected
+    left = secrets.token_hex(8)
+    right = secrets.token_hex(8)
+    expected = left + right
+    prompt = (
+        "Remove the single space between these two lowercase hexadecimal fragments "
+        f"and output only the concatenated result: {left} {right}"
+    )
+    return prompt, expected
 
 
 class ProofFailure(RuntimeError):

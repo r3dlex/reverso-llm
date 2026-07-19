@@ -66,7 +66,17 @@ def test_launcher_constructs_provider_pinned_kimi_messages_contract(
     assert payload["oauth_token"] is None
     assert payload["discovery"] == "1"
     assert payload["headers"] == f"x-reverso-workspace: {Path.cwd()}"
-    assert payload["argv"] == ["--model", "kimi-k2.5", "--print", "hello"]
+    assert payload["argv"][:3] == ["--settings", payload["argv"][1], "--model"]
+    pinned_settings = json.loads(payload["argv"][1])
+    assert pinned_settings == {
+        "env": {
+            "ANTHROPIC_API_KEY": "",
+            "ANTHROPIC_AUTH_TOKEN": "reverso-local-loopback",
+            "ANTHROPIC_BASE_URL": "http://127.0.0.1:64946/kimi",
+            "CLAUDE_CODE_OAUTH_TOKEN": "",
+        }
+    }
+    assert payload["argv"][2:] == ["--model", "kimi-k2.5", "--print", "hello"]
 
 
 def test_launcher_accepts_only_a_bare_kimi_model(tmp_path: Path) -> None:
@@ -110,7 +120,7 @@ def test_launcher_model_override_remains_bare(tmp_path: Path) -> None:
         env=env,
     )
 
-    assert json.loads(result.stdout)["argv"][:2] == [
+    assert json.loads(result.stdout)["argv"][2:4] == [
         "--model",
         "kimi-k2-thinking",
     ]
@@ -125,6 +135,10 @@ def test_launcher_model_override_remains_bare(tmp_path: Path) -> None:
         ("--", "--model", "kimi/qualified"),
         ("--fallback-model", "gpt-5.5"),
         ("--fallback-model=gpt-5.5",),
+        ("--settings", "{}"),
+        ("--settings={}",),
+        ("--setting-sources", "user"),
+        ("--setting-sources=user",),
     ],
 )
 def test_launcher_rejects_forwarded_model_overrides(
@@ -143,5 +157,5 @@ def test_launcher_rejects_forwarded_model_overrides(
     )
 
     assert result.returncode != 0
-    assert "model options are not accepted" in result.stderr
+    assert "launcher-owned options are not accepted" in result.stderr
     assert result.stdout == ""

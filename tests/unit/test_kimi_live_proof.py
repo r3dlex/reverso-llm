@@ -23,6 +23,7 @@ from reverso.kimi_live_proof import (
     validate_manifest,
     write_manifest,
 )
+from reverso.kimi_live_proof import _client_challenge as generate_client_challenge
 
 CLIENT_PROMPT = (
     "Reverse this lowercase hexadecimal token and output only the result: abc123"
@@ -36,6 +37,21 @@ def _fixed_client_challenge(monkeypatch: pytest.MonkeyPatch) -> None:
         "reverso.kimi_live_proof._client_challenge",
         lambda: (CLIENT_PROMPT, CLIENT_EXPECTED),
     )
+
+
+def test_generated_client_challenge_is_exact_but_not_echoable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fragments = iter(("0123456789abcdef", "fedcba9876543210"))
+    monkeypatch.setattr(
+        "reverso.kimi_live_proof.secrets.token_hex", lambda _: next(fragments)
+    )
+
+    prompt, expected = generate_client_challenge()
+
+    assert expected == "0123456789abcdeffedcba9876543210"
+    assert expected not in prompt
+    assert "0123456789abcdef fedcba9876543210" in prompt
 
 
 class FakeProbe:
@@ -481,6 +497,49 @@ def test_redaction_requires_known_credential_sentinel(
     probe = HttpLiveProofProbe(log_paths=(log,))
 
     with pytest.raises(ProofFailure, match="redaction_sentinel_unavailable"):
+        probe.redaction()
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "API Error: 401 authentication_error: invalid auth token",
+        "access_token field is unavailable",
+        "refresh token must be renewed",
+    ],
+)
+def test_redaction_allows_benign_credential_terms_without_assigned_values(
+    message: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("KIMI_BEARER_TOKEN", "unrelated-active-sentinel")
+    log = tmp_path / "proxy.log"
+    log.write_text("", encoding="utf-8")
+    probe = HttpLiveProofProbe(log_paths=(log,))
+    probe._captured_text.append(message)
+
+    assert probe.redaction() == {"provider": "kimi", "status": 0}
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Authorization: Bearer assigned-secret",
+        '"access_token": "assigned-secret"',
+        "refresh token=assigned-secret",
+        "api_key: assigned-secret",
+        "Bearer assigned-secret",
+    ],
+)
+def test_redaction_rejects_assigned_secret_shapes(
+    message: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("KIMI_BEARER_TOKEN", "unrelated-active-sentinel")
+    log = tmp_path / "proxy.log"
+    log.write_text("", encoding="utf-8")
+    probe = HttpLiveProofProbe(log_paths=(log,))
+    probe._captured_text.append(message)
+
+    with pytest.raises(ProofFailure, match="redaction_failure"):
         probe.redaction()
 
 
