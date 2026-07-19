@@ -24,7 +24,7 @@ from reverso.protocols.anthropic_translate import (
     prepare_anthropic_request,
 )
 
-ALL_BACKENDS = ("claude", "copilot", "auggie", "deepseek", "codex")
+ALL_BACKENDS = ("claude", "copilot", "auggie", "deepseek", "codex", "kimi")
 
 IMAGE_BLOCK = {
     "type": "image",
@@ -70,7 +70,7 @@ def test_image_accepted_on_copilot() -> None:
 # --- gated-feature rejection --------------------------------------------------
 
 
-@pytest.mark.parametrize("backend", ("claude", "auggie", "deepseek", "codex"))
+@pytest.mark.parametrize("backend", ("claude", "auggie", "deepseek", "codex", "kimi"))
 def test_image_rejected_on_non_image_backends(backend: str) -> None:
     payload = _plain_payload()
     payload["messages"] = [{"role": "user", "content": [dict(IMAGE_BLOCK)]}]

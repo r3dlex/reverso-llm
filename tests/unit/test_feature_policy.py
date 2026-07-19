@@ -169,9 +169,20 @@ def test_capability_tables_cover_all_providers_and_features() -> None:
     """
     # codex (Milestone 2) is the fifth capability column, served on the Anthropic
     # surface only; it mirrors auggie's text-only ceiling.
-    assert set(PROVIDERS) == {"claude", "copilot", "auggie", "deepseek", "codex"}
+    assert set(PROVIDERS) == {
+        "claude",
+        "copilot",
+        "auggie",
+        "deepseek",
+        "codex",
+        "kimi",
+    }
     for provider in PROVIDERS:
         assert set(CAPABILITY_TABLES[provider].keys()) == set(FEATURES)
+
+
+def test_kimi_capabilities_match_deepseek_translation_ceiling() -> None:
+    assert CAPABILITY_TABLES["kimi"] == CAPABILITY_TABLES["deepseek"]
 
 
 def test_check_features_passes_when_no_unsupported() -> None:

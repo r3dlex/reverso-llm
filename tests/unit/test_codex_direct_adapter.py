@@ -227,7 +227,7 @@ def test_direct_codex_route_is_reserved_but_disabled_by_kill_switch(
     assert "codex-direct" in APP_PROVIDER_PREFIXES
     assert split_provider_path("/codex-direct/v1/models") is not None
     mounted = compose.build_adapters()
-    assert set(mounted) == {"claude", "copilot", "auggie", "deepseek"}
+    assert set(mounted) == {"claude", "copilot", "auggie", "deepseek", "kimi"}
     assert "codex_direct" not in mounted
     assert "codex-direct" not in mounted
 

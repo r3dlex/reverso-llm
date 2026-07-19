@@ -22,7 +22,7 @@ import pytest
 from conftest import FixtureAdapter, load_fixture
 from reverso.protocols.responses_app import build_app
 
-PROVIDERS = ["claude", "copilot", "auggie", "deepseek"]
+PROVIDERS = ["claude", "copilot", "auggie", "deepseek", "kimi"]
 
 
 def _build_client() -> httpx.AsyncClient:
@@ -196,7 +196,7 @@ async def test_previous_response_id_chain(provider: str) -> None:
     assert text == asserts["second_turn_output_text"]
 
 
-TOOL_PROVIDERS = ["copilot", "deepseek"]
+TOOL_PROVIDERS = ["copilot", "deepseek", "kimi"]
 TOOL_PARTIAL_PROVIDERS = ["claude", "auggie"]
 
 

@@ -96,7 +96,9 @@ def test_claude_models_resolve_to_claude() -> None:
 
 def test_surface_backends_includes_claude() -> None:
     anthropic = SURFACE_BACKENDS["anthropic"]
-    assert anthropic == frozenset({"copilot", "deepseek", "auggie", "codex", "claude"})
+    assert anthropic == frozenset(
+        {"copilot", "deepseek", "auggie", "codex", "claude", "kimi"}
+    )
     assert "claude" in anthropic
 
 
@@ -237,6 +239,7 @@ def test_discovery_alias_resolves_and_canonicalizes() -> None:
         "anthropic-copilot-gpt-5.5": ("copilot", "gpt-5.5"),
         "anthropic-auggie-opus4.7": ("auggie", "opus4.7"),
         "anthropic-claude-claude-opus-4-8": ("claude", "claude-opus-4-8"),
+        "anthropic-kimi-kimi-k2.5": ("kimi", "kimi-k2.5"),
     }
     for alias, (backend, bare) in cases.items():
         assert resolve_anthropic_backend(alias) == backend, alias

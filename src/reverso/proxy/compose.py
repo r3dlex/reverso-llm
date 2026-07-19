@@ -84,12 +84,14 @@ def build_adapters(env: dict[str, str] | None = None) -> dict[str, ProviderAdapt
     from reverso.protocols.adapters.claude import ClaudeAdapter
     from reverso.protocols.adapters.copilot import CopilotAdapter
     from reverso.protocols.adapters.deepseek import DeepSeekAdapter
+    from reverso.protocols.adapters.kimi import KimiAdapter
 
     adapters: dict[str, ProviderAdapter] = {
         "claude": ClaudeAdapter(),
         "copilot": CopilotAdapter(),
         "auggie": AuggieAdapter(),
         "deepseek": DeepSeekAdapter(),
+        "kimi": KimiAdapter(),
     }
     if codex_direct_backend_enabled(env):
         from reverso.protocols.adapters.codex import CodexOAuthAuth

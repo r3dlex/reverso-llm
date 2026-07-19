@@ -19,7 +19,7 @@ from conftest import FixtureAdapter
 from reverso.protocols.anthropic_app import build_anthropic_app
 from reverso.protocols.adapter import ResponsesRequest
 
-ANTHROPIC_BACKENDS = ["copilot", "deepseek", "auggie", "codex", "claude"]
+ANTHROPIC_BACKENDS = ["copilot", "deepseek", "auggie", "codex", "claude", "kimi"]
 
 
 class _RecordingAdapter(FixtureAdapter):
@@ -112,3 +112,12 @@ async def test_claude_qualified_mismatch_is_404() -> None:
         resp = await client.post("/v1/messages", json=_body("claude/gpt-5.5"))
     assert resp.status_code == 404
     assert all(not a.seen_models for a in adapters.values())
+
+
+@pytest.mark.asyncio
+async def test_kimi_qualified_routes_and_adapter_sees_bare_model() -> None:
+    adapters = {b: _RecordingAdapter(b) for b in ANTHROPIC_BACKENDS}
+    async with _client_with(adapters) as client:
+        resp = await client.post("/v1/messages", json=_body("kimi/kimi-k2.5"))
+    assert resp.status_code == 200
+    assert adapters["kimi"].seen_models == ["kimi-k2.5"]

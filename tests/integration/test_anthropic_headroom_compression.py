@@ -20,7 +20,7 @@ from reverso.protocols.anthropic_app import build_anthropic_app
 from reverso.protocols.headroom_compression import HeadroomCompressionOutcome
 
 BASE_URL = "http://127.0.0.1:64946"
-ANTHROPIC_BACKENDS = ["copilot", "deepseek", "auggie", "codex", "claude"]
+ANTHROPIC_BACKENDS = ["copilot", "deepseek", "auggie", "codex", "claude", "kimi"]
 
 
 class SpyAdapter:
