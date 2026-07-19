@@ -49,7 +49,9 @@ Claude Code appends `/v1/messages`, producing the final request URL
 `http://127.0.0.1:64946/kimi/v1/messages`. The launcher also sends the current
 working directory through the established `x-reverso-workspace` header and
 uses a non-secret loopback auth placeholder because Reverso performs Kimi OAuth
-resolution itself.
+resolution itself. It removes any inherited `ANTHROPIC_API_KEY` or
+`CLAUDE_CODE_OAUTH_TOKEN` from the child environment so a real Anthropic secret
+is never sent to the loopback gateway.
 
 The root Anthropic surface continues to support `kimi/<model>` and the
 `anthropic-kimi-<model>` discovery alias. Those are secondary routing forms;

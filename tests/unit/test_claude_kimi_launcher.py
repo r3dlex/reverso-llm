@@ -24,6 +24,8 @@ print(json.dumps({
     "argv": sys.argv[1:],
     "base_url": os.environ.get("ANTHROPIC_BASE_URL"),
     "auth_token": os.environ.get("ANTHROPIC_AUTH_TOKEN"),
+    "api_key": os.environ.get("ANTHROPIC_API_KEY"),
+    "oauth_token": os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"),
     "discovery": os.environ.get("CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"),
     "headers": os.environ.get("ANTHROPIC_CUSTOM_HEADERS"),
 }))
@@ -41,6 +43,8 @@ def test_launcher_constructs_provider_pinned_kimi_messages_contract(
     fake = _fake_claude(tmp_path)
     env = os.environ.copy()
     env["CLAUDE_BIN"] = str(fake)
+    env["ANTHROPIC_API_KEY"] = "anthropic-secret-must-not-reach-loopback"
+    env["CLAUDE_CODE_OAUTH_TOKEN"] = "claude-oauth-must-not-reach-loopback"
 
     result = subprocess.run(
         [str(LAUNCHER), "--print", "hello"],
@@ -56,6 +60,8 @@ def test_launcher_constructs_provider_pinned_kimi_messages_contract(
         "http://127.0.0.1:64946/kimi/v1/messages"
     )
     assert payload["auth_token"] == "reverso-local-loopback"
+    assert payload["api_key"] is None
+    assert payload["oauth_token"] is None
     assert payload["discovery"] == "1"
     assert payload["headers"] == f"x-reverso-workspace: {Path.cwd()}"
     assert payload["argv"] == ["--model", "kimi-k2.5", "--print", "hello"]
