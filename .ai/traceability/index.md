@@ -43,5 +43,6 @@ Validation: [`validation-report.md`](validation-report.md)
 | `handoff:reverso-root:kimi-provider-implementation` | handoff | ready-for-human | Kimi provider implementation handoff | `.ai/handoff/kimi-provider-implementation-handoff.md` |
 | `plan:reverso-root:northstar-kimi-subscription-provider` | plan | active | northstar sliced plan: kimi-subscription-provider | `.ai/handoff/northstar-kimi-subscription-provider.md` |
 | `handoff:reverso-root:northstar-kimi-subscription-provider` | handoff | ready-for-human | northstar A-to-B handoff: kimi-subscription-provider | `.ai/handoff/northstar-kimi-subscription-provider.md` |
+| `pr:reverso-root:86` | pull_request | open-draft | PR #86 Kimi release and rollback closure | `https://github.com/r3dlex/reverso-llm/pull/86` |
 
 All backlinks in `graph.json` resolve to node IDs in this index.

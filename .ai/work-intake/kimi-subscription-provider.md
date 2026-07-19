@@ -76,3 +76,4 @@ authority.
   final readiness returned HTTP 200.
 - Evidence: ignored manifests are mode `0600` and contain no credential,
   prompt, response-content, header, or raw-log fields.
+- Delivery: release closure is draft PR #86 and remains unmerged.

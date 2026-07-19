@@ -212,8 +212,9 @@ The implementation reached the ready-for-human release boundary on 2026-07-19.
 - The ignored evidence manifests were written mode `0600`; they contain only
   allowlisted status metadata and are not committed.
 
-The implementation remains unmerged. Host policy and independent final review
-remain the authority for moving beyond ready-for-human.
+The implementation remains unmerged in draft PR #86. Host policy and
+independent final review remain the authority for moving beyond
+ready-for-human.
 
 ## Human setup handout
 

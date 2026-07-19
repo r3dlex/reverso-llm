@@ -2,7 +2,7 @@
   "schema_version": "1.1",
   "root_repo_id": "reverso-root",
   "topology_type": "standalone",
-  "generated_at": "2026-07-19T09:30:00Z",
+  "generated_at": "2026-07-19T09:45:00Z",
   "nodes": [
     {
       "id": "adr:reverso-root:init",
@@ -347,6 +347,17 @@
       "backlinks": [
         "plan:reverso-root:northstar-kimi-subscription-provider"
       ]
+    },
+    {
+      "id": "pr:reverso-root:86",
+      "type": "pull_request",
+      "title": "PR #86 Kimi release and rollback closure",
+      "status": "open-draft",
+      "repo_id": "reverso-root",
+      "path": "https://github.com/r3dlex/reverso-llm/pull/86",
+      "backlinks": [
+        "handoff:reverso-root:northstar-kimi-subscription-provider"
+      ]
     }
   ],
   "edges": [
@@ -517,6 +528,13 @@
       "relation": "summarized-by",
       "created_by": "northstar",
       "evidence_path": ".ai/handoff/northstar-kimi-subscription-provider.md"
+    },
+    {
+      "source": "handoff:reverso-root:northstar-kimi-subscription-provider",
+      "target": "pr:reverso-root:86",
+      "relation": "implemented-by",
+      "created_by": "autobahn",
+      "evidence_path": "https://github.com/r3dlex/reverso-llm/pull/86"
     }
   ],
   "coverage": {

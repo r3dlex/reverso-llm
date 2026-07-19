@@ -8,8 +8,8 @@ status: active
 - schema_version: `1.1`
 - status: `pass`
 - graph: `.ai/traceability/graph.json`
-- node_count: `33`
-- edge_count: `24`
+- node_count: `34`
+- edge_count: `25`
 - dangling_edges: `0`
 - dangling_backlinks: `0`
 - covered_types: `adr, evidence, handoff, issue, plan, pull_request, specification, validation, workflow`

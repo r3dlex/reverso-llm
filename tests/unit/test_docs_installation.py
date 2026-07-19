@@ -144,6 +144,7 @@ def test_kimi_traceability_chain_has_no_dangling_links() -> None:
         "handoff:reverso-root:kimi-provider-implementation",
         "plan:reverso-root:northstar-kimi-subscription-provider",
         "handoff:reverso-root:northstar-kimi-subscription-provider",
+        "pr:reverso-root:86",
     }
 
     assert required <= nodes.keys()
@@ -174,4 +175,9 @@ def test_kimi_traceability_chain_has_no_dangling_links() -> None:
         "plan:reverso-root:northstar-kimi-subscription-provider",
         "handoff:reverso-root:northstar-kimi-subscription-provider",
         "summarized-by",
+    ) in relations
+    assert (
+        "handoff:reverso-root:northstar-kimi-subscription-provider",
+        "pr:reverso-root:86",
+        "implemented-by",
     ) in relations

@@ -25,5 +25,6 @@ Kimi provider changes.
 
 All six implementation slices have local evidence. The credentialed gate and
 the release install, smoke, and rollback proof are green. The stacked pull
-requests remain draft and unmerged pending final independent review, hosted CI
-on the exact release-closure head, and host-policy merge authority.
+requests remain draft and unmerged. Release closure is draft PR #86, pending
+final independent review, hosted CI on its exact head, and host-policy merge
+authority.
