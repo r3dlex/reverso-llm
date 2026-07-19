@@ -97,11 +97,14 @@ class ModelList:
 
     ``data`` is the canonical OpenAI-shaped model list. ``models`` mirrors the
     Codex-private refresh field (see codex_models_compat) and defaults empty.
+    ``discovery_source`` is optional provider provenance for callers that must
+    distinguish an authenticated live listing from bounded fallback metadata.
     """
 
     data: list[dict[str, Any]] = field(default_factory=list)
     object: str = "list"
     models: list[dict[str, Any]] = field(default_factory=list)
+    discovery_source: str | None = None
 
 
 @dataclass

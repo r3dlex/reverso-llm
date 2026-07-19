@@ -13,6 +13,7 @@ import pytest
 
 from reverso.protocols.adapter import ResponsesRequest
 from reverso.protocols.adapters.kimi import KimiAdapter, KimiError, KimiOAuthAuth
+from reverso.protocols.responses_app import _models_to_payload
 
 
 OAUTH_SENTINEL = "kimi-oauth-sentinel-7f31"
@@ -466,6 +467,8 @@ async def test_live_model_listing_uses_kimi_bearer(tmp_path: Path) -> None:
     models = await adapter.list_models()
 
     assert [row["id"] for row in models.data] == ["kimi-k2.5"]
+    assert models.discovery_source == "live"
+    assert _models_to_payload(models)["model_discovery_source"] == "live"
     assert adapter.model_discovery_source == "live"
 
 
@@ -504,6 +507,9 @@ async def test_model_listing_deduplicates_ids_and_marks_fallback_provenance(
 
     assert [row["id"] for row in live.data] == ["kimi-k2.5"]
     assert [row["id"] for row in fallback.data] == ["kimi-k2.5"]
+    assert live.discovery_source == "live"
+    assert fallback.discovery_source == "fallback"
+    assert _models_to_payload(fallback)["model_discovery_source"] == "fallback"
     assert adapter.model_discovery_source == "fallback"
 
 
