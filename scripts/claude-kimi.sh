@@ -9,6 +9,15 @@ case "$model" in
         ;;
 esac
 
+for arg in "$@"; do
+    case "$arg" in
+        --model|--model=*|--fallback-model|--fallback-model=*)
+            echo "model options are not accepted; set REVERSO_KIMI_MODEL" >&2
+            exit 2
+            ;;
+    esac
+done
+
 export ANTHROPIC_BASE_URL="http://127.0.0.1:64946/kimi"
 export ANTHROPIC_AUTH_TOKEN="reverso-local-loopback"
 unset ANTHROPIC_API_KEY

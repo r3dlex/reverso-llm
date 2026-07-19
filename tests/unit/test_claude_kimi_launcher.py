@@ -7,6 +7,8 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
+
 
 LAUNCHER = Path("scripts/claude-kimi.sh")
 
@@ -112,3 +114,34 @@ def test_launcher_model_override_remains_bare(tmp_path: Path) -> None:
         "--model",
         "kimi-k2-thinking",
     ]
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("--model", "kimi/qualified"),
+        ("--model=anthropic-kimi-kimi-k2.5",),
+        ("--model", "gpt-5.5"),
+        ("--", "--model", "kimi/qualified"),
+        ("--fallback-model", "gpt-5.5"),
+        ("--fallback-model=gpt-5.5",),
+    ],
+)
+def test_launcher_rejects_forwarded_model_overrides(
+    tmp_path: Path, args: tuple[str, ...]
+) -> None:
+    fake = _fake_claude(tmp_path)
+    env = os.environ.copy()
+    env["CLAUDE_BIN"] = str(fake)
+
+    result = subprocess.run(
+        [str(LAUNCHER), *args],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert result.returncode != 0
+    assert "model options are not accepted" in result.stderr
+    assert result.stdout == ""

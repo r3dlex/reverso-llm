@@ -38,6 +38,9 @@ Select a different live bare Kimi model for one invocation:
 REVERSO_KIMI_MODEL=kimi-k2-thinking ./scripts/claude-kimi.sh
 ```
 
+The launcher rejects forwarded `--model` and `--fallback-model` options so the
+validated `REVERSO_KIMI_MODEL` remains the single model authority.
+
 The launcher sets:
 
 ```text
