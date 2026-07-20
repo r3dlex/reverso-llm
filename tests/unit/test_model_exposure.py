@@ -173,9 +173,9 @@ def test_model_exposure_owns_codex_profile_default_model_policy() -> None:
     assert spec.uses_model_catalog is True
 
     kimi_spec = reverso_codex_profile_spec(
-        "kimi", ("kimi-k2-thinking", "kimi-k2.5", "kimi-k2")
+        "kimi", ("kimi-for-coding", "kimi-for-coding-highspeed", "k3")
     )
-    assert kimi_spec.model == "kimi-k2.5"
+    assert kimi_spec.model == "k3"
     assert kimi_spec.model_provider == "reverso_kimi"
 
 

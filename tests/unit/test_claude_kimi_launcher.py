@@ -76,7 +76,12 @@ def test_launcher_constructs_provider_pinned_kimi_messages_contract(
             "CLAUDE_CODE_OAUTH_TOKEN": "",
         }
     }
-    assert payload["argv"][2:] == ["--model", "kimi-k2.5", "--print", "hello"]
+    assert payload["argv"][2:] == [
+        "--model",
+        "kimi-for-coding",
+        "--print",
+        "hello",
+    ]
 
 
 def test_launcher_accepts_only_a_bare_kimi_model(tmp_path: Path) -> None:

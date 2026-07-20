@@ -27,7 +27,7 @@ def _fixture_payload() -> dict[str, list[str]]:
         "copilot": ["claude-fable-5", "gpt-4o", "gpt-5.5", "claude-opus-4.8"],
         "auggie": ["prism-a"],
         "deepseek": ["deepseek-v3", "deepseek-r1"],
-        "kimi": ["kimi-k2-thinking", "kimi-k2.5", "kimi-k2"],
+        "kimi": ["kimi-for-coding", "kimi-for-coding-highspeed", "k3"],
         "codex-direct": ["gpt-5.5"],
     }
 
@@ -272,7 +272,7 @@ def test_profile_files_emit_one_file_per_live_prefix(
         codex_sync.ProviderModels("copilot", ("gpt-5.5", "gpt-4o")),
         codex_sync.ProviderModels("auggie", ("prism-a",)),
         codex_sync.ProviderModels("deepseek", ("deepseek-v3", "deepseek-v4-pro")),
-        codex_sync.ProviderModels("kimi", ("kimi-k2-thinking", "kimi-k2.5")),
+        codex_sync.ProviderModels("kimi", ("kimi-for-coding", "k3")),
         codex_sync.ProviderModels("codex-direct", ("gpt-5.5",)),
     ]
     catalog_dir = tmp_path / "reverso"
@@ -297,7 +297,7 @@ def test_profile_files_emit_one_file_per_live_prefix(
     assert parsed["claude"]["model"] == "claude-fable-5"
     assert parsed["copilot"]["model"] == "gpt-5.5"
     assert parsed["deepseek"]["model"] == "deepseek-v4-pro"
-    assert parsed["kimi"]["model"] == "kimi-k2.5"
+    assert parsed["kimi"]["model"] == "k3"
     assert parsed["kimi"]["model_provider"] == "reverso_kimi"
     assert parsed["codex-direct"]["model"] == "gpt-5.5"
     assert parsed["codex-direct"]["model_catalog_json"] == str(
@@ -644,9 +644,9 @@ def test_sync_writes_per_provider_catalog_files_with_profile_safe_slugs(
 
     kimi = json.loads((catalog_dir / "kimi.json").read_text(encoding="utf-8"))
     assert [m["slug"] for m in kimi["models"]] == [
-        "kimi-k2-thinking",
-        "kimi-k2.5",
-        "kimi-k2",
+        "kimi-for-coding",
+        "kimi-for-coding-highspeed",
+        "k3",
     ]
     assert all("copilot/" not in m["slug"] for m in kimi["models"])
     assert all(

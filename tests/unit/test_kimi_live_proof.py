@@ -337,7 +337,7 @@ def test_public_live_discovery_claim_without_nonce_bound_proof_fails(
         probe.model_discovery()
 
 
-def test_http_probe_codex_requires_profile_catalog_to_match_live_models(
+def test_http_probe_codex_uses_live_profile_default_independent_of_proof_model(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     config_path = _write_codex_fixture(tmp_path)
@@ -354,7 +354,7 @@ def test_http_probe_codex_requires_profile_catalog_to_match_live_models(
     probe = HttpLiveProofProbe(runner=runner, log_paths=())
     probe._live_models = ("kimi-k2.5", "kimi-k2")
 
-    observation = probe.codex("kimi-k2.5")
+    observation = probe.codex("kimi-k2")
 
     assert observation["model_id"] == "kimi-k2.5"
     assert calls[0][:5] == ["codex", "exec", "-p", "kimi", "--skip-git-repo-check"]

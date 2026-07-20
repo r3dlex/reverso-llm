@@ -26,7 +26,7 @@ not write `~/.claude/settings.json` or any other global Claude Code setting.
 
 ## Run Claude Code
 
-The default model is `kimi-k2.5`:
+The default model is `kimi-for-coding`:
 
 ```bash
 ./scripts/claude-kimi.sh
@@ -35,8 +35,13 @@ The default model is `kimi-k2.5`:
 Select a different live bare Kimi model for one invocation:
 
 ```bash
-REVERSO_KIMI_MODEL=kimi-k2-thinking ./scripts/claude-kimi.sh
+REVERSO_KIMI_MODEL=kimi-for-coding-highspeed ./scripts/claude-kimi.sh
 ```
+
+Codex profiles prefer Kimi K3 using its canonical live id `k3`. K3 is also
+available to this launcher with `REVERSO_KIMI_MODEL=k3`, but Kimi currently
+rejects Claude Code's full tool payload for that model. Use `--tools ""` for a
+tool-free K3 session; keep `kimi-for-coding` for normal Claude Code tool use.
 
 The launcher rejects forwarded `--model` and `--fallback-model` options so the
 validated `REVERSO_KIMI_MODEL` remains the single model authority.

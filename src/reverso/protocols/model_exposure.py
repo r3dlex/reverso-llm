@@ -58,7 +58,7 @@ REVERSO_HOST_ENV = "REVERSO_HOST"
 _CODEX_DIRECT_PROFILE_PREFIX = "codex-direct"
 _OPENAI_PROFILE_PREFIX = "openai-pass-through"
 DEEPSEEK_CODEX_PROFILE_DEFAULT = "deepseek-v4-pro"
-KIMI_CODEX_PROFILE_DEFAULT = "kimi-k2.5"
+KIMI_CODEX_PROFILE_DEFAULT = "k3"
 DIRECT_CODEX_PROFILE_SPECS: tuple[CodexProfileSpec, ...] = (
     CodexProfileSpec(
         prefix="openai",
