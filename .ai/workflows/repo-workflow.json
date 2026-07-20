@@ -116,6 +116,11 @@
       "id": "northstar-handoff-anthropic-prepare-request-seam",
       "enabled_when": "northstar_handoff_present",
       "status": "available"
+    },
+    {
+      "id": "northstar-handoff-kimi-subscription-provider",
+      "enabled_when": "northstar_handoff_present",
+      "status": "available"
     }
   ],
   "handoff": ".ai/handoff/init-ai-repo-handoff.md",
