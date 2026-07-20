@@ -91,7 +91,7 @@ def test_kimi_claude_code_guide_is_provider_pinned_and_reversible() -> None:
         "http://127.0.0.1:64946/kimi",
         "http://127.0.0.1:64946/kimi/v1/messages",
         "REVERSO_KIMI_MODEL",
-        "kimi-k2.5",
+        "k3",
         "model_discovery_source",
         "scripts/claude-kimi.sh",
         "Rollback",
