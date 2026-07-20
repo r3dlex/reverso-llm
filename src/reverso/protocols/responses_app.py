@@ -41,6 +41,10 @@ from reverso.protocols.middleware import (
     strip_think_json,
 )
 from reverso.protocols.headroom_compression import compress_responses_request
+from reverso.protocols.proof_correlation import (
+    DEFAULT_PROOF_CORRELATION,
+    proof_nonce_from_headers,
+)
 from reverso.protocols.replay import record_input_items
 from reverso.proxy.profile_routing import (
     CURRENT_PROFILE_WORKSPACE,
@@ -244,6 +248,7 @@ async def _handle_create_response(
     *,
     workspace: str | None = None,
     remember_input_items: Callable[[str, ResponsesRequest], None] | None = None,
+    proof_nonce: str | None = None,
 ) -> None:
     # The gate inspects the raw payload (Codex-only fields preserved in extra)
     # so it can reject e.g. parallel_tool_calls on claude even though the Codex
@@ -258,6 +263,7 @@ async def _handle_create_response(
     normalized = normalize_request_payload(payload)
     request = ResponsesRequest.from_payload(normalized)
     compression_outcome = await compress_responses_request(request)
+    DEFAULT_PROOF_CORRELATION.record(proof_nonce, "responses")
     dispatch_request = compression_outcome.request
     token = CURRENT_PROFILE_WORKSPACE.set(workspace)
     try:
@@ -483,12 +489,21 @@ class ResponsesGatewayApp:
                 send,
                 workspace=workspace,
                 remember_input_items=self._remember_input_items,
+                proof_nonce=proof_nonce_from_headers(scope.get("headers", [])),
             )
             return
 
         if method == "GET" and local_no_slash.endswith("/v1/models"):
-            models = await adapter.list_models()
-            await _send_json(send, 200, _models_to_payload(models))
+            proof_nonce = proof_nonce_from_headers(scope.get("headers", []))
+            proof_listing = getattr(adapter, "list_models_with_proof", None)
+            if proof_nonce is not None and callable(proof_listing):
+                models, proof = await proof_listing(proof_nonce)
+                payload = _models_to_payload(models)
+                payload["proof"] = proof
+            else:
+                models = await adapter.list_models()
+                payload = _models_to_payload(models)
+            await _send_json(send, 200, payload)
             return
 
         if method == "GET":

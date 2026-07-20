@@ -172,6 +172,12 @@ def test_model_exposure_owns_codex_profile_default_model_policy() -> None:
     assert spec.model_provider == "reverso_copilot"
     assert spec.uses_model_catalog is True
 
+    kimi_spec = reverso_codex_profile_spec(
+        "kimi", ("kimi-k2-thinking", "kimi-k2.5", "kimi-k2")
+    )
+    assert kimi_spec.model == "kimi-k2.5"
+    assert kimi_spec.model_provider == "reverso_kimi"
+
 
 def test_model_exposure_owns_codex_responses_model_eligibility() -> None:
     # copilot serves gpt-* on /responses AND claude-*/gemini-* on /chat
@@ -215,6 +221,7 @@ def test_model_exposure_owns_codex_catalog_and_stale_profile_policy() -> None:
         provider_scoped_catalog_slug("claude", "claude-sonnet-4-6")
         == "claude-sonnet-4-6"
     )
+    assert provider_scoped_catalog_slug("kimi", "kimi-k2.5") == "kimi-k2.5"
     assert codex_catalog_context_window("regular-model") == 128000
     assert codex_catalog_context_window("claude-500k") == 500000
     assert stale_codex_variant_profile_stems() == STALE_CODEX_VARIANT_PROFILE_STEMS

@@ -171,8 +171,8 @@ async def test_models_discovery_aliases_pass_claude_code_filter() -> None:
         resp = await client.get("/v1/models")
     ids = [row["id"] for row in resp.json()["data"]]
     discoverable = [m for m in ids if m.lower().startswith(("claude", "anthropic"))]
-    # codex/deepseek/copilot/auggie are reachable only via their anthropic- aliases.
-    for backend in ("codex", "deepseek", "copilot", "auggie"):
+    # Non-Claude backends are reachable only via their anthropic- aliases.
+    for backend in ("codex", "deepseek", "copilot", "auggie", "kimi"):
         assert any(
             m.startswith(f"anthropic-{backend}-") for m in discoverable
         ), f"{backend} has no discovery alias in /v1/models; got {discoverable!r}"

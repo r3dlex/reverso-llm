@@ -18,6 +18,7 @@ from reverso.protocols.adapter import (
 )
 from reverso.protocols.anthropic_app import build_anthropic_app
 from reverso.protocols.headroom_compression import HeadroomCompressionOutcome
+from reverso.protocols.proof_correlation import DEFAULT_PROOF_CORRELATION
 
 BASE_URL = "http://127.0.0.1:64946"
 ANTHROPIC_BACKENDS = ["copilot", "deepseek", "auggie", "codex", "claude", "kimi"]
@@ -121,6 +122,30 @@ def _replace_first_input_text(request: ResponsesRequest, text: str) -> Responses
     first["content"] = content
     copied[0] = first
     return replace(request, input=copied)
+
+
+@pytest.mark.asyncio
+async def test_messages_proof_nonce_records_only_correlated_headroom_attempt() -> None:
+    DEFAULT_PROOF_CORRELATION.reset()
+    nonce = "a" * 64
+    adapters = {name: SpyAdapter() for name in ANTHROPIC_BACKENDS}
+
+    async with _client(adapters) as client:
+        response = await client.post(
+            "/kimi/v1/messages",
+            headers={"x-reverso-kimi-proof": nonce},
+            json={
+                "model": "kimi-k2.5",
+                "max_tokens": 64,
+                "messages": [{"role": "user", "content": "controlled"}],
+            },
+        )
+
+    assert response.status_code == 200
+    assert DEFAULT_PROOF_CORRELATION.consume(nonce) == {
+        "responses": 0,
+        "messages": 1,
+    }
 
 
 @pytest.mark.asyncio

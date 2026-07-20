@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 
@@ -81,3 +82,125 @@ def test_readme_preserves_codex_selector_invariants() -> None:
     ]
     for needle in expected:
         assert needle in selector_rules
+
+
+def test_kimi_claude_code_guide_is_provider_pinned_and_reversible() -> None:
+    text = Path("docs/claude-code-kimi.md").read_text()
+
+    expected = [
+        "http://127.0.0.1:64946/kimi",
+        "http://127.0.0.1:64946/kimi/v1/messages",
+        "REVERSO_KIMI_MODEL",
+        "kimi-k2.5",
+        "model_discovery_source",
+        "scripts/claude-kimi.sh",
+        "Rollback",
+        "does not write",
+        "reverso-claude-code-sync",
+    ]
+    for needle in expected:
+        assert needle in text
+
+    assert "~/.claude/settings.json" in text
+
+
+def test_kimi_release_runbook_covers_install_live_proof_and_rollback() -> None:
+    text = Path("docs/kimi-release-runbook.md").read_text()
+
+    expected = [
+        "http://127.0.0.1:64946",
+        "./scripts/install-launchagents.sh",
+        "launchctl kickstart -k",
+        "REVERSO_KIMI_LIVE_PROOF=1",
+        "REVERSO_CODEX_CONFIG",
+        "REVERSO_CODEX_CATALOG_DIR",
+        "$HOME/.codex-reverso/auth.json",
+        "chmod 600",
+        "cleanup_release_candidate()",
+        "trap cleanup_release_candidate EXIT",
+        "scripts/kimi-live-proof.py",
+        ".omx/evidence/kimi-live-proof.json",
+        "uv run reverso-codex-sync --dry-run",
+        "Rollback",
+        "com.user.reverso-proxy.plist",
+        "com.user.reverso-daemon.plist",
+        "scripts/claude-kimi.sh",
+    ]
+    for needle in expected:
+        assert needle in text
+
+    assert "KIMI_BEARER_TOKEN=" not in text
+
+
+def test_kimi_release_runbook_keeps_rollback_armed_until_health_proof() -> None:
+    text = Path("docs/kimi-release-runbook.md").read_text()
+    cleanup = text.split("cleanup_release_candidate() {", 1)[1].split("}", 1)[0]
+
+    assert 'rm -rf "$temp_codex_home"' in cleanup
+    assert "restore_launchagents" in cleanup
+    assert text.count("trap cleanup_release_candidate EXIT") == 1
+    assert "trap cleanup_codex_home EXIT" not in text
+    assert text.index("trap cleanup_release_candidate EXIT") < text.index(
+        "REVERSO_KIMI_LIVE_PROOF=1"
+    )
+    assert text.index(
+        "restore_launchagents\nrelease_candidate_restored=1"
+    ) < text.index(
+        "curl -fsS http://127.0.0.1:64946/health/readiness",
+        text.index("## Rollback"),
+    )
+    assert text.index(
+        "curl -fsS http://127.0.0.1:64946/health/readiness",
+        text.index("## Rollback"),
+    ) < text.index("trap - EXIT")
+
+
+def test_kimi_traceability_chain_has_no_dangling_links() -> None:
+    graph = json.loads(Path(".ai/traceability/graph.json").read_text())
+    index = Path(".ai/traceability/index.md").read_text()
+    report = Path(".ai/traceability/validation-report.md").read_text()
+    nodes = {node["id"]: node for node in graph["nodes"]}
+    required = {
+        "issue:reverso-root:kimi-subscription-provider",
+        "spec:reverso-root:kimi-subscription-provider",
+        "adr:reverso-root:kimi-code-oauth-provider",
+        "handoff:reverso-root:kimi-provider-implementation",
+        "plan:reverso-root:northstar-kimi-subscription-provider",
+        "handoff:reverso-root:northstar-kimi-subscription-provider",
+        "pr:reverso-root:86",
+    }
+
+    assert required <= nodes.keys()
+    for edge in graph["edges"]:
+        assert edge["source"] in nodes
+        assert edge["target"] in nodes
+    for node in nodes.values():
+        assert set(node.get("backlinks", ())) <= nodes.keys()
+        assert f"`{node['id']}`" in index
+
+    assert f"node_count: `{len(nodes)}`" in report
+    assert f"edge_count: `{len(graph['edges'])}`" in report
+
+    relations = {
+        (edge["source"], edge["target"], edge["relation"]) for edge in graph["edges"]
+    }
+    assert (
+        "issue:reverso-root:kimi-subscription-provider",
+        "spec:reverso-root:kimi-subscription-provider",
+        "defined-by",
+    ) in relations
+    assert (
+        "adr:reverso-root:kimi-code-oauth-provider",
+        "spec:reverso-root:kimi-subscription-provider",
+        "constrains",
+    ) in relations
+    assert (
+        "plan:reverso-root:northstar-kimi-subscription-provider",
+        "handoff:reverso-root:northstar-kimi-subscription-provider",
+        "summarized-by",
+    ) in relations
+    assert (
+        "handoff:reverso-root:northstar-kimi-subscription-provider",
+        "pr:reverso-root:86",
+        "implemented-by",
+    ) in relations

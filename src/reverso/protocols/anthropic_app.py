@@ -60,6 +60,10 @@ from reverso.protocols.anthropic_translate import (
     responses_envelope_to_anthropic,
 )
 from reverso.protocols.headroom_compression import compress_responses_request
+from reverso.protocols.proof_correlation import (
+    DEFAULT_PROOF_CORRELATION,
+    proof_nonce_from_headers,
+)
 from reverso.protocols.replay import build_prompt, estimate_usage, new_message_id
 from reverso.protocols.surface_registry import (
     SURFACE_BACKENDS,
@@ -600,12 +604,20 @@ class AnthropicMessagesApp:
 
         if payload.get("stream") is True:
             await self._handle_streaming(
-                backend, request, send, anthropic_version=anthropic_version
+                backend,
+                request,
+                send,
+                anthropic_version=anthropic_version,
+                proof_nonce=proof_nonce_from_headers(headers),
             )
             return
 
         await self._handle_nonstreaming(
-            backend, request, send, anthropic_version=anthropic_version
+            backend,
+            request,
+            send,
+            anthropic_version=anthropic_version,
+            proof_nonce=proof_nonce_from_headers(headers),
         )
 
     async def _handle_nonstreaming(
@@ -615,6 +627,7 @@ class AnthropicMessagesApp:
         send: Send,
         *,
         anthropic_version: str,
+        proof_nonce: str | None = None,
     ) -> None:
         """Compress, dispatch, and map back a non-streaming Messages request.
 
@@ -626,6 +639,7 @@ class AnthropicMessagesApp:
         """
         adapter = self._adapters[backend]
         compression_outcome = await compress_responses_request(request)
+        DEFAULT_PROOF_CORRELATION.record(proof_nonce, "messages")
         dispatch_request = compression_outcome.request
         try:
             envelope = await adapter.create_response(dispatch_request)
@@ -655,6 +669,7 @@ class AnthropicMessagesApp:
         send: Send,
         *,
         anthropic_version: str,
+        proof_nonce: str | None = None,
     ) -> None:
         """Stream an Anthropic SSE response over the pure anthropic_stream mapper.
 
@@ -678,6 +693,7 @@ class AnthropicMessagesApp:
         """
         adapter = self._adapters[backend]
         compression_outcome = await compress_responses_request(request)
+        DEFAULT_PROOF_CORRELATION.record(proof_nonce, "messages")
         dispatch_request = compression_outcome.request
         message_id = new_message_id()
         anthropic_events = responses_sse_to_anthropic(
