@@ -92,6 +92,7 @@ def test_model_exposure_owns_codex_profile_sync_prefixes() -> None:
         "copilot",
         "auggie",
         "deepseek",
+        "kimi",
         "codex-direct",
     )
     assert reverso_routed_codex_profile_prefixes(
@@ -102,12 +103,14 @@ def test_model_exposure_owns_codex_profile_sync_prefixes() -> None:
         "copilot",
         "auggie",
         "deepseek",
+        "kimi",
     )
     assert reverso_routed_codex_profile_prefixes({REVERSO_HOST_ENV: "0.0.0.0"}) == (
         "claude",
         "copilot",
         "auggie",
         "deepseek",
+        "kimi",
     )
     assert reverso_routed_codex_profile_prefixes(
         {REVERSO_HOST_ENV: "0.0.0.0", CODEX_DIRECT_BACKEND_ENV: "1"}
@@ -116,12 +119,14 @@ def test_model_exposure_owns_codex_profile_sync_prefixes() -> None:
         "copilot",
         "auggie",
         "deepseek",
+        "kimi",
     )
     assert reverso_routed_codex_profile_prefixes({CODEX_DIRECT_BACKEND_ENV: "1"}) == (
         "claude",
         "copilot",
         "auggie",
         "deepseek",
+        "kimi",
         "codex-direct",
     )
     assert reverso_routed_codex_profile_prefixes({OPENAI_BACKEND_ENV: "1"}) == (
@@ -129,6 +134,7 @@ def test_model_exposure_owns_codex_profile_sync_prefixes() -> None:
         "copilot",
         "auggie",
         "deepseek",
+        "kimi",
         "codex-direct",
         "openai-pass-through",
     )
@@ -139,6 +145,7 @@ def test_model_exposure_owns_codex_profile_sync_prefixes() -> None:
         "copilot",
         "auggie",
         "deepseek",
+        "kimi",
     )
     direct = {spec.prefix: spec for spec in direct_codex_profile_specs()}
     assert direct_codex_profile_specs() == DIRECT_CODEX_PROFILE_SPECS

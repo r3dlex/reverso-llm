@@ -50,6 +50,7 @@ REVERSO_ROUTED_CODEX_PROFILE_PREFIXES: tuple[str, ...] = (
     "copilot",
     "auggie",
     "deepseek",
+    "kimi",
 )
 CODEX_DIRECT_BACKEND_ENV = "REVERSO_CODEX_DIRECT_BACKEND"
 OPENAI_BACKEND_ENV = "REVERSO_OPENAI_BACKEND"
