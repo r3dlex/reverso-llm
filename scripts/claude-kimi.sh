@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-model=${REVERSO_KIMI_MODEL:-kimi-k2.5}
+model=${REVERSO_KIMI_MODEL:-kimi-for-coding}
 case "$model" in
     ""|*/*|anthropic-*)
         echo "REVERSO_KIMI_MODEL must be a bare Kimi model id" >&2

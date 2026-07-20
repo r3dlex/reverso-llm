@@ -546,7 +546,7 @@ class HttpLiveProofProbe:
         return saw_completed and len(texts) == 1 and texts[0].strip() == expected
 
     def codex(self, model_id: str | None) -> dict[str, Any]:
-        model = self._model(model_id)
+        self._model(model_id)
         config_path = Path(
             os.environ.get("REVERSO_CODEX_CONFIG", Path.home() / ".codex/config.toml")
         ).expanduser()
@@ -574,8 +574,10 @@ class HttpLiveProofProbe:
             if isinstance(catalog_models, list)
             else set()
         )
+        profile_model = profile.get("model")
         if (
-            profile.get("model") != model
+            not isinstance(profile_model, str)
+            or profile_model not in self._live_models
             or profile.get("model_provider") != "reverso_kimi"
             or not isinstance(provider, dict)
             or provider.get("base_url") != "http://127.0.0.1:64946/kimi/v1"
@@ -604,7 +606,7 @@ class HttpLiveProofProbe:
         return {
             "provider": "kimi",
             "route": "/kimi/v1/responses",
-            "model_id": model,
+            "model_id": profile_model,
             "duration_ms": duration,
             "status": 0,
         }
