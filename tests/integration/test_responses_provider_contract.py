@@ -1,34 +1,156 @@
 """Provider-agnostic Codex Responses parity harness (ADR 0002, test-spec).
 
 The SAME Codex-observed fixture matrix (tests/fixtures/responses) runs against
-ALL FOUR provider paths (claude, copilot, auggie, deepseek) through the
-first-party app (reverso.protocols.responses_app.build_app). Every provider is
-backed by the deterministic FixtureAdapter (conftest), which authenticates
-through the fake-auth seam and replays fixture bodies/events; no real Claude,
-Copilot, Auggie, or DeepSeek endpoint, process, or credential is touched. The
-four providers share a single loopback port via path-prefix routing, so no new
-listener or process is spawned per provider. Identical assertions apply per
-provider, so a failure isolates which provider broke contract parity.
+all five routed provider paths (claude, copilot, auggie, deepseek, kimi)
+through the first-party app (reverso.protocols.responses_app.build_app). Every
+provider is backed by the deterministic FixtureAdapter (conftest), which
+authenticates through the fake-auth seam and replays fixture bodies/events; no
+real provider endpoint, process, or credential is touched. The providers share
+a single loopback port via path-prefix routing, so no new listener or process
+is spawned per provider. Identical assertions apply per provider, so a failure
+isolates which provider broke contract parity.
 """
 
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, AsyncIterator
 
 import httpx
 import pytest
 
 from conftest import FixtureAdapter, load_fixture
+from reverso.protocols.adapter import ResponseEnvelope, ResponsesRequest, SSEEvent
 from reverso.protocols.responses_app import build_app
 
 PROVIDERS = ["claude", "copilot", "auggie", "deepseek", "kimi"]
+AFFECTED_INCLUDE_PROVIDERS = ["claude", "auggie", "deepseek", "kimi"]
+EXACT_ENCRYPTED_CONTENT_INCLUDE = ["reasoning.encrypted_content"]
 
 
 def _build_client() -> httpx.AsyncClient:
     app = build_app({provider: FixtureAdapter(provider) for provider in PROVIDERS})
     transport = httpx.ASGITransport(app=app)
     return httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:64946")
+
+
+class _RecordingFixtureAdapter(FixtureAdapter):
+    """Record the normalized request that reaches the deterministic adapter."""
+
+    def __init__(self, provider: str) -> None:
+        super().__init__(provider)
+        self.create_requests: list[ResponsesRequest] = []
+        self.stream_requests: list[ResponsesRequest] = []
+
+    async def create_response(self, request: ResponsesRequest) -> ResponseEnvelope:
+        self.create_requests.append(request)
+        return await super().create_response(request)
+
+    async def stream_response(
+        self,
+        request: ResponsesRequest,
+    ) -> AsyncIterator[SSEEvent]:
+        self.stream_requests.append(request)
+        async for event in super().stream_response(request):
+            yield event
+
+
+class _ProviderAuthError(PermissionError):
+    """Deterministic provider authentication failure."""
+
+
+class _OutcomeRecordingFixtureAdapter(_RecordingFixtureAdapter):
+    """Return or raise a deterministic outcome after provider dispatch."""
+
+    def __init__(self, provider: str, outcome: str) -> None:
+        super().__init__(provider)
+        self.outcome = outcome
+
+    def _raise_if_needed(self) -> None:
+        if self.outcome == "auth-error":
+            raise _ProviderAuthError("deterministic provider auth failure")
+        if self.outcome == "timeout":
+            raise TimeoutError("deterministic provider timeout")
+
+    def _envelope(self) -> ResponseEnvelope:
+        text = "Provider quota exhausted." if self.outcome == "quota-message" else None
+        output = (
+            [
+                {
+                    "id": "msg_provider_health",
+                    "type": "message",
+                    "role": "assistant",
+                    "status": "completed",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": text,
+                            "annotations": [],
+                        }
+                    ],
+                }
+            ]
+            if text is not None
+            else []
+        )
+        raw = {
+            "id": "resp_provider_health",
+            "object": "response",
+            "status": "completed",
+            "model": "fixture-model",
+            "output": output,
+        }
+        return ResponseEnvelope(
+            id=raw["id"],
+            model=raw["model"],
+            output=output,
+            raw=raw,
+        )
+
+    async def create_response(self, request: ResponsesRequest) -> ResponseEnvelope:
+        self.create_requests.append(request)
+        self._raise_if_needed()
+        return self._envelope()
+
+    async def stream_response(
+        self,
+        request: ResponsesRequest,
+    ) -> AsyncIterator[SSEEvent]:
+        self.stream_requests.append(request)
+        self._raise_if_needed()
+        envelope = self._envelope()
+        if self.outcome == "quota-message":
+            yield SSEEvent(
+                event="response.output_text.delta",
+                data={
+                    "type": "response.output_text.delta",
+                    "delta": "Provider quota exhausted.",
+                },
+            )
+        yield SSEEvent(
+            event="response.completed",
+            data={"type": "response.completed", "response": envelope.raw},
+        )
+
+
+def _build_recording_client(
+    *,
+    outcome_provider: str | None = None,
+    outcome: str | None = None,
+) -> tuple[httpx.AsyncClient, dict[str, _RecordingFixtureAdapter]]:
+    adapters: dict[str, _RecordingFixtureAdapter] = {}
+    for provider in PROVIDERS:
+        if provider == outcome_provider and outcome is not None:
+            adapters[provider] = _OutcomeRecordingFixtureAdapter(provider, outcome)
+        else:
+            adapters[provider] = _RecordingFixtureAdapter(provider)
+    app = build_app(adapters)
+    transport = httpx.ASGITransport(app=app)
+    client = httpx.AsyncClient(
+        transport=transport,
+        base_url="http://127.0.0.1:64946",
+    )
+    return client, adapters
 
 
 def _prefix(provider: str) -> str:
@@ -52,6 +174,160 @@ def _parse_sse(text: str) -> tuple[list[dict[str, Any]], bool]:
                 continue
             events.append(json.loads(data))
     return events, saw_done
+
+
+def _assert_expected_dispatch(
+    adapter: _RecordingFixtureAdapter,
+    *,
+    stream: bool,
+) -> ResponsesRequest:
+    expected = adapter.stream_requests if stream else adapter.create_requests
+    opposite = adapter.create_requests if stream else adapter.stream_requests
+    assert len(expected) == 1
+    assert opposite == []
+    return expected[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("provider", PROVIDERS)
+@pytest.mark.parametrize(
+    "include",
+    [None, [], EXACT_ENCRYPTED_CONTENT_INCLUDE],
+    ids=["absent", "empty", "exact-sentinel"],
+)
+async def test_encrypted_content_include_accepted_and_removed_before_dispatch(
+    provider: str,
+    stream: bool,
+    include: list[str] | None,
+) -> None:
+    """Accepted include shapes reach every adapter only after normalization."""
+    body: dict[str, Any] = {"model": "fixture-model", "input": "hello"}
+    if include is not None:
+        body["include"] = include
+    if stream:
+        body["stream"] = True
+
+    client, adapters = _build_recording_client()
+    async with client:
+        resp = await client.post(f"{_prefix(provider)}/responses", json=body)
+
+    assert resp.status_code == 200
+    request = _assert_expected_dispatch(adapters[provider], stream=stream)
+    assert "include" not in request.extra
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("provider", AFFECTED_INCLUDE_PROVIDERS)
+@pytest.mark.parametrize(
+    "include",
+    [
+        ["reasoning.encrypted_content", "message.output_text.logprobs"],
+        ["message.output_text.logprobs"],
+    ],
+    ids=["mixed", "unknown"],
+)
+async def test_non_exact_include_rejected_before_affected_provider_dispatch(
+    provider: str,
+    stream: bool,
+    include: list[str],
+) -> None:
+    """Every non-exact non-empty include keeps the canonical generic gate."""
+    body = {
+        "model": "fixture-model",
+        "input": "hello",
+        "include": include,
+        "stream": stream,
+    }
+    client, adapters = _build_recording_client()
+    async with client:
+        resp = await client.post(f"{_prefix(provider)}/responses", json=body)
+
+    assert resp.status_code == 400
+    assert resp.json() == {
+        "error": {
+            "type": "invalid_request_error",
+            "code": "unsupported_feature",
+            "message": f"{provider} does not support include",
+        }
+    }
+    assert adapters[provider].create_requests == []
+    assert adapters[provider].stream_requests == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize(
+    "include",
+    [
+        ["reasoning.encrypted_content", "message.output_text.logprobs"],
+        ["message.output_text.logprobs"],
+    ],
+    ids=["mixed", "unknown"],
+)
+async def test_copilot_preserves_generic_include_acceptance_and_normalization(
+    stream: bool,
+    include: list[str],
+) -> None:
+    """Copilot still accepts generic include while the normalizer omits it."""
+    body = {
+        "model": "fixture-model",
+        "input": "hello",
+        "include": include,
+        "stream": stream,
+    }
+    client, adapters = _build_recording_client()
+    async with client:
+        resp = await client.post("/copilot/v1/responses", json=body)
+
+    assert resp.status_code == 200
+    request = _assert_expected_dispatch(adapters["copilot"], stream=stream)
+    assert "include" not in request.extra
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("provider", PROVIDERS)
+@pytest.mark.parametrize(
+    "outcome",
+    ["auth-error", "timeout", "quota-message", "empty-output"],
+)
+async def test_provider_outcome_after_exact_include_dispatch_is_not_gate_error(
+    provider: str,
+    stream: bool,
+    outcome: str,
+) -> None:
+    """Post-dispatch provider outcomes remain independent of include support."""
+    body = {
+        "model": "fixture-model",
+        "input": "hello",
+        "include": EXACT_ENCRYPTED_CONTENT_INCLUDE,
+        "stream": stream,
+    }
+    client, adapters = _build_recording_client(
+        outcome_provider=provider,
+        outcome=outcome,
+    )
+    async with client:
+        resp = await client.post(f"{_prefix(provider)}/responses", json=body)
+
+    if outcome in {"auth-error", "timeout"}:
+        assert resp.status_code == 502
+        assert resp.json()["error"]["type"] == "server_error"
+    else:
+        assert resp.status_code == 200
+        if outcome == "quota-message":
+            assert "Provider quota exhausted." in resp.text
+        elif stream:
+            events, saw_done = _parse_sse(resp.text)
+            assert [event["type"] for event in events] == ["response.completed"]
+            assert saw_done is True
+        else:
+            assert resp.json()["output"] == []
+    assert "unsupported_feature" not in resp.text
+    request = _assert_expected_dispatch(adapters[provider], stream=stream)
+    assert "include" not in request.extra
 
 
 @pytest.mark.asyncio

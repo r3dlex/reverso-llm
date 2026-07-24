@@ -3,7 +3,8 @@ title: "Codex Responses parity matrix"
 status: shipped
 phase: C2
 gateway_bind: 127.0.0.1:64946
-providers: ["claude", "copilot", "auggie", "deepseek"]
+routed_providers: ["claude", "copilot", "auggie", "deepseek", "kimi"]
+capability_table_providers: ["claude", "copilot", "auggie", "deepseek", "kimi", "codex"]
 source_research:
   - .omc/research/responses-parity-surface.md
   - .omc/research/responses-parity-surface.json
@@ -20,18 +21,18 @@ shipped_artifacts:
   - src/reverso/protocols/adapters/auggie.py
   - src/reverso/protocols/adapters/deepseek.py
   - src/reverso/codex_sync.py
-generated: 2026-06-11
+updated: 2026-07-24
 ---
 
 # Codex Responses parity matrix
 
 ## Scope
 
-This document is the final per-provider Responses-API feature matrix that the reverso gateway (`127.0.0.1:64946`) presents to a Codex client across the four first-party providers (`claude`, `copilot`, `auggie`, `deepseek`). It folds the A4 research surface (`.omc/research/responses-parity-surface.md`, `.omc/research/responses-parity-surface.json`) together with the shipped Phase B outcomes:
+This document is the per-provider Responses-API feature matrix that the reverso gateway (`127.0.0.1:64946`) presents to a Codex client across the five routed providers (`claude`, `copilot`, `auggie`, `deepseek`, `kimi`). The source-owned capability surface is rectangular and also includes a non-routing `codex` control column. That column does not create a `/codex/v1/responses` route and is separate from the unchanged `codex-direct` control route. The document folds the A4 research surface (`.omc/research/responses-parity-surface.md`, `.omc/research/responses-parity-surface.json`) together with the shipped Phase B outcomes:
 
 1. B1 hybrid feature gate at `src/reverso/protocols/feature_policy.py`, generated from `src/reverso/protocols/data/responses_parity_surface.json` (byte-identical mirror of the A4 JSON). Enforced fast-path-first by `src/reverso/protocols/responses_app.py` before adapter dispatch, with an adapter back-stop via the typed `UnsupportedFeature` exception rendering the same 400 body via `build_unsupported_payload`.
 2. B2 incremental claude streaming via the injectable `stream_cli_runner: Callable[[str, str], AsyncIterator[str]]` in `ClaudeAdapter`, default implementation over `asyncio.create_subprocess_exec` calling `claude --print --output-format stream-json --verbose --include-partial-messages ...`. Documented buffered fallback on preflight failure.
-3. B3 in-memory `ResponseStore` boundary (no disk persistence). A1 returned NO-PERSIST, so `src/reverso/protocols/store.py` keeps the thread-safe in-memory implementation; the boundary is captured here once for all four providers.
+3. B3 in-memory `ResponseStore` boundary (no disk persistence). A1 returned NO-PERSIST, so `src/reverso/protocols/store.py` keeps the thread-safe in-memory implementation; the boundary is captured here once for all routed providers.
 4. B4 per-provider parity translation: deepseek translation for `text.format` and `max_output_tokens` via `_translate_extras` plus `extra` carry-through for sampling and `parallel_tool_calls`; copilot verbatim forwarding verified for the misc surface; claude and auggie remain CLI-buffered for everything outside the message text path.
 5. B5 model selection via the `reverso-codex-sync` console script (`src/reverso/codex_sync.py`), which writes provider-name profile files beside `~/.codex/config.toml`, strips legacy managed blocks from the base config, writes provider-scoped catalogs, and preserves unrelated base-config keys byte-for-byte.
 
@@ -44,7 +45,7 @@ The classification cells below are sourced from `src/reverso/protocols/data/resp
 - **partial**: only a subset of the field is supported; the gap is covered by an `unsupported_feature` 400 for the rest.
 - **unsupported**: the fast-path gate at `feature_policy.check_features` raises `UnsupportedFeature(provider, feature)` and `responses_app._send_unsupported_feature` renders an HTTP 400 with body `{"error":{"type":"invalid_request_error","code":"unsupported_feature","message":"<provider> does not support <feature>"}}` BEFORE the adapter runner is invoked. The adapter back-stop renders the IDENTICAL body if a request slips past the table.
 
-## Cross-cutting properties shared by all four providers
+## Cross-cutting properties shared by all routed providers
 
 These properties apply to every provider on the matrix and are not repeated per row:
 
@@ -59,33 +60,33 @@ These properties apply to every provider on the matrix and are not repeated per 
 
 ### Inputs
 
-| Feature | claude | copilot | auggie | deepseek | Implementation note |
-|---------|--------|---------|--------|----------|---------------------|
-| `input.string` | native | native | native | native | Flattened by `replay.flatten_input` for the buffered providers; copilot forwards verbatim. |
-| `input.message_list_text` | translated | native | translated | translated | Buffered providers run `replay.flatten_input` over message-list text content; copilot forwards verbatim. The fast-path gate requires `_is_text_only_message_list` (presence of at least one `message` item). |
-| `input.image` | unsupported | native | unsupported | unsupported | The fast-path gate triggers when any item contains an `input_image` content part. Only copilot forwards the image to an upstream Responses surface that can handle it. |
-| `input.file` | unsupported | native | unsupported | unsupported | The fast-path gate triggers on any `input_file` content part. Only copilot supports it natively. |
-| `instructions` | translated | native | translated | translated | claude and auggie prepend instructions to the prompt via `replay.build_prompt`. deepseek emits a `{"role":"system"}` chat message. copilot forwards `payload["instructions"]` verbatim. |
+| Feature | claude | copilot | auggie | deepseek | kimi | codex | Implementation note |
+|---|---|---|---|---|---|---|---|
+| `input.string` | native | native | native | native | native | native | Flattened by `replay.flatten_input` for the buffered providers; copilot forwards verbatim. |
+| `input.message_list_text` | translated | native | translated | translated | translated | translated | Buffered providers run `replay.flatten_input` over message-list text content; copilot forwards verbatim. The fast-path gate requires `_is_text_only_message_list` (presence of at least one `message` item). |
+| `input.image` | unsupported | native | unsupported | unsupported | unsupported | unsupported | The fast-path gate triggers when any item contains an `input_image` content part. Only copilot forwards the image to an upstream Responses surface that can handle it. |
+| `input.file` | unsupported | native | unsupported | unsupported | unsupported | unsupported | The fast-path gate triggers on any `input_file` content part. Only copilot supports it natively. |
+| `instructions` | translated | native | translated | translated | translated | translated | claude and auggie prepend instructions to the prompt via `replay.build_prompt`. deepseek emits a `{"role":"system"}` chat message. copilot forwards `payload["instructions"]` verbatim. |
 
 ### Session and chaining
 
-| Feature | claude | copilot | auggie | deepseek | Implementation note |
-|---------|--------|---------|--------|----------|---------------------|
-| `previous_response_id` | native | native | native | native | Stored response envelopes are keyed by id in the in-memory `ResponseStore`. deepseek additionally re-injects the prior assistant `reasoning_content` (`DeepSeekAdapter._prior_turn`) so DeepSeek thinking-mode chains correctly. See the in-memory boundary section for the survival window. |
-| `store` | native | native | native | native | Default true (Responses semantics). All four adapters `put_response` on completion regardless. The fast-path gate sees `store` only when the request explicitly sets it; the table marks it native because false is also supported (the gate does not reject either value). |
-| `GET /v1/responses/{id}` | native | native | native | native | Served by `adapter.get_response` against the in-memory store. |
-| `GET /v1/responses/{id}/input_items` | native | native | native | native | Served by `adapter.list_input_items`. Returns an empty `data` list rather than a 404 when the id is unknown (existing contract preserved). |
-| `POST /v1/responses/{id}/cancel` | unsupported | unsupported | unsupported | unsupported | The route is not registered in `ResponsesGatewayApp._dispatch`. A client POSTing to it gets the gateway's standard 404 body. |
+| Feature | claude | copilot | auggie | deepseek | kimi | codex | Implementation note |
+|---|---|---|---|---|---|---|---|
+| `previous_response_id` | native | native | native | native | native | native | Stored response envelopes are keyed by id in the in-memory `ResponseStore`. deepseek additionally re-injects the prior assistant `reasoning_content` (`DeepSeekAdapter._prior_turn`) so DeepSeek thinking-mode chains correctly. See the in-memory boundary section for the survival window. |
+| `store` | native | native | native | native | native | native | Default true (Responses semantics). All five routed adapters `put_response` on completion regardless. The fast-path gate sees `store` only when the request explicitly sets it; the table marks it native because false is also supported (the gate does not reject either value). |
+| `GET /v1/responses/{id}` | native | native | native | native | native | native | Served by `adapter.get_response` against the in-memory store. |
+| `GET /v1/responses/{id}/input_items` | native | native | native | native | native | native | Served by `adapter.list_input_items`. Returns an empty `data` list rather than a 404 when the id is unknown (existing contract preserved). |
+| `POST /v1/responses/{id}/cancel` | unsupported | unsupported | unsupported | unsupported | unsupported | unsupported | The route is not registered in `ResponsesGatewayApp._dispatch`. A client POSTing to it gets the gateway's standard 404 body. |
 
 ### Streaming
 
-| Feature | claude | copilot | auggie | deepseek | Implementation note |
-|---------|--------|---------|--------|----------|---------------------|
-| `stream` (request flag) | translated | native | translated | translated | claude streams incrementally via the B2 `stream_cli_runner` path or falls back to a buffered canonical replay. deepseek streams incrementally via the D1 `replay.replay_incremental` path consuming upstream `stream=true` chat-completions chunks. auggie replays a single buffered turn through `replay.replay_turn`. copilot forwards upstream SSE blocks verbatim. |
-| `stream.incremental_deltas` | translated | native | unsupported | translated | claude: B2 shipped, multi-`response.output_text.delta` from `claude --output-format stream-json`. copilot: native pass-through. auggie: BUFFER per spec Round 4 (auggie CLI has no streaming output mode; the row stays unsupported). deepseek: D1 shipped, multi-`response.output_text.delta` translated from upstream chat-completions `stream=true` chunks via `replay.replay_incremental`; the streamed path also sets `stream_options.include_usage=true` so the terminal usage chunk lands on `response.completed`. |
-| `response.refusal.delta` | unsupported | native | unsupported | unsupported | Only copilot forwards upstream refusal deltas. |
-| `response.reasoning_summary_text.delta` | unsupported | native | unsupported | unsupported | Only copilot forwards upstream reasoning summary deltas. |
-| `response.function_call_arguments.delta` | unsupported | native | unsupported | translated | copilot forwards upstream function-call argument deltas. deepseek surfaces accumulated tool_call deltas at finalize-time through the replay seam's per-item helpers (added at task #12), so a streamed turn with a tool call emits canonical `response.output_item.added` (type=function_call) and `response.function_call_arguments.delta`/`.done` events alongside the message item. |
+| Feature | claude | copilot | auggie | deepseek | kimi | codex | Implementation note |
+|---|---|---|---|---|---|---|---|
+| `stream` (request flag) | translated | native | translated | translated | translated | translated | claude streams incrementally via the B2 `stream_cli_runner` path or falls back to a buffered canonical replay. deepseek streams incrementally via the D1 `replay.replay_incremental` path consuming upstream `stream=true` chat-completions chunks. auggie replays a single buffered turn through `replay.replay_turn`. copilot forwards upstream SSE blocks verbatim. |
+| `stream.incremental_deltas` | translated | native | unsupported | translated | translated | unsupported | claude: B2 shipped, multi-`response.output_text.delta` from `claude --output-format stream-json`. copilot: native pass-through. auggie: BUFFER per spec Round 4 (auggie CLI has no streaming output mode; the row stays unsupported). deepseek: D1 shipped, multi-`response.output_text.delta` translated from upstream chat-completions `stream=true` chunks via `replay.replay_incremental`; the streamed path also sets `stream_options.include_usage=true` so the terminal usage chunk lands on `response.completed`. |
+| `response.refusal.delta` | unsupported | native | unsupported | unsupported | unsupported | unsupported | Only copilot forwards upstream refusal deltas. |
+| `response.reasoning_summary_text.delta` | unsupported | native | unsupported | unsupported | unsupported | unsupported | Only copilot forwards upstream reasoning summary deltas. |
+| `response.function_call_arguments.delta` | unsupported | native | unsupported | translated | translated | unsupported | copilot forwards upstream function-call argument deltas. deepseek surfaces accumulated tool_call deltas at finalize-time through the replay seam's per-item helpers (added at task #12), so a streamed turn with a tool call emits canonical `response.output_item.added` (type=function_call) and `response.function_call_arguments.delta`/`.done` events alongside the message item. |
 
 The canonical buffered SSE sequence emitted by claude (fallback path) and auggie through `replay.replay_turn` is:
 
@@ -105,54 +106,75 @@ The B2 incremental path on claude and the D1 incremental path on deepseek emit t
 
 ### Tools
 
-| Feature | claude | copilot | auggie | deepseek | Implementation note |
-|---------|--------|---------|--------|----------|---------------------|
-| `tools.function` | partial | native | partial | translated | codex 0.139.0 sends a fixed 22-entry default tool surface in every Responses request (exec_command, write_stdin, MCP resource/plugin/goal tools, namespace tools). The fast-path gate accepts the field for claude/auggie so codex turns can complete; the CLI runners ignore the `tools` field and produce no `function_call` output items. copilot forwards `tools` verbatim. deepseek converts the flat Responses `{"type":"function","name":...,"parameters":...}` shape into the chat `{"type":"function","function":{...}}` shape via `_chat_tools`; the response surfaces upstream tool_calls as Responses `function_call` output items through `_tool_call_item`, and the replay seam emits per-item SSE events (`response.output_item.added` with `type=function_call`, `response.function_call_arguments.delta`/`.done`, `response.output_item.done`) for every function_call item on BOTH the buffered (`replay.replay_turn`) and the D1 streamed (`replay.replay_incremental`) paths, so the codex tool loop can drive the call. |
-| `tools.web_search` | partial | native | partial | partial | codex 0.139.0 also includes a built-in `{"type":"web_search"}` entry in the default tool surface on every request. claude/auggie accept and ignore it (the CLI runners cannot execute a web_search tool and emit no web-search output items). deepseek `_chat_tools` drops non-`function` tool entries before building the chat body, so the field is accepted at the gate, stripped before the upstream call, and no web-search output items are emitted. |
-| `tools.file_search` | unsupported | native | unsupported | unsupported | codex does not send this by default; same shape as web_search when explicitly requested. |
-| `tools.computer_use` | unsupported | unsupported | unsupported | unsupported | No upstream supports computer-use through this gateway. |
-| `tools.code_interpreter` | unsupported | unsupported | unsupported | unsupported | No upstream supports code interpreter through this gateway. |
-| `tool_choice.auto` | partial | native | partial | translated | codex defaults `tool_choice="auto"` on every Responses request; claude/auggie accept the field and ignore it (the CLI runners have no client tools to choose). copilot forwards; deepseek forwards verbatim via `_chat_tool_choice`. |
-| `tool_choice.required` | unsupported | native | unsupported | translated | codex does not send this by default; claude/auggie cannot honor a required client tool call. |
-| `tool_choice.named` | unsupported | native | unsupported | translated | codex does not send this by default; deepseek rewrites a flat named `tool_choice` into `{"type":"function","function":{"name":...}}` in `_chat_tool_choice`. |
-| `tool_choice.none` | unsupported | native | unsupported | translated | codex does not send this by default; same shape as auto on the upstreams that do forward. |
-| `parallel_tool_calls` | partial | native | partial | translated | codex includes `parallel_tool_calls` in every default Responses request; claude/auggie accept and ignore it (no client tools to parallelize). copilot forwards; deepseek carries the chat-shape value through verbatim via the `extra` loop in `_build_body`. |
+| Feature | claude | copilot | auggie | deepseek | kimi | codex | Implementation note |
+|---|---|---|---|---|---|---|---|
+| `tools.function` | partial | native | partial | translated | translated | partial | codex 0.139.0 sends a fixed 22-entry default tool surface in every Responses request (exec_command, write_stdin, MCP resource/plugin/goal tools, namespace tools). The fast-path gate accepts the field for claude/auggie so codex turns can complete; the CLI runners ignore the `tools` field and produce no `function_call` output items. copilot forwards `tools` verbatim. deepseek converts the flat Responses `{"type":"function","name":...,"parameters":...}` shape into the chat `{"type":"function","function":{...}}` shape via `_chat_tools`; the response surfaces upstream tool_calls as Responses `function_call` output items through `_tool_call_item`, and the replay seam emits per-item SSE events (`response.output_item.added` with `type=function_call`, `response.function_call_arguments.delta`/`.done`, `response.output_item.done`) for every function_call item on BOTH the buffered (`replay.replay_turn`) and the D1 streamed (`replay.replay_incremental`) paths, so the codex tool loop can drive the call. |
+| `tools.web_search` | partial | native | partial | partial | partial | partial | codex 0.139.0 also includes a built-in `{"type":"web_search"}` entry in the default tool surface on every request. claude/auggie accept and ignore it (the CLI runners cannot execute a web_search tool and emit no web-search output items). deepseek `_chat_tools` drops non-`function` tool entries before building the chat body, so the field is accepted at the gate, stripped before the upstream call, and no web-search output items are emitted. |
+| `tools.file_search` | unsupported | native | unsupported | unsupported | unsupported | unsupported | codex does not send this by default; same shape as web_search when explicitly requested. |
+| `tools.computer_use` | unsupported | unsupported | unsupported | unsupported | unsupported | unsupported | No upstream supports computer-use through this gateway. |
+| `tools.code_interpreter` | unsupported | unsupported | unsupported | unsupported | unsupported | unsupported | No upstream supports code interpreter through this gateway. |
+| `tool_choice.auto` | partial | native | partial | translated | translated | partial | codex defaults `tool_choice="auto"` on every Responses request; claude/auggie accept the field and ignore it (the CLI runners have no client tools to choose). copilot forwards; deepseek forwards verbatim via `_chat_tool_choice`. |
+| `tool_choice.required` | unsupported | native | unsupported | translated | translated | unsupported | codex does not send this by default; claude/auggie cannot honor a required client tool call. |
+| `tool_choice.named` | unsupported | native | unsupported | translated | translated | unsupported | codex does not send this by default; deepseek rewrites a flat named `tool_choice` into `{"type":"function","function":{"name":...}}` in `_chat_tool_choice`. |
+| `tool_choice.none` | unsupported | native | unsupported | translated | translated | unsupported | codex does not send this by default; same shape as auto on the upstreams that do forward. |
+| `parallel_tool_calls` | partial | native | partial | translated | translated | partial | codex includes `parallel_tool_calls` in every default Responses request; claude/auggie accept and ignore it (no client tools to parallelize). copilot forwards; deepseek carries the chat-shape value through verbatim via the `extra` loop in `_build_body`. |
 
 ### Reasoning and sampling
 
-| Feature | claude | copilot | auggie | deepseek | Implementation note |
-|---------|--------|---------|--------|----------|---------------------|
-| `reasoning.effort` | unsupported | native | unsupported | translated | The fast-path gate triggers on `extra["reasoning"]["effort"]`. copilot forwards; deepseek passes the upstream-supported value through (used by `deepseek-reasoner`). claude and auggie CLIs have no equivalent. |
-| `reasoning.summary` | unsupported | native | unsupported | translated | copilot forwards. deepseek surfaces `reasoning_content` on the envelope (`_map_completion`) and re-injects it on `previous_response_id` chains (`_prior_turn`). claude/auggie CLIs have no equivalent. |
-| `sampling.temperature` | unsupported | native | unsupported | translated | copilot forwards. deepseek carries `temperature` through the `extra` loop in `_build_body`. The claude/auggie CLIs do not expose a temperature flag. |
-| `sampling.top_p` | unsupported | native | unsupported | translated | Same shape as temperature. |
-| `max_output_tokens` | partial | native | unsupported | translated | claude accepts and ignores the field so OpenAI Responses and Codex clients are not rejected; the claude CLI has no max-tokens flag, so the limit is best-effort and not enforced. deepseek translates `max_output_tokens` to chat `max_tokens` in `_translate_extras`; the raw key is denied via `_NON_FORWARDED_EXTRA` so the translation is the only path. auggie's CLI has no max-tokens flag and remains unsupported. |
+| Feature | claude | copilot | auggie | deepseek | kimi | codex | Implementation note |
+|---|---|---|---|---|---|---|---|
+| `reasoning.effort` | unsupported | native | unsupported | translated | translated | unsupported | The fast-path gate triggers on `extra["reasoning"]["effort"]`. copilot forwards; deepseek passes the upstream-supported value through (used by `deepseek-reasoner`). claude and auggie CLIs have no equivalent. |
+| `reasoning.summary` | unsupported | native | unsupported | translated | translated | unsupported | copilot forwards. deepseek surfaces `reasoning_content` on the envelope (`_map_completion`) and re-injects it on `previous_response_id` chains (`_prior_turn`). claude/auggie CLIs have no equivalent. |
+| `sampling.temperature` | unsupported | native | unsupported | translated | translated | unsupported | copilot forwards. deepseek carries `temperature` through the `extra` loop in `_build_body`. The claude/auggie CLIs do not expose a temperature flag. |
+| `sampling.top_p` | unsupported | native | unsupported | translated | translated | unsupported | Same shape as temperature. |
+| `max_output_tokens` | partial | native | unsupported | translated | translated | unsupported | claude accepts and ignores the field so OpenAI Responses and Codex clients are not rejected; the claude CLI has no max-tokens flag, so the limit is best-effort and not enforced. deepseek translates `max_output_tokens` to chat `max_tokens` in `_translate_extras`; the raw key is denied via `_NON_FORWARDED_EXTRA` so the translation is the only path. auggie's CLI has no max-tokens flag and remains unsupported. |
 
 ### Misc request fields
 
-| Feature | claude | copilot | auggie | deepseek | Implementation note |
-|---------|--------|---------|--------|----------|---------------------|
-| `truncation` | unsupported | native | unsupported | unsupported | Only copilot forwards. deepseek chat-completions has no equivalent. |
-| `metadata` | unsupported | native | unsupported | unsupported | Only copilot forwards verbatim. |
-| `include` | unsupported | native | unsupported | unsupported | Only copilot forwards verbatim. The fast-path gate triggers only when `include` is a non-empty list. |
-| `background` | unsupported | native | unsupported | unsupported | Only copilot can suspend an upstream Responses run; CLI subprocesses cannot. |
-| `text.format.text` (default) | native | native | native | native | Plain text default path. Returned by all four. |
-| `text.format.json_schema` | unsupported | native | unsupported | translated | deepseek translates the Responses `text.format` object into a chat `response_format` wrapper in `_translate_extras` / `_response_format_from_text`. copilot forwards. claude/auggie CLIs have no JSON-schema mode. |
-| `text.format.json_object` | unsupported | native | unsupported | translated | Same shape; deepseek emits `{"type":"json_object"}`. |
-| `service_tier` | unsupported | native | unsupported | unsupported | Only copilot forwards. |
-| `user` | unsupported | native | unsupported | translated | copilot forwards verbatim; deepseek forwards `user` through `_build_body`'s extra carry-through (the upstream chat-completions API accepts it as an end-user identifier and returns a normal completion). claude/auggie CLIs have no equivalent. |
-| `safety_identifier` | unsupported | native | unsupported | unsupported | Only copilot forwards. |
+| Feature | claude | copilot | auggie | deepseek | kimi | codex | Implementation note |
+|---|---|---|---|---|---|---|---|
+| `truncation` | unsupported | native | unsupported | unsupported | unsupported | unsupported | Only copilot forwards. deepseek chat-completions has no equivalent. |
+| `metadata` | unsupported | native | unsupported | unsupported | unsupported | unsupported | Only copilot forwards verbatim. |
+| `include` | unsupported | native | unsupported | unsupported | unsupported | unsupported | Generic non-empty list-valued `include` remains unsupported for claude, auggie, deepseek, and kimi, native at the Copilot gate, and unsupported in the non-routing codex control column. See the exact-sentinel compatibility table below. |
+| `background` | unsupported | native | unsupported | unsupported | unsupported | unsupported | Only copilot can suspend an upstream Responses run; CLI subprocesses cannot. |
+| `text.format.text` (default) | native | native | native | native | native | native | Plain text default path. Returned by all five routed providers. |
+| `text.format.json_schema` | unsupported | native | unsupported | translated | translated | unsupported | deepseek translates the Responses `text.format` object into a chat `response_format` wrapper in `_translate_extras` / `_response_format_from_text`. copilot forwards. claude/auggie CLIs have no JSON-schema mode. |
+| `text.format.json_object` | unsupported | native | unsupported | translated | translated | unsupported | Same shape; deepseek emits `{"type":"json_object"}`. |
+| `service_tier` | unsupported | native | unsupported | unsupported | unsupported | unsupported | Only copilot forwards. |
+| `user` | unsupported | native | unsupported | translated | translated | unsupported | copilot forwards verbatim; deepseek forwards `user` through `_build_body`'s extra carry-through (the upstream chat-completions API accepts it as an end-user identifier and returns a normal completion). claude/auggie CLIs have no equivalent. |
+| `safety_identifier` | unsupported | native | unsupported | unsupported | unsupported | unsupported | Only copilot forwards. |
+
+### Encrypted-content include compatibility
+
+Codex 0.145.0 adds the exact request field
+`include: ["reasoning.encrypted_content"]`. Reverso recognizes only that
+structurally exact list as the distinct
+`include.reasoning.encrypted_content` capability:
+
+| Feature | claude | copilot | auggie | deepseek | kimi | codex | Implementation note |
+|---|---|---|---|---|---|---|---|
+| `include` | unsupported | native | unsupported | unsupported | unsupported | unsupported | Every other non-empty list, including mixed and unknown values, keeps the generic classification. Copilot accepts the generic feature at the gate; the other routed providers reject it before adapter dispatch. |
+| `include.reasoning.encrypted_content` | partial | partial | partial | partial | partial | unsupported | The five routed providers accept the exact sentinel. The shared normalizer removes `include` before adapter dispatch, including for Copilot. This is request-shape compatibility only and does not forward, produce, preserve, or resume encrypted reasoning content. |
+
+Absent `include` and an empty list keep their existing no-feature behavior.
+Non-list values receive no new compatibility behavior. The
+`tests/integration/test_responses_provider_contract.py` recording adapter pins
+both streaming and non-streaming dispatch, normalized omission, generic
+fail-closed rejection, and provider-health separation through deterministic
+auth-error, timeout, quota-message, and empty-output outcomes. The
+`tests/integration/test_codex_responses_exclusion.py` route control continues to
+prove that `/codex/v1/responses` is not exposed.
 
 ### Endpoint surface
 
-| Endpoint | claude | copilot | auggie | deepseek | Implementation note |
-|----------|--------|---------|--------|----------|---------------------|
-| `POST /v1/responses` (unary) | native | native | native | native | `_handle_create_response` after the fast-path gate. |
-| `POST /v1/responses` (stream=true) | native | native | native | native | `_stream` with the mid-stream contract for late failures. |
-| `GET /v1/responses/{id}` | native | native | native | native | `_dispatch` falls through to `adapter.get_response`. |
-| `GET /v1/responses/{id}/input_items` | native | native | native | native | `_dispatch` falls through to `adapter.list_input_items`. |
-| `POST /v1/responses/{id}/cancel` | unsupported | unsupported | unsupported | unsupported | Not registered; standard 404 body returned. |
-| `GET /v1/models` | native | native | native | native | claude: live Anthropic listing with subscription OAuth, CLI-alias fallback. copilot: verbatim from `api.githubcopilot.com/models`. auggie: live shell to `auggie model list --json`. deepseek: live `/models` with `_DEEPSEEK_MODELS` static fallback. |
+| Endpoint | claude | copilot | auggie | deepseek | kimi | codex | Implementation note |
+|---|---|---|---|---|---|---|---|
+| `POST /v1/responses` (unary) | native | native | native | native | native | native | `_handle_create_response` after the fast-path gate. |
+| `POST /v1/responses` (stream=true) | native | native | native | native | native | native | `_stream` with the mid-stream contract for late failures. |
+| `GET /v1/responses/{id}` | native | native | native | native | native | native | `_dispatch` falls through to `adapter.get_response`. |
+| `GET /v1/responses/{id}/input_items` | native | native | native | native | native | native | `_dispatch` falls through to `adapter.list_input_items`. |
+| `POST /v1/responses/{id}/cancel` | unsupported | unsupported | unsupported | unsupported | unsupported | unsupported | Not registered; standard 404 body returned. |
+| `GET /v1/models` | native | native | native | native | native | native | claude: live Anthropic listing with subscription OAuth, CLI-alias fallback. copilot: verbatim from `api.githubcopilot.com/models`. auggie: live shell to `auggie model list --json`. deepseek: live `/models` with `_DEEPSEEK_MODELS` static fallback. kimi: live subscription `/models` with the default Kimi model fallback. |
 
 ## Streaming status, end-to-end
 
@@ -162,6 +184,7 @@ A consolidated view of what a Codex client actually sees per provider:
 - **copilot**: incremental deltas verbatim. The adapter parses upstream SSE blocks (`_parse_sse_block`) and forwards each as the corresponding `SSEEvent`, preserving event types including refusal, reasoning summary, and function-call argument deltas the other providers never produce.
 - **auggie**: BUFFER (single-delta canonical replay). Per A3 evidence in `.omc/research/auggie-streaming.md`, the auggie CLI does not expose a streaming output mode (`--output-format` accepts only `"text"` or `"json"`), and `--acp` would require an ACP client rewrite rather than a flag change. The adapter therefore runs `auggie --print --quiet --output-format json --ask -m <model> --workspace-root <sandbox> -- <prompt>` to completion and replays the result through `replay.replay_turn`. This is a spec Round 4 documented limitation, NOT an `unsupported_feature` 400.
 - **deepseek**: incremental deltas during the streaming path (D1, ADR 0004). `DeepSeekAdapter._stream_response` opens an upstream `POST /chat/completions` with `stream=true` AND `stream_options={"include_usage": true}` via `_call_upstream_stream`, parses each `data: {...}` line into a chunk dict (text + reasoning_content + tool_calls + usage), and hands the chunk async-iterator to `replay.replay_incremental`. The replay seam owns canonical envelope event emission (`response.created`, `response.in_progress`, `response.output_item.added`, `response.content_part.added`, one `response.output_text.delta` per upstream content chunk, then the finalize step that writes the envelope to the store, then `response.output_text.done`, `response.content_part.done`, `response.output_item.done`, optional per-item events for any function_call surfaced from accumulated tool_call deltas, and `response.completed` with usage). The pre-emission failure branch (401 at response headers, transport error before any chunk) raises `DeepSeekError` BEFORE any envelope event ships, so the gateway synthesises a structured 502. The post-emission failure branch (transport error during body iteration after a delta has shipped) propagates unwrapped through the gateway's `response.failed` + `[DONE]` mid-stream contract. The store-before-drain invariant is RELAXED on this path: the envelope is written at finalize-time, after the last delta and before `response.completed` (see ADR 0004).
+- **kimi**: incremental deltas through the inherited DeepSeek translation and replay path, using Kimi's subscription chat-completions transport and OAuth refresh seam. Tool-call deltas, usage, finalization, in-memory storage, and pre-emission versus post-emission failure handling follow the same translated contract as DeepSeek.
 
 ## In-memory `ResponseStore` boundary (B3 NO-PERSIST)
 
@@ -178,7 +201,7 @@ A1 (`.omc/research/codex-resume-probe.md`) returned NO-PERSIST: `codex exec resu
 Codex 0.139.0 has no native mechanism to feed its TUI `/model` picker from a custom `model_provider`'s `/v1/models` endpoint (`.omc/research/codex-model-picker.md`). B5 ships the SYNC-TOOL workaround:
 
 - `reverso-codex-sync` console script (`src/reverso/codex_sync.py`).
-- GETs `http://127.0.0.1:64946/<prefix>/v1/models` for each Reverso-routed prefix and writes provider-name profile files beside `~/.codex/config.toml`: `claude.config.toml`, `codex-direct.config.toml`, `copilot.config.toml`, `auggie.config.toml`, and `deepseek.config.toml` when the local-loopback `codex-direct` gate is enabled. `REVERSO_CODEX_DIRECT_BACKEND=0` (or `false`, `no`, `off`) hides the direct profile.
+- GETs `http://127.0.0.1:64946/<prefix>/v1/models` for each Reverso-routed prefix and writes provider-name profile files beside `~/.codex/config.toml`: `claude.config.toml`, `copilot.config.toml`, `auggie.config.toml`, `deepseek.config.toml`, and `kimi.config.toml`. It also writes `codex-direct.config.toml` when the local-loopback `codex-direct` gate is enabled. `REVERSO_CODEX_DIRECT_BACKEND=0` (or `false`, `no`, `off`) hides the direct profile.
 - Each generated Reverso profile pins `model`, `model_provider = "reverso_<prefix>"`, and a provider-scoped `model_catalog_json`. The per-provider catalogs live under `~/.codex/reverso/<prefix>.json` by default and use bare model slugs because collisions cannot occur inside a provider-scoped picker.
 - The base `config.toml` is kept clean: the tool strips legacy global catalog, NUX, and managed `[profiles.*]` blocks, and does not generate a root `model_catalog_json` or global model-list exposure.
 - Direct `openai.config.toml` and `minimax.config.toml` profiles are direct Codex provider profiles, not Reverso routes. MiniMax remains direct Codex-only.
@@ -204,12 +227,17 @@ The 400 body emitted for any unsupported feature on any provider is:
 }
 ```
 
-- `<provider>` is one of `claude`, `copilot`, `auggie`, `deepseek`.
+- `<provider>` is one of `claude`, `copilot`, `auggie`, `deepseek`, `kimi`.
 - `<feature>` is the dotted key from `responses_parity_surface.json` (for example `tools.web_search`, `parallel_tool_calls`, `text.format.json_object`).
 - The fast path at `responses_app._handle_create_response` rejects BEFORE the adapter runner is invoked.
 - The back-stop (an adapter raising `UnsupportedFeature(provider, feature)` from inside `create_response` or `stream_response`) renders the IDENTICAL body via the same `build_unsupported_payload` builder; the gateway never lets a fast-path 400 and a back-stop 400 diverge.
 - Mid-stream `UnsupportedFeature` (raised after the 200 stream header is committed) surfaces through `response.failed` + `[DONE]`; the structured 400 is unreachable once headers are sent.
 - An unknown feature key (not in the capability table) is silently allowed at the fast path; the adapter back-stop is the safety net.
+
+Provider-health failures after adapter dispatch are independent of feature
+compatibility. Authentication, quota, credential, availability, latency, and
+transport failures must retain their provider or server error contract and
+must not be relabeled as `unsupported_feature`.
 
 ## Open carve-outs and known limitations
 
