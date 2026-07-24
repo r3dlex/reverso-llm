@@ -281,7 +281,10 @@ def extract_features(request: ResponsesRequest) -> set[str]:
         features.add("metadata")
     include_value = extra.get("include")
     if isinstance(include_value, list) and include_value:
-        features.add("include")
+        if include_value == ["reasoning.encrypted_content"]:
+            features.add("include.reasoning.encrypted_content")
+        else:
+            features.add("include")
     if extra.get("background") is not None:
         features.add("background")
     if extra.get("service_tier") is not None:

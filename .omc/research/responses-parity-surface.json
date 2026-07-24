@@ -218,6 +218,14 @@
       "kimi": "unsupported",
       "codex": "unsupported"
     },
+    "include.reasoning.encrypted_content": {
+      "claude": "partial",
+      "copilot": "partial",
+      "auggie": "partial",
+      "deepseek": "partial",
+      "kimi": "partial",
+      "codex": "unsupported"
+    },
     "background": {
       "claude": "unsupported",
       "copilot": "native",
