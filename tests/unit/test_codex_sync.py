@@ -724,10 +724,7 @@ def test_sync_inserts_missing_reverso_provider_tables(tmp_path: Path) -> None:
         provider = providers[f"reverso_{prefix}"]
         assert provider["base_url"] == f"http://127.0.0.1:64946/{prefix}/v1"
         assert provider["wire_api"] == "responses"
-    assert (
-        providers["reverso_claude"]["experimental_bearer_token"]
-        == "local-reverso"
-    )
+    assert providers["reverso_claude"]["experimental_bearer_token"] == "local-reverso"
     assert "env_key" not in providers["reverso_claude"]
     for prefix in ("copilot", "auggie", "deepseek"):
         assert "env_key" not in providers[f"reverso_{prefix}"]
@@ -755,10 +752,7 @@ def test_sync_adds_claude_placeholder_bearer_to_existing_provider_table(
     )
 
     providers = tomllib.loads(target.read_text(encoding="utf-8"))["model_providers"]
-    assert (
-        providers["reverso_claude"]["experimental_bearer_token"]
-        == "local-reverso"
-    )
+    assert providers["reverso_claude"]["experimental_bearer_token"] == "local-reverso"
     assert "env_key" not in providers["reverso_claude"]
     for prefix in ("copilot", "auggie", "deepseek"):
         assert "env_key" not in providers[f"reverso_{prefix}"]
@@ -783,9 +777,9 @@ def test_sync_migrates_claude_env_key_to_placeholder_bearer(tmp_path: Path) -> N
         catalog_dir=tmp_path / "reverso",
     )
 
-    provider = tomllib.loads(target.read_text(encoding="utf-8"))[
-        "model_providers"
-    ]["reverso_claude"]
+    provider = tomllib.loads(target.read_text(encoding="utf-8"))["model_providers"][
+        "reverso_claude"
+    ]
     assert provider["experimental_bearer_token"] == "local-reverso"
     assert "env_key" not in provider
 

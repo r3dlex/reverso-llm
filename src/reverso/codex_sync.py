@@ -394,9 +394,7 @@ def _gateway_provider_table(prefix: str, *, base_url: str = GATEWAY_BASE_URL) ->
         f"base_url = {_toml_string(f'{base_url}/{prefix}/v1')}",
     ]
     if prefix == "claude":
-        lines.append(
-            f"experimental_bearer_token = {_toml_string('local-reverso')}"
-        )
+        lines.append(f"experimental_bearer_token = {_toml_string('local-reverso')}")
     lines.append('wire_api = "responses"')
     return "\n".join(lines)
 
