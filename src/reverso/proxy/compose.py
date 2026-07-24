@@ -27,26 +27,31 @@ reverso.proxy.app; the LiteLLM quarantine guard test asserts that invariant.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
-from typing import Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from reverso.protocols.adapter import ProviderAdapter
 from reverso.protocols.adapters import codex_usage_store
-from reverso.protocols.headroom_compression import (
-    DEFAULT_HEADROOM_METRICS,
-    HeadroomCompressionConfig,
-)
+from reverso.protocols.adapters.kimi import KimiAdapter, KimiOAuthAuth
 from reverso.protocols.anthropic_app import (
     build_anthropic_app,
     route_is_anthropic_surface,
 )
+from reverso.protocols.headroom_compression import (
+    DEFAULT_HEADROOM_METRICS,
+    HeadroomCompressionConfig,
+)
+from reverso.protocols.kimi_login import KimiLoginCoordinator
 from reverso.protocols.responses_app import build_app, split_provider_path
 
 Receive = Callable[[], Awaitable[dict[str, Any]]]
 Scope = dict[str, Any]
 Send = Callable[[dict[str, Any]], Awaitable[None]]
 
+_LIFESPAN_CLEANUP_TIMEOUT_SECONDS = 10.0
 CODEX_DIRECT_BACKEND_ENV = "REVERSO_CODEX_DIRECT_BACKEND"
 OPENAI_BACKEND_ENV = "REVERSO_OPENAI_BACKEND"
 REVERSO_HOST_ENV = "REVERSO_HOST"
@@ -74,7 +79,11 @@ def openai_backend_enabled(env: dict[str, str] | None = None) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on", "openai"}
 
 
-def build_adapters(env: dict[str, str] | None = None) -> dict[str, ProviderAdapter]:
+def build_adapters(
+    env: dict[str, str] | None = None,
+    *,
+    kimi_auth: KimiOAuthAuth | None = None,
+) -> dict[str, ProviderAdapter]:
     """Construct the real {prefix: adapter} registry for the first-party gateway.
 
     Adapters are imported here (not at module top) so the registry can be built
@@ -84,14 +93,13 @@ def build_adapters(env: dict[str, str] | None = None) -> dict[str, ProviderAdapt
     from reverso.protocols.adapters.claude import ClaudeAdapter
     from reverso.protocols.adapters.copilot import CopilotAdapter
     from reverso.protocols.adapters.deepseek import DeepSeekAdapter
-    from reverso.protocols.adapters.kimi import KimiAdapter
 
     adapters: dict[str, ProviderAdapter] = {
         "claude": ClaudeAdapter(),
         "copilot": CopilotAdapter(),
         "auggie": AuggieAdapter(),
         "deepseek": DeepSeekAdapter(),
-        "kimi": KimiAdapter(),
+        "kimi": KimiAdapter(auth=kimi_auth or KimiOAuthAuth()),
     }
     if codex_direct_backend_enabled(env):
         from reverso.protocols.adapters.codex import CodexOAuthAuth
@@ -166,11 +174,26 @@ class CompositionRoot:
         anthropic_app: Callable[[Scope, Receive, Send], Awaitable[None]] | None = None,
         legacy_app: Callable[[Scope, Receive, Send], Awaitable[None]] | None = None,
     ) -> None:
-        self._gateway = gateway if gateway is not None else build_app(build_adapters())
+        self._kimi_login: KimiLoginCoordinator | None = None
+        self._kimi_auth: KimiOAuthAuth | None = None
+        self._lifespan_cleanup_timeout_seconds = _LIFESPAN_CLEANUP_TIMEOUT_SECONDS
+        if gateway is None:
+            self._kimi_login = KimiLoginCoordinator()
+            self._kimi_auth = KimiOAuthAuth(login_coordinator=self._kimi_login)
+        self._gateway = (
+            gateway
+            if gateway is not None
+            else build_app(build_adapters(kimi_auth=self._kimi_auth))
+        )
         self._anthropic_app = (
             anthropic_app if anthropic_app is not None else build_anthropic_app()
         )
         self._legacy_app = legacy_app
+
+    async def close(self) -> None:
+        """Close shared provider lifecycle resources before process shutdown."""
+        if self._kimi_login is not None:
+            await self._kimi_login.close()
 
     def _resolve_legacy(self) -> Callable[[Scope, Receive, Send], Awaitable[None]]:
         if self._legacy_app is None:
@@ -179,7 +202,123 @@ class CompositionRoot:
             self._legacy_app = legacy_app
         return self._legacy_app
 
+    @staticmethod
+    async def _legacy_lifespan_terminal(
+        messages: asyncio.Queue[dict[str, Any]],
+        legacy_task: asyncio.Task[None],
+        *,
+        phase: str,
+    ) -> str:
+        expected = {
+            f"lifespan.{phase}.complete",
+            f"lifespan.{phase}.failed",
+        }
+        while True:
+            try:
+                message = messages.get_nowait()
+            except asyncio.QueueEmpty:
+                if legacy_task.done():
+                    try:
+                        legacy_task.result()
+                    except asyncio.CancelledError:
+                        return "raised"
+                    except Exception:  # noqa: BLE001 - ASGI lifespan boundary
+                        return "raised"
+                    return "returned"
+                message_task = asyncio.create_task(messages.get())
+                done, _ = await asyncio.wait(
+                    {message_task, legacy_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if message_task not in done:
+                    message_task.cancel()
+                    await asyncio.gather(message_task, return_exceptions=True)
+                    continue
+                message = message_task.result()
+            message_type = message.get("type")
+            if message_type in expected:
+                return str(message_type)
+
+    async def _run_lifespan(
+        self,
+        scope: Scope,
+        receive: Receive,
+        send: Send,
+    ) -> None:
+        legacy_receives: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        legacy_sends: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        legacy_task = asyncio.create_task(
+            self._resolve_legacy()(
+                scope,
+                legacy_receives.get,
+                legacy_sends.put,
+            )
+        )
+        try:
+            while True:
+                message = await receive()
+                message_type = message.get("type")
+                if message_type == "lifespan.startup":
+                    await legacy_receives.put(message)
+                    terminal = await self._legacy_lifespan_terminal(
+                        legacy_sends,
+                        legacy_task,
+                        phase="startup",
+                    )
+                    if terminal == "lifespan.startup.complete":
+                        await send({"type": terminal})
+                        continue
+                    await send(
+                        {
+                            "type": "lifespan.startup.failed",
+                            "message": "legacy application startup failed",
+                        }
+                    )
+                    return
+                if message_type != "lifespan.shutdown":
+                    continue
+
+                await legacy_receives.put(message)
+                terminal = await self._legacy_lifespan_terminal(
+                    legacy_sends,
+                    legacy_task,
+                    phase="shutdown",
+                )
+                legacy_failed = terminal != "lifespan.shutdown.complete"
+                cleanup_failed = False
+                try:
+                    await asyncio.wait_for(
+                        self.close(),
+                        timeout=self._lifespan_cleanup_timeout_seconds,
+                    )
+                except Exception:  # noqa: BLE001 - ASGI shutdown boundary
+                    cleanup_failed = True
+
+                if not legacy_failed and not cleanup_failed:
+                    await send({"type": "lifespan.shutdown.complete"})
+                else:
+                    if legacy_failed and cleanup_failed:
+                        failure = "legacy shutdown and Kimi login cleanup failed"
+                    elif legacy_failed:
+                        failure = "legacy application shutdown failed"
+                    else:
+                        failure = "Kimi login shutdown cleanup failed"
+                    await send(
+                        {
+                            "type": "lifespan.shutdown.failed",
+                            "message": failure,
+                        }
+                    )
+                return
+        finally:
+            if not legacy_task.done():
+                legacy_task.cancel()
+            await asyncio.gather(legacy_task, return_exceptions=True)
+
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope.get("type") == "lifespan":
+            await self._run_lifespan(scope, receive, send)
+            return
         if scope.get("type") == "http":
             path = str(scope.get("path", ""))
 

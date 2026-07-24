@@ -77,6 +77,11 @@
       "status": "not-applicable-not-a-catalog"
     },
     {
+      "id": "northstar-handoff-kimi-auto-login-k3-runtime-convergence",
+      "enabled_when": "northstar_handoff_present",
+      "status": "available"
+    },
+    {
       "id": "northstar-handoff-codex-oauth-provider-reverso",
       "enabled_when": "northstar_handoff_present",
       "status": "complete",

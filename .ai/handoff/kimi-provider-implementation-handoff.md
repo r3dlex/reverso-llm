@@ -33,7 +33,8 @@ boundary, and provider-agnostic Headroom compression.
 ## Diagnosed design
 
 1. Kimi CLI is the OAuth authority. Reverso consumes and refreshes its persisted
-   bearer artifact; it does not implement interactive login.
+   bearer artifact. When local authentication is missing, Reverso may supervise
+   exactly `kimi login`, but it does not implement OAuth or collect credentials.
 2. Kimi's subscription model endpoint is OpenAI-compatible chat completions,
    not OpenAI Responses and not Anthropic Messages.
 3. One Kimi `ProviderAdapter` therefore serves both inbound surfaces through
@@ -198,7 +199,7 @@ The handoff is complete only when:
 ## Human setup handout
 
 1. Install or update Kimi CLI.
-2. Run `kimi /login` and finish OAuth authorization.
+2. Run `kimi login` and finish OAuth authorization.
 3. Do not copy the token into repository configuration.
 4. Start or restart Reverso after the Kimi provider code is installed.
 5. Query `http://127.0.0.1:64946/kimi/v1/models` and select a returned model id.
