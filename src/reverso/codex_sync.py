@@ -37,7 +37,7 @@ from pathlib import Path
 
 import httpx
 
-from reverso.protocols import model_exposure
+from reverso.protocols import feature_policy, model_exposure
 
 logger = logging.getLogger(__name__)
 
@@ -196,12 +196,21 @@ def _profile_path_for(config_dir: Path, prefix: str) -> Path:
     return config_dir / f"{prefix}.config.toml"
 
 
+def _provider_supports_feature(prefix: str, feature: str) -> bool:
+    """Return whether the governed parity surface supports one feature."""
+    return (
+        feature_policy.CAPABILITY_TABLES.get(prefix, {}).get(feature)
+        != feature_policy.UNSUPPORTED
+    )
+
+
 def _render_profile_file(
     *,
     model: str,
     model_provider: str,
     catalog_path: Path | None = None,
     model_context_window: int | None = None,
+    model_reasoning_summary: str | None = None,
 ) -> str:
     """Render one provider-name Codex profile file."""
     lines = [
@@ -209,6 +218,10 @@ def _render_profile_file(
         f"model = {_toml_string(model)}",
         f"model_provider = {_toml_string(model_provider)}",
     ]
+    if model_reasoning_summary is not None:
+        lines.append(
+            f"model_reasoning_summary = {_toml_string(model_reasoning_summary)}"
+        )
     if catalog_path is not None:
         lines.append(f"model_catalog_json = {_toml_string(str(catalog_path))}")
     if model_context_window is not None:
@@ -234,6 +247,11 @@ def _reverso_profile_files(
             model=spec.model,
             model_provider=spec.model_provider,
             catalog_path=catalog_path,
+            model_reasoning_summary=(
+                None
+                if _provider_supports_feature(entry.prefix, "reasoning.summary")
+                else "none"
+            ),
         )
     return files
 
@@ -284,6 +302,28 @@ def _catalog_display_name(entry: CatalogModelEntry) -> str:
 def _generate_catalog_json(provider: ProviderModels) -> str:
     """Generate Codex-compatible catalog JSON for one provider's models."""
     models: list[dict[str, t.Any]] = []
+    reasoning_supported = _provider_supports_feature(
+        provider.prefix, "reasoning.effort"
+    )
+    default_reasoning_level = "medium" if reasoning_supported else None
+    supported_reasoning_levels = (
+        [
+            {
+                "effort": "low",
+                "description": "Fast responses with lighter reasoning",
+            },
+            {
+                "effort": "medium",
+                "description": "Balances speed and reasoning depth",
+            },
+            {
+                "effort": "high",
+                "description": "Greater reasoning depth for complex tasks",
+            },
+        ]
+        if reasoning_supported
+        else []
+    )
 
     for entry in _catalog_model_entries(provider):
         context_window = model_exposure.codex_catalog_context_window(entry.model_id)
@@ -293,21 +333,8 @@ def _generate_catalog_json(provider: ProviderModels) -> str:
                 "slug": entry.slug,
                 "display_name": _catalog_display_name(entry),
                 "description": f"Reverso-synced {entry.prefix} model",
-                "default_reasoning_level": "medium",
-                "supported_reasoning_levels": [
-                    {
-                        "effort": "low",
-                        "description": "Fast responses with lighter reasoning",
-                    },
-                    {
-                        "effort": "medium",
-                        "description": "Balances speed and reasoning depth",
-                    },
-                    {
-                        "effort": "high",
-                        "description": "Greater reasoning depth for complex tasks",
-                    },
-                ],
+                "default_reasoning_level": default_reasoning_level,
+                "supported_reasoning_levels": supported_reasoning_levels,
                 "shell_type": "shell_command",
                 "visibility": "list",
                 "supported_in_api": True,

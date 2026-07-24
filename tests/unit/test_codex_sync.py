@@ -336,6 +336,27 @@ def test_sync_writes_profiles_for_each_live_prefix(tmp_path: Path) -> None:
     assert minimax["model"] == "MiniMax-M3"
 
 
+def test_sync_disables_reasoning_summary_for_unsupported_profiles(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+
+    codex_sync.sync(
+        target=target, fetcher=_make_fetcher(), catalog_dir=tmp_path / "reverso"
+    )
+
+    claude = tomllib.loads((tmp_path / "claude.config.toml").read_text())
+    auggie = tomllib.loads((tmp_path / "auggie.config.toml").read_text())
+    copilot = tomllib.loads((tmp_path / "copilot.config.toml").read_text())
+    deepseek = tomllib.loads((tmp_path / "deepseek.config.toml").read_text())
+
+    assert claude["model_reasoning_summary"] == "none"
+    assert auggie["model_reasoning_summary"] == "none"
+    assert "model_reasoning_summary" not in copilot
+    assert "model_reasoning_summary" not in deepseek
+
+
 def test_sync_uses_model_exposure_profile_prefix_interface(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1345,6 +1366,34 @@ def test_generate_catalog_json_shape_dedup_and_context_window() -> None:
         assert model["visibility"] == "list"
         assert model["default_reasoning_level"] == "medium"
         assert model["supported_reasoning_levels"]
+
+
+@pytest.mark.parametrize("prefix", ["claude", "auggie"])
+def test_generate_catalog_json_disables_unsupported_reasoning(
+    prefix: str,
+) -> None:
+    payload = json.loads(
+        codex_sync._generate_catalog_json(
+            codex_sync.ProviderModels(prefix, ("provider-model",))
+        )
+    )
+
+    model = payload["models"][0]
+    assert model["default_reasoning_level"] is None
+    assert model["supported_reasoning_levels"] == []
+
+
+@pytest.mark.parametrize("prefix", ["copilot", "deepseek", "kimi"])
+def test_generate_catalog_json_keeps_supported_reasoning(prefix: str) -> None:
+    payload = json.loads(
+        codex_sync._generate_catalog_json(
+            codex_sync.ProviderModels(prefix, ("provider-model",))
+        )
+    )
+
+    model = payload["models"][0]
+    assert model["default_reasoning_level"] == "medium"
+    assert model["supported_reasoning_levels"]
 
 
 def test_generate_catalog_json_dedupes_within_provider() -> None:
