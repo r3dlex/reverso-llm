@@ -168,6 +168,49 @@ def _expected_payload(provider: str, feature: str) -> dict[str, Any]:
     }
 
 
+# --- provider-scoped catalog models -------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize(
+    ("provider", "qualified_model", "bare_model"),
+    [
+        ("copilot", "copilot/claude-fable-5", "claude-fable-5"),
+        ("auggie", "auggie/opus4.8", "opus4.8"),
+    ],
+)
+async def test_matching_catalog_model_prefix_is_stripped_before_dispatch(
+    provider: str, qualified_model: str, bare_model: str, stream: bool
+) -> None:
+    adapter = _RecordingAdapter()
+    async with _client(adapter, provider) as client:
+        async with client.stream(
+            "POST",
+            f"/{provider}/v1/responses",
+            json={"model": qualified_model, "input": "hi", "stream": stream},
+        ) as response:
+            await response.aread()
+
+    assert response.status_code == 200
+    requests = adapter.stream_requests if stream else adapter.create_requests
+    assert len(requests) == 1
+    assert requests[0].model == bare_model
+
+
+@pytest.mark.asyncio
+async def test_foreign_catalog_model_prefix_is_not_stripped() -> None:
+    adapter = _RecordingAdapter()
+    async with _client(adapter, "copilot") as client:
+        response = await client.post(
+            "/copilot/v1/responses",
+            json={"model": "auggie/opus4.8", "input": "hi"},
+        )
+
+    assert response.status_code == 200
+    assert adapter.create_requests[0].model == "auggie/opus4.8"
+
+
 # --- table sourcing -------------------------------------------------------
 
 
