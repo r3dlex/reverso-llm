@@ -394,13 +394,15 @@ def _gateway_provider_table(prefix: str, *, base_url: str = GATEWAY_BASE_URL) ->
         f"base_url = {_toml_string(f'{base_url}/{prefix}/v1')}",
     ]
     if prefix == "claude":
-        lines.append(f"env_key = {_toml_string('REVERSO_AUTH_TOKEN')}")
+        lines.append(
+            f"experimental_bearer_token = {_toml_string('local-reverso')}"
+        )
     lines.append('wire_api = "responses"')
     return "\n".join(lines)
 
 
-def _ensure_claude_provider_env_key(text: str) -> str:
-    """Add the Codex Bearer-token env key to an existing Claude table."""
+def _ensure_claude_provider_bearer(text: str) -> str:
+    """Use a fixed loopback-only Bearer token in the Claude provider table."""
     header = re.compile(
         r"^[ \t]*\[model_providers\.reverso_claude\][ \t]*(?:#.*)?\r?$",
         re.MULTILINE,
@@ -413,14 +415,27 @@ def _ensure_claude_provider_env_key(text: str) -> str:
     next_header = _TABLE_HEADER_LINE_RE.search(text, body_start)
     body_end = next_header.start() if next_header is not None else len(text)
     body = text[body_start:body_end]
-    if re.search(r"^[ \t]*env_key[ \t]*=", body, re.MULTILINE):
-        return text
+    body = re.sub(
+        r"^[ \t]*env_key[ \t]*=[^\r\n]*(?:\r?\n|$)",
+        "",
+        body,
+        flags=re.MULTILINE,
+    )
+    if re.search(
+        r"^[ \t]*experimental_bearer_token[ \t]*=",
+        body,
+        re.MULTILINE,
+    ):
+        return text[:body_start] + body + text[body_end:]
 
     newline = "\r\n" if "\r\n" in text[header.start() : body_end] else "\n"
-    env_line = f"env_key = {_toml_string('REVERSO_AUTH_TOKEN')}{newline}"
+    bearer_line = (
+        f"experimental_bearer_token = {_toml_string('local-reverso')}{newline}"
+    )
     wire_api = re.search(r"^[ \t]*wire_api[ \t]*=", body, re.MULTILINE)
-    insert_at = body_start + wire_api.start() if wire_api is not None else body_end
-    return text[:insert_at] + env_line + text[insert_at:]
+    insert_at = wire_api.start() if wire_api is not None else len(body)
+    body = body[:insert_at] + bearer_line + body[insert_at:]
+    return text[:body_start] + body + text[body_end:]
 
 
 def _ensure_gateway_provider_tables(
@@ -437,7 +452,7 @@ def _ensure_gateway_provider_tables(
 
     missing = [prefix for prefix in prefixes if f"reverso_{prefix}" not in providers]
     if not missing:
-        return _ensure_claude_provider_env_key(text)
+        return _ensure_claude_provider_bearer(text)
 
     block = "\n".join(
         [
@@ -452,7 +467,7 @@ def _ensure_gateway_provider_tables(
         text = text + "\n" + block + "\n"
     else:
         text = block + "\n"
-    return _ensure_claude_provider_env_key(text)
+    return _ensure_claude_provider_bearer(text)
 
 
 def _strip_overlay_tables(text: str) -> str:

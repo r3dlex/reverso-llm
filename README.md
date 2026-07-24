@@ -70,15 +70,15 @@ The sync reads each live provider's `/v1/models`, updates `~/.codex/config.toml`
 Now prove the complete Codex to Reverso to Claude path:
 
 ```bash
-export REVERSO_AUTH_TOKEN="local-reverso"
 codex exec -p claude --skip-git-repo-check \
   "Reply with exactly: REVERSO_OK"
 ```
 
-The managed provider uses `REVERSO_AUTH_TOKEN` so Codex sends a standard Bearer
-header. Reverso remains loopback-only and does not validate this placeholder in
-v1; Claude upstream authentication still uses the local subscription OAuth
-artifact.
+The managed provider uses Codex's fixed `experimental_bearer_token` setting so
+GUI and shell sessions both send a standard Bearer header without requiring an
+environment variable. The value is a non-secret loopback placeholder: Reverso
+remains loopback-only and does not validate it in v1, while Claude upstream
+authentication still uses the local subscription OAuth artifact.
 
 Success ends with:
 
