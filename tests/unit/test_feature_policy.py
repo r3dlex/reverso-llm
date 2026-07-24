@@ -119,6 +119,39 @@ class _BackstopAdapter:
         return InputItemList(response_id=response_id)
 
 
+class _RecordingAdapter(_NeverCalledAdapter):
+    """Adapter that records the normalized request reaching each dispatch path."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.create_requests: list[ResponsesRequest] = []
+        self.stream_requests: list[ResponsesRequest] = []
+
+    async def create_response(self, request: ResponsesRequest) -> ResponseEnvelope:
+        self.create_requests.append(request)
+        return ResponseEnvelope(id="resp_recorded", model=request.model)
+
+    def stream_response(self, request: ResponsesRequest) -> AsyncIterator[SSEEvent]:
+        self.stream_requests.append(request)
+
+        async def _stream() -> AsyncIterator[SSEEvent]:
+            yield SSEEvent(
+                event="response.completed",
+                data={
+                    "type": "response.completed",
+                    "response": {
+                        "id": "resp_recorded",
+                        "object": "response",
+                        "status": "completed",
+                        "model": request.model,
+                        "output": [],
+                    },
+                },
+            )
+
+        return _stream()
+
+
 def _client(adapter: Any, provider: str) -> httpx.AsyncClient:
     app = build_app({provider: adapter})
     transport = httpx.ASGITransport(app=app)
@@ -265,6 +298,17 @@ def test_claude_accepts_max_output_tokens_as_best_effort() -> None:
     check_features("claude", {"max_output_tokens"})
 
 
+def test_encrypted_content_include_capability_matrix() -> None:
+    feature = "include.reasoning.encrypted_content"
+    for provider in ("claude", "copilot", "auggie", "deepseek", "kimi"):
+        assert CAPABILITY_TABLES[provider][feature] == "partial"
+        check_features(provider, {feature})
+
+    assert CAPABILITY_TABLES["codex"][feature] == "unsupported"
+    with pytest.raises(UnsupportedFeature):
+        check_features("codex", {feature})
+
+
 # --- extract_features ----------------------------------------------------
 
 
@@ -361,7 +405,7 @@ def test_extract_features_codex_extras_survive_from_payload() -> None:
         "sampling.top_p",
         "max_output_tokens",
         "metadata",
-        "include",
+        "include.reasoning.encrypted_content",
         "background",
         "service_tier",
         "user",
@@ -370,6 +414,31 @@ def test_extract_features_codex_extras_survive_from_payload() -> None:
         "truncation",
         "text.format.json_schema",
     }.issubset(features)
+
+
+@pytest.mark.parametrize(
+    ("include_value", "expected"),
+    [
+        (["reasoning.encrypted_content"], {"include.reasoning.encrypted_content"}),
+        (["other"], {"include"}),
+        (["reasoning.encrypted_content", "other"], {"include"}),
+        (["reasoning.encrypted_content", "reasoning.encrypted_content"], {"include"}),
+        ([], set()),
+        ("reasoning.encrypted_content", set()),
+    ],
+)
+def test_extract_features_include_requires_exact_sentinel_list(
+    include_value: Any, expected: set[str]
+) -> None:
+    request = ResponsesRequest.from_payload(
+        {"model": "m", "input": "hi", "include": include_value}
+    )
+    include_features = {
+        feature
+        for feature in extract_features(request)
+        if feature.startswith("include")
+    }
+    assert include_features == expected
 
 
 # --- fast path: 400 per provider x representative unsupported feature ---
@@ -498,6 +567,90 @@ async def test_fast_path_allows_supported_feature_payload() -> None:
         )
     assert resp.status_code == 200
     assert resp.json()["id"] == "resp_ok"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["claude", "auggie", "deepseek", "kimi"])
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize(
+    ("include_case", "include_value", "allowed"),
+    [
+        ("absent", None, True),
+        ("empty", [], True),
+        ("exact", ["reasoning.encrypted_content"], True),
+        ("unknown", ["unknown"], False),
+        (
+            "mixed",
+            ["reasoning.encrypted_content", "unknown"],
+            False,
+        ),
+    ],
+)
+async def test_affected_provider_include_matrix(
+    provider: str,
+    stream: bool,
+    include_case: str,
+    include_value: list[str] | None,
+    allowed: bool,
+) -> None:
+    adapter: _RecordingAdapter | _NeverCalledAdapter
+    adapter = _RecordingAdapter() if allowed else _NeverCalledAdapter()
+    payload: dict[str, Any] = {"model": "m", "input": "hi", "stream": stream}
+    if include_case != "absent":
+        payload["include"] = include_value
+
+    async with _client(adapter, provider) as client:
+        resp = await client.post(
+            f"/{provider}/v1/responses",
+            json=payload,
+        )
+
+    if allowed:
+        assert resp.status_code == 200
+        assert isinstance(adapter, _RecordingAdapter)
+        requests = adapter.stream_requests if stream else adapter.create_requests
+        other_requests = adapter.create_requests if stream else adapter.stream_requests
+        assert len(requests) == 1
+        assert other_requests == []
+        assert "include" not in requests[0].extra
+    else:
+        assert resp.status_code == 400
+        assert resp.json() == _expected_payload(provider, "include")
+        assert adapter.create_called == 0
+        assert adapter.stream_called == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize(
+    "include_value",
+    [
+        ["reasoning.encrypted_content"],
+        ["unknown"],
+        ["reasoning.encrypted_content", "unknown"],
+    ],
+)
+async def test_copilot_include_matrix_retains_gate_and_normalizer_behavior(
+    stream: bool, include_value: list[str]
+) -> None:
+    adapter = _RecordingAdapter()
+    async with _client(adapter, "copilot") as client:
+        resp = await client.post(
+            "/copilot/v1/responses",
+            json={
+                "model": "m",
+                "input": "hi",
+                "stream": stream,
+                "include": include_value,
+            },
+        )
+
+    assert resp.status_code == 200
+    requests = adapter.stream_requests if stream else adapter.create_requests
+    other_requests = adapter.create_requests if stream else adapter.stream_requests
+    assert len(requests) == 1
+    assert other_requests == []
+    assert "include" not in requests[0].extra
 
 
 # --- back-stop: adapter raises UnsupportedFeature -----------------------
