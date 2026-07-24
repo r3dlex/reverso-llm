@@ -1,10 +1,12 @@
 ---
 title: Northstar A to B handoff for codex-encrypted-content-include-compatibility
-status: active
+status: complete
 slug: codex-encrypted-content-include-compatibility
 ---
 
 # Northstar A to B Handoff: codex-encrypted-content-include-compatibility
+
+Completion: Implemented by PRs #90, #91, and #92.
 
 ## Contract
 
@@ -23,7 +25,7 @@ slug: codex-encrypted-content-include-compatibility
 |---|---|---|---|---|
 | S0 | Governed Northstar graph and handoff reconciliation command | AFK | completed in PR #90 | none |
 | S1 | Exact-sentinel compatibility contract across the six-provider matrix | AFK | completed in PR #91 | none |
-| S2 | Cross-provider integration proof and parity documentation | AFK | in-progress | none |
+| S2 | Cross-provider integration proof and parity documentation | AFK | completed in PR #92 | none |
 | S3 | Provider-health follow-up classification | HITL or separate issues | deferred | external credentials, quota, and availability |
 
 ## Execution

@@ -120,7 +120,8 @@
     {
       "id": "northstar-handoff-codex-encrypted-content-include-compatibility",
       "enabled_when": "northstar_handoff_present",
-      "status": "available"
+      "status": "complete",
+      "completed_via": "PRs #90, #91, and #92"
     }
   ],
   "handoff": ".ai/handoff/init-ai-repo-handoff.md",

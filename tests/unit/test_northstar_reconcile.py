@@ -100,12 +100,15 @@ def _fixture(root: Path) -> None:
     )
 
 
-def _run(root: Path, replace_fn=None) -> dict[str, str]:
+def _run(
+    root: Path, replace_fn=None, completed_via: str | None = None
+) -> dict[str, str]:
     return reconciler.reconcile(
         root=root,
         spec=f"docs/specifications/ACTIVE/{SLUG}.md",
         work_item=f".ai/work-intake/{SLUG}.md",
         slug=SLUG,
+        completed_via=completed_via,
         replace_fn=replace_fn,
     )
 
@@ -115,6 +118,21 @@ def _target_bytes(root: Path) -> tuple[bytes, bytes, bytes]:
         (root / ".ai/workflows/repo-workflow.json").read_bytes(),
         (root / ".ai/traceability/graph.json").read_bytes(),
         (root / f".ai/handoff/northstar-{SLUG}.md").read_bytes(),
+    )
+
+
+def _complete_goals(root: Path) -> None:
+    work_item = root / f".ai/work-intake/{SLUG}.md"
+    work_item.write_text(
+        work_item.read_text()
+        .replace(
+            "| S1 | Implement compatibility | ready-for-agent |",
+            "| S1 | Implement compatibility | completed in PR #91 |",
+        )
+        .replace(
+            "| S2 | Integration proof | blocked |",
+            "| S2 | Integration proof | deferred |",
+        )
     )
 
 
@@ -187,6 +205,115 @@ def test_reconcile_is_byte_for_byte_idempotent(tmp_path: Path) -> None:
     ) == first_counts
 
 
+def test_completed_reconcile_marks_owned_state_complete(tmp_path: Path) -> None:
+    _fixture(tmp_path)
+    _complete_goals(tmp_path)
+    completed_via = "PRs #90, #91, and #92"
+
+    result = _run(tmp_path, completed_via=completed_via)
+
+    manifest = _json(tmp_path / result["manifest"])
+    graph = _json(tmp_path / result["graph"])
+    handoff = (tmp_path / result["handoff"]).read_text()
+    branch = next(
+        branch
+        for branch in manifest["optional_branches"]
+        if branch["id"] == f"northstar-handoff-{SLUG}"
+    )
+    assert branch["status"] == "complete"
+    assert branch["completed_via"] == completed_via
+    nodes = {node["id"]: node for node in graph["nodes"]}
+    assert nodes[result["issue_id"]]["status"] == "complete"
+    assert nodes[result["plan_id"]]["status"] == "complete"
+    assert nodes[result["handoff_id"]]["status"] == "complete"
+    assert "\nstatus: complete\n" in handoff
+    assert f"Completion: Implemented by {completed_via}.\n" in handoff
+
+
+def test_completed_reconcile_is_byte_for_byte_idempotent(tmp_path: Path) -> None:
+    _fixture(tmp_path)
+    _complete_goals(tmp_path)
+    completed_via = "PRs #90, #91, and #92"
+    _run(tmp_path, completed_via=completed_via)
+    first = _target_bytes(tmp_path)
+
+    _run(tmp_path, completed_via=completed_via)
+
+    assert _target_bytes(tmp_path) == first
+
+
+def test_active_reconcile_refuses_to_reopen_completed_handoff(
+    tmp_path: Path,
+) -> None:
+    _fixture(tmp_path)
+    _complete_goals(tmp_path)
+    _run(tmp_path, completed_via="PRs #90, #91, and #92")
+    before = _target_bytes(tmp_path)
+
+    with pytest.raises(
+        reconciler.ReconciliationError,
+        match="completed handoff requires --completed-via",
+    ):
+        _run(tmp_path)
+
+    assert _target_bytes(tmp_path) == before
+
+
+@pytest.mark.parametrize(
+    "completed_via",
+    [
+        "",
+        "   ",
+        "PR #90\nPR #91",
+        f"PR #90 {chr(0x2013)} merged",
+        f"PR #90 {chr(0x2014)} merged",
+    ],
+)
+def test_invalid_completed_via_fails_before_mutation(
+    tmp_path: Path, completed_via: str
+) -> None:
+    _fixture(tmp_path)
+    manifest_path = tmp_path / ".ai/workflows/repo-workflow.json"
+    graph_path = tmp_path / ".ai/traceability/graph.json"
+    before = (manifest_path.read_bytes(), graph_path.read_bytes())
+
+    with pytest.raises(reconciler.ReconciliationError, match="completed-via"):
+        _run(tmp_path, completed_via=completed_via)
+
+    assert (manifest_path.read_bytes(), graph_path.read_bytes()) == before
+    assert not (tmp_path / f".ai/handoff/northstar-{SLUG}.md").exists()
+
+
+@pytest.mark.parametrize(
+    "unfinished_status", ["ready-for-agent", "in-progress", "blocked"]
+)
+def test_completed_reconcile_rejects_unfinished_goals_before_mutation(
+    tmp_path: Path, unfinished_status: str
+) -> None:
+    _fixture(tmp_path)
+    work_item_path = tmp_path / f".ai/work-intake/{SLUG}.md"
+    work_item_path.write_text(
+        work_item_path.read_text()
+        .replace(
+            "| S1 | Implement compatibility | ready-for-agent |",
+            f"| S1 | Implement compatibility | {unfinished_status} |",
+        )
+        .replace(
+            "| S2 | Integration proof | blocked |",
+            "| S2 | Integration proof | deferred |",
+        )
+    )
+    manifest_path = tmp_path / ".ai/workflows/repo-workflow.json"
+    graph_path = tmp_path / ".ai/traceability/graph.json"
+    before = (manifest_path.read_bytes(), graph_path.read_bytes())
+
+    with pytest.raises(reconciler.ReconciliationError, match="unfinished sliced goals"):
+        _run(tmp_path, completed_via="PRs #90, #91, and #92")
+
+    assert (manifest_path.read_bytes(), graph_path.read_bytes()) == before
+    assert not (tmp_path / f".ai/handoff/northstar-{SLUG}.md").exists()
+
+
 @pytest.mark.parametrize("fail_after", [1, 2, 3])
 def test_rerun_recovers_after_each_replacement_boundary(
     tmp_path: Path, fail_after: int
@@ -210,6 +337,38 @@ def test_rerun_recovers_after_each_replacement_boundary(
         _run(damaged, replace_fn=flaky_replace)
 
     _run(damaged)
+
+    assert _target_bytes(damaged) == clean_bytes
+
+
+@pytest.mark.parametrize("fail_after", [1, 2, 3])
+def test_completed_rerun_recovers_after_each_replacement_boundary(
+    tmp_path: Path, fail_after: int
+) -> None:
+    clean = tmp_path / "clean"
+    damaged = tmp_path / "damaged"
+    completed_via = "PRs #90, #91, and #92"
+    _fixture(clean)
+    _fixture(damaged)
+    _complete_goals(clean)
+    _complete_goals(damaged)
+    _run(clean)
+    _run(damaged)
+    _run(clean, completed_via=completed_via)
+    clean_bytes = _target_bytes(clean)
+    replacements = 0
+
+    def flaky_replace(source: str | Path, target: str | Path) -> None:
+        nonlocal replacements
+        os.replace(source, target)
+        replacements += 1
+        if replacements == fail_after:
+            raise OSError(f"injected failure after replacement {fail_after}")
+
+    with pytest.raises(OSError, match="injected failure"):
+        _run(damaged, replace_fn=flaky_replace, completed_via=completed_via)
+
+    _run(damaged, completed_via=completed_via)
 
     assert _target_bytes(damaged) == clean_bytes
 
