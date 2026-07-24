@@ -41,6 +41,7 @@ from reverso.protocols.middleware import (
     strip_think_json,
 )
 from reverso.protocols.headroom_compression import compress_responses_request
+from reverso.protocols.model_exposure import PREFIXED_SELECTOR_PREFIXES
 from reverso.protocols.replay import record_input_items
 from reverso.proxy.profile_routing import (
     CURRENT_PROFILE_WORKSPACE,
@@ -96,6 +97,16 @@ def split_provider_path(path: str) -> RoutedPath | None:
     if provider not in APP_PROVIDER_PREFIXES or version != "v1":
         return None
     return RoutedPath(provider=provider, path=f"/v1/{rest}")
+
+
+def _canonical_provider_model_id(provider: str, model: Any) -> Any:
+    """Strip a matching provider qualifier from a scoped Codex selector."""
+    if not isinstance(model, str) or provider not in PREFIXED_SELECTOR_PREFIXES:
+        return model
+    qualifier, separator, bare_model = model.partition("/")
+    if separator and qualifier == provider and bare_model:
+        return bare_model
+    return model
 
 
 async def _read_body(receive: Receive) -> bytes:
@@ -472,6 +483,10 @@ class ResponsesGatewayApp:
             if not isinstance(payload, dict):
                 await _send_error(send, 400, "request body must be an object")
                 return
+            model = payload.get("model")
+            canonical_model = _canonical_provider_model_id(routed.provider, model)
+            if canonical_model != model:
+                payload["model"] = canonical_model
             header_workspace = _workspace_from_codex_turn_metadata(
                 scope.get("headers", [])
             )
