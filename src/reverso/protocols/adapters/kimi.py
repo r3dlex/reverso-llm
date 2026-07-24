@@ -3,7 +3,7 @@
 Kimi Code exposes an OpenAI-compatible chat-completions endpoint, while its
 official Python SDK is an agent-workflow abstraction rather than a Responses or
 Anthropic Messages transport. Reverso therefore reuses its existing chat-to-
-Responses adapter seam and reads the OAuth artifact written by ``kimi /login``.
+Responses adapter seam and reads the OAuth artifact written by ``kimi login``.
 An explicit ``KIMI_BEARER_TOKEN`` remains a fallback for non-CLI deployments.
 """
 
@@ -16,6 +16,7 @@ import os
 import tempfile
 import time
 from collections.abc import AsyncIterator
+from enum import Enum
 from math import isfinite
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,7 @@ import httpx
 
 from reverso.protocols.adapter import ModelList, ResponseEnvelope, ResponsesRequest
 from reverso.protocols.adapters.deepseek import DeepSeekAdapter
+from reverso.protocols.kimi_login import KimiLoginCoordinator, KimiLoginError
 from reverso.protocols.openai_chat import parse_stream_event as _parse_stream_event
 
 KIMI_API_BASE = "https://api.kimi.com/coding/v1"
@@ -41,6 +43,17 @@ logger = logging.getLogger(__name__)
 class KimiError(RuntimeError):
     """Secret-free Kimi authentication or upstream failure."""
 
+    @property
+    def public_message(self) -> str:
+        """Return the curated message safe for the gateway error envelope."""
+        return str(self)
+
+
+class _ArtifactState(Enum):
+    ABSENT = "absent"
+    MALFORMED = "malformed"
+    LOADED = "loaded"
+
 
 class KimiOAuthAuth:
     """Resolve and refresh the OAuth bearer artifact written by Kimi CLI."""
@@ -51,6 +64,7 @@ class KimiOAuthAuth:
         credentials_path: Path | None = None,
         oauth_host: str = KIMI_OAUTH_HOST,
         client_factory: Any | None = None,
+        login_coordinator: KimiLoginCoordinator | None = None,
     ) -> None:
         kimi_home = Path(os.environ.get("KIMI_CODE_HOME") or Path.home() / ".kimi-code")
         self._credentials_path = credentials_path or (
@@ -61,13 +75,28 @@ class KimiOAuthAuth:
             lambda: httpx.AsyncClient(timeout=30.0)
         )
         self._refresh_lock = asyncio.Lock()
+        self._login_coordinator = login_coordinator
 
-    def _load_artifact(self) -> dict[str, Any] | None:
+    @property
+    def credentials_path(self) -> Path:
+        return self._credentials_path
+
+    def _read_artifact(self) -> tuple[_ArtifactState, dict[str, Any] | None]:
         try:
             payload = json.loads(self._credentials_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return None
-        return payload if isinstance(payload, dict) else None
+        except FileNotFoundError:
+            return _ArtifactState.ABSENT, None
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return _ArtifactState.MALFORMED, None
+        except OSError as exc:
+            raise KimiError("kimi OAuth credential artifact could not be read") from exc
+        if not isinstance(payload, dict):
+            return _ArtifactState.MALFORMED, None
+        return _ArtifactState.LOADED, payload
+
+    def _load_artifact(self) -> dict[str, Any] | None:
+        _, artifact = self._read_artifact()
+        return artifact
 
     def _save_artifact(self, payload: dict[str, Any]) -> None:
         path = self._credentials_path
@@ -152,49 +181,110 @@ class KimiOAuthAuth:
             return False, None
         return True, parsed
 
-    async def resolve_bearer_token(self, *, force_refresh: bool = False) -> str:
-        """Prefer Kimi CLI OAuth, falling back to an explicit bearer token."""
+    @staticmethod
+    def _usable_token(value: Any) -> bool:
+        return isinstance(value, str) and bool(value.strip())
+
+    def _has_usable_refresh(self, artifact: dict[str, Any] | None) -> bool:
+        return artifact is not None and self._usable_token(
+            artifact.get("refresh_token")
+        )
+
+    def _has_usable_access(self, artifact: dict[str, Any] | None) -> bool:
+        if artifact is None or not self._usable_token(artifact.get("access_token")):
+            return False
+        expiry_valid, expires_at = self._expiry(artifact)
+        return expiry_valid and (
+            expires_at is None or expires_at > time.time() + _REFRESH_MARGIN_SECONDS
+        )
+
+    async def _resolve_bearer_token_once(self, *, force_refresh: bool = False) -> str:
         artifact = self._load_artifact()
         if artifact is not None:
             access_token = artifact.get("access_token")
             expiry_valid, expires_at = self._expiry(artifact)
-            has_access = isinstance(access_token, str) and bool(access_token.strip())
-            needs_refresh = (
-                expiry_valid
-                and expires_at is not None
-                and expires_at <= time.time() + _REFRESH_MARGIN_SECONDS
+            has_access = self._usable_token(access_token)
+            has_refresh = self._has_usable_refresh(artifact)
+            access_is_fresh = (
+                has_access
+                and expiry_valid
+                and (
+                    expires_at is None
+                    or expires_at > time.time() + _REFRESH_MARGIN_SECONDS
+                )
             )
-            if expiry_valid and (force_refresh or needs_refresh):
+            # A usable refresh credential is authoritative even when the access
+            # credential is absent. It must stay on the refresh path, never login.
+            if force_refresh or (has_refresh and not access_is_fresh):
                 async with self._refresh_lock:
                     latest = self._load_artifact() or artifact
                     latest_token = latest.get("access_token")
                     latest_valid, latest_expiry = self._expiry(latest)
+                    latest_has_refresh = self._has_usable_refresh(latest)
                     token_rotated = (
-                        isinstance(latest_token, str)
-                        and latest_token
+                        self._usable_token(latest_token)
                         and latest_token != access_token
                     )
-                    latest_is_fresh = latest_valid and (
-                        latest_expiry is None
-                        or latest_expiry > time.time() + _REFRESH_MARGIN_SECONDS
+                    latest_is_fresh = (
+                        self._usable_token(latest_token)
+                        and latest_valid
+                        and (
+                            latest_expiry is None
+                            or latest_expiry > time.time() + _REFRESH_MARGIN_SECONDS
+                        )
                     )
                     if token_rotated or (not force_refresh and latest_is_fresh):
-                        if isinstance(latest_token, str) and latest_token:
-                            return latest_token
-                    refreshed = await self._refresh(latest)
-                    if refreshed:
-                        return refreshed
-                    if force_refresh:
-                        raise KimiError("kimi OAuth credential cannot be refreshed")
-            if expiry_valid and not needs_refresh and has_access:
-                return access_token
+                        return str(latest_token)
+                    if not latest_has_refresh:
+                        if force_refresh:
+                            raise KimiError("kimi OAuth credential cannot be refreshed")
+                    else:
+                        refreshed = await self._refresh(latest)
+                        if refreshed:
+                            return refreshed
+                        if force_refresh:
+                            raise KimiError("kimi OAuth credential cannot be refreshed")
+            if access_is_fresh:
+                return str(access_token)
         bearer = os.environ.get(KIMI_BEARER_TOKEN_ENV, "").strip()
         if bearer:
             return bearer
         raise KimiError(
-            "Kimi OAuth credentials are unavailable; run kimi /login or set "
+            "Kimi OAuth credentials are unavailable; run kimi login or set "
             "KIMI_BEARER_TOKEN"
         )
+
+    async def resolve_bearer_token(self, *, force_refresh: bool = False) -> str:
+        """Resolve credentials, starting one shared CLI login only when needed."""
+        try:
+            return await self._resolve_bearer_token_once(force_refresh=force_refresh)
+        except KimiError:
+            if force_refresh or self._login_coordinator is None:
+                raise
+            # A bearer fallback, refresh failure, or upstream-triggered forced
+            # refresh never reaches this branch. Only locally missing auth starts
+            # the official CLI flow.
+            if os.environ.get(KIMI_BEARER_TOKEN_ENV, "").strip():
+                raise
+            _state, artifact = self._read_artifact()
+            if self._has_usable_refresh(artifact):
+                raise
+            try:
+                await self._login_coordinator.ensure_authenticated()
+            except KimiLoginError as login_exc:
+                raise KimiError(login_exc.public_message) from login_exc
+            # Do not recursively start another login when the CLI exits without a
+            # usable artifact; return the post-login error to this request.
+            state, artifact = self._read_artifact()
+            if state is _ArtifactState.ABSENT:
+                raise KimiError("kimi login did not create the credential artifact")
+            if state is _ArtifactState.MALFORMED:
+                raise KimiError("kimi login created a malformed credential artifact")
+            if not (
+                self._has_usable_access(artifact) or self._has_usable_refresh(artifact)
+            ):
+                raise KimiError("kimi login created an unusable credential artifact")
+            return await self._resolve_bearer_token_once(force_refresh=False)
 
 
 class KimiAdapter(DeepSeekAdapter):
@@ -270,39 +360,41 @@ class KimiAdapter(DeepSeekAdapter):
         try:
             for attempt in range(2):
                 headers = await self._headers(force_refresh=attempt == 1)
-                async with self._client_factory() as client:
-                    async with client.stream(
+                async with (
+                    self._client_factory() as client,
+                    client.stream(
                         "POST",
                         f"{self._api_base}/chat/completions",
                         headers=headers,
                         content=json.dumps(body).encode("utf-8"),
-                    ) as response:
-                        if response.status_code == 401 and attempt == 0:
+                    ) as response,
+                ):
+                    if response.status_code == 401 and attempt == 0:
+                        continue
+                    if not 200 <= response.status_code < 300:
+                        logger.warning(
+                            "kimi upstream returned %s", response.status_code
+                        )
+                        raise KimiError(
+                            f"kimi upstream returned status {response.status_code}"
+                        )
+                    pending = b""
+                    async for raw in response.aiter_bytes():
+                        if not raw:
                             continue
-                        if not 200 <= response.status_code < 300:
-                            logger.warning(
-                                "kimi upstream returned %s", response.status_code
-                            )
-                            raise KimiError(
-                                f"kimi upstream returned status {response.status_code}"
-                            )
-                        pending = b""
-                        async for raw in response.aiter_bytes():
-                            if not raw:
-                                continue
-                            pending += raw
-                            while b"\n" in pending:
-                                line, pending = pending.split(b"\n", 1)
-                                parsed = _parse_kimi_stream_line(line)
-                                if parsed is not None:
-                                    yield parsed
-                                    if parsed.get("done"):
-                                        return
-                        if pending:
-                            parsed = _parse_kimi_stream_line(pending)
+                        pending += raw
+                        while b"\n" in pending:
+                            line, pending = pending.split(b"\n", 1)
+                            parsed = _parse_kimi_stream_line(line)
                             if parsed is not None:
                                 yield parsed
-                        return
+                                if parsed.get("done"):
+                                    return
+                    if pending:
+                        parsed = _parse_kimi_stream_line(pending)
+                        if parsed is not None:
+                            yield parsed
+                    return
         except KimiError:
             raise
         except httpx.HTTPError as exc:

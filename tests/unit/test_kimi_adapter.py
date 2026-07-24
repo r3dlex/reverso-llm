@@ -13,11 +13,51 @@ import pytest
 
 from reverso.protocols.adapter import ResponsesRequest
 from reverso.protocols.adapters.kimi import KimiAdapter, KimiError, KimiOAuthAuth
+from reverso.protocols.kimi_login import KimiLoginCoordinator
 from reverso.protocols.responses_app import _models_to_payload
-
 
 OAUTH_SENTINEL = "kimi-oauth-sentinel-7f31"
 BEARER_SENTINEL = "kimi-bearer-sentinel-92ac"
+
+
+class _Pipe:
+    def __init__(self, *chunks: bytes) -> None:
+        self._chunks = list(chunks)
+        self.read_started = asyncio.Event()
+
+    async def read(self, size: int) -> bytes:
+        self.read_started.set()
+        if self._chunks:
+            return self._chunks.pop(0)
+        return b""
+
+
+class _Process:
+    def __init__(
+        self,
+        return_code: int = 0,
+        *,
+        stdout: tuple[bytes, ...] = (),
+        stderr: tuple[bytes, ...] = (),
+    ) -> None:
+        self.stdout = _Pipe(*stdout)
+        self.stderr = _Pipe(*stderr)
+        self.returncode: int | None = None
+        self._return_code = return_code
+        self.release = asyncio.Event()
+        self.wait_calls = 0
+
+    async def wait(self) -> int:
+        self.wait_calls += 1
+        await self.release.wait()
+        self.returncode = self._return_code
+        return self._return_code
+
+    def terminate(self) -> None:
+        self.release.set()
+
+    def kill(self) -> None:
+        self.release.set()
 
 
 def _write_token(path: Path, *, access_token: str, expires_at: float) -> None:
@@ -46,8 +86,20 @@ def test_default_oauth_path_matches_current_kimi_code_cli(
 
     auth = KimiOAuthAuth()
 
-    assert auth._credentials_path == (  # noqa: SLF001 - credential contract fixture
+    assert auth._credentials_path == (
         tmp_path / ".kimi-code" / "credentials" / "kimi-code.json"
+    )
+
+
+def test_kimi_code_home_overrides_default_oauth_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("KIMI_CODE_HOME", str(tmp_path / "custom-kimi-home"))
+
+    auth = KimiOAuthAuth()
+
+    assert auth.credentials_path == (
+        tmp_path / "custom-kimi-home" / "credentials" / "kimi-code.json"
     )
 
 
@@ -69,10 +121,20 @@ async def test_explicit_bearer_is_fallback_when_oauth_is_absent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("KIMI_BEARER_TOKEN", BEARER_SENTINEL)
+    login_calls = 0
 
-    auth = KimiOAuthAuth(credentials_path=tmp_path / "missing.json")
+    async def spawn(*args: object, **kwargs: object) -> _Process:
+        nonlocal login_calls
+        login_calls += 1
+        return _Process()
+
+    auth = KimiOAuthAuth(
+        credentials_path=tmp_path / "missing.json",
+        login_coordinator=KimiLoginCoordinator(process_factory=spawn),
+    )
 
     assert await auth.resolve_bearer_token() == BEARER_SENTINEL
+    assert login_calls == 0
 
 
 @pytest.mark.asyncio
@@ -123,7 +185,7 @@ async def test_invalid_artifacts_fall_back_without_crashing(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("access_token", [42, True, "", " "])
-async def test_invalid_persisted_access_token_uses_bearer_without_refresh(
+async def test_invalid_persisted_access_token_uses_usable_refresh(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     access_token: object,
@@ -139,12 +201,19 @@ async def test_invalid_persisted_access_token_uses_bearer_without_refresh(
         )
     )
     monkeypatch.setenv("KIMI_BEARER_TOKEN", BEARER_SENTINEL)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"access_token": OAUTH_SENTINEL, "expires_in": 3600},
+        )
+
     auth = KimiOAuthAuth(
         credentials_path=token_path,
-        client_factory=lambda: pytest.fail("invalid artifact must not refresh"),
+        client_factory=lambda: _client(handler),
     )
 
-    assert await auth.resolve_bearer_token() == BEARER_SENTINEL
+    assert await auth.resolve_bearer_token() == OAUTH_SENTINEL
 
 
 @pytest.mark.asyncio
@@ -193,8 +262,289 @@ async def test_whitespace_artifact_without_fallback_raises_actionable_error(
         client_factory=lambda: pytest.fail("invalid artifact must not refresh"),
     )
 
-    with pytest.raises(KimiError, match=r"kimi /login.*KIMI_BEARER_TOKEN"):
+    with pytest.raises(KimiError, match=r"kimi login.*KIMI_BEARER_TOKEN"):
         await auth.resolve_bearer_token()
+
+
+@pytest.mark.asyncio
+async def test_missing_artifact_callers_share_one_login_and_reload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("KIMI_BEARER_TOKEN", raising=False)
+    token_path = tmp_path / "credentials" / "kimi-code.json"
+    process = _Process()
+    spawned = asyncio.Event()
+    calls = 0
+
+    async def spawn(*args: object, **kwargs: object) -> _Process:
+        nonlocal calls
+        calls += 1
+        assert args == ("kimi", "login")
+        spawned.set()
+        return process
+
+    coordinator = KimiLoginCoordinator(process_factory=spawn)
+    auth = KimiOAuthAuth(
+        credentials_path=token_path,
+        login_coordinator=coordinator,
+    )
+    waiters = [
+        asyncio.create_task(auth.resolve_bearer_token()),
+        asyncio.create_task(auth.resolve_bearer_token()),
+    ]
+    await asyncio.wait_for(spawned.wait(), timeout=1)
+    assert calls == 1
+    assert not any(waiter.done() for waiter in waiters)
+
+    _write_token(
+        token_path,
+        access_token=OAUTH_SENTINEL,
+        expires_at=time.time() + 3600,
+    )
+    process.release.set()
+
+    assert await asyncio.gather(*waiters) == [OAUTH_SENTINEL, OAUTH_SENTINEL]
+    assert process.wait_calls == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("raw", "message"),
+    [
+        (None, "did not create"),
+        ("not-json", "malformed"),
+        (b"\xff\xfe", "malformed"),
+        ('{"access_token":" ","refresh_token":" "}', "unusable"),
+    ],
+)
+async def test_successful_login_requires_usable_reloaded_artifact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    raw: str | bytes | None,
+    message: str,
+) -> None:
+    monkeypatch.delenv("KIMI_BEARER_TOKEN", raising=False)
+    token_path = tmp_path / "kimi-code.json"
+    process = _Process()
+
+    async def spawn(*args: object, **kwargs: object) -> _Process:
+        if isinstance(raw, bytes):
+            token_path.write_bytes(raw)
+        elif raw is not None:
+            token_path.write_text(raw)
+        process.release.set()
+        return process
+
+    auth = KimiOAuthAuth(
+        credentials_path=token_path,
+        login_coordinator=KimiLoginCoordinator(process_factory=spawn),
+    )
+
+    with pytest.raises(KimiError, match=message):
+        await auth.resolve_bearer_token()
+    assert process.wait_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_invalid_utf8_artifact_starts_login_then_reloads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("KIMI_BEARER_TOKEN", raising=False)
+    token_path = tmp_path / "kimi-code.json"
+    token_path.write_bytes(b"\xff\xfe")
+    process = _Process()
+    login_calls = 0
+
+    async def spawn(*args: object, **kwargs: object) -> _Process:
+        nonlocal login_calls
+        login_calls += 1
+        _write_token(
+            token_path,
+            access_token=OAUTH_SENTINEL,
+            expires_at=time.time() + 3600,
+        )
+        process.release.set()
+        return process
+
+    auth = KimiOAuthAuth(
+        credentials_path=token_path,
+        login_coordinator=KimiLoginCoordinator(process_factory=spawn),
+    )
+
+    assert await auth.resolve_bearer_token() == OAUTH_SENTINEL
+    assert login_calls == 1
+    assert process.wait_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_login_failures_are_classified_without_child_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.delenv("KIMI_BEARER_TOKEN", raising=False)
+    child_secret = b"child-secret-shaped-access-token"
+
+    async def missing(*args: object, **kwargs: object) -> _Process:
+        raise FileNotFoundError("seeded-secret")
+
+    auth = KimiOAuthAuth(
+        credentials_path=tmp_path / "missing.json",
+        login_coordinator=KimiLoginCoordinator(process_factory=missing),
+    )
+    with pytest.raises(KimiError) as caught:
+        await auth.resolve_bearer_token()
+    assert "seeded-secret" not in str(caught.value)
+
+    process = _Process(
+        return_code=9,
+        stdout=(child_secret,),
+        stderr=(child_secret,),
+    )
+
+    async def failed(*args: object, **kwargs: object) -> _Process:
+        return process
+
+    auth = KimiOAuthAuth(
+        credentials_path=tmp_path / "still-missing.json",
+        login_coordinator=KimiLoginCoordinator(process_factory=failed),
+    )
+    failed_login = asyncio.create_task(auth.resolve_bearer_token())
+    await asyncio.wait_for(process.stdout.read_started.wait(), timeout=0.1)
+    await asyncio.wait_for(process.stderr.read_started.wait(), timeout=0.1)
+    process.release.set()
+    with pytest.raises(KimiError) as caught:
+        await failed_login
+    assert child_secret.decode() not in str(caught.value)
+    assert child_secret.decode() not in caplog.text
+    assert process.wait_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_artifact_io_failure_does_not_start_login(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("KIMI_BEARER_TOKEN", raising=False)
+    token_path = tmp_path / "kimi-code.json"
+    login_calls = 0
+
+    def unreadable(self: Path, *args: object, **kwargs: object) -> str:
+        raise PermissionError("private-path-detail")
+
+    async def spawn(*args: object, **kwargs: object) -> _Process:
+        nonlocal login_calls
+        login_calls += 1
+        return _Process()
+
+    monkeypatch.setattr(Path, "read_text", unreadable)
+    auth = KimiOAuthAuth(
+        credentials_path=token_path,
+        login_coordinator=KimiLoginCoordinator(process_factory=spawn),
+    )
+
+    with pytest.raises(KimiError, match="artifact could not be read") as caught:
+        await auth.resolve_bearer_token()
+
+    assert "private-path-detail" not in str(caught.value)
+    assert login_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_refresh_failure_after_login_is_not_reclassified_as_unusable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("KIMI_BEARER_TOKEN", raising=False)
+    token_path = tmp_path / "kimi-code.json"
+    process = _Process()
+    login_calls = 0
+
+    async def spawn(*args: object, **kwargs: object) -> _Process:
+        nonlocal login_calls
+        login_calls += 1
+        token_path.write_text(json.dumps({"refresh_token": "refresh-sentinel"}))
+        process.release.set()
+        return process
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503)
+
+    auth = KimiOAuthAuth(
+        credentials_path=token_path,
+        client_factory=lambda: _client(handler),
+        login_coordinator=KimiLoginCoordinator(process_factory=spawn),
+    )
+
+    with pytest.raises(KimiError, match="refresh returned status 503"):
+        await auth.resolve_bearer_token()
+
+    assert login_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_pipe_drains_are_cancelled_after_child_exit() -> None:
+    class BlockingPipe:
+        def __init__(self) -> None:
+            self.started = asyncio.Event()
+            self.cancelled = asyncio.Event()
+
+        async def read(self, size: int) -> bytes:
+            try:
+                self.started.set()
+                await asyncio.Event().wait()
+            finally:
+                self.cancelled.set()
+            return b""
+
+    process = _Process()
+    process.stdout = BlockingPipe()
+    process.stderr = BlockingPipe()
+
+    async def spawn(*args: object, **kwargs: object) -> _Process:
+        return process
+
+    coordinator = KimiLoginCoordinator(
+        process_factory=spawn,
+        exit_grace_seconds=0.01,
+    )
+
+    login = asyncio.create_task(coordinator.login())
+    await asyncio.wait_for(process.stdout.started.wait(), timeout=0.1)
+    await asyncio.wait_for(process.stderr.started.wait(), timeout=0.1)
+    process.release.set()
+    await asyncio.wait_for(login, timeout=0.1)
+
+    assert process.stdout.cancelled.is_set()
+    assert process.stderr.cancelled.is_set()
+
+
+@pytest.mark.asyncio
+async def test_usable_refresh_material_never_starts_login(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("KIMI_BEARER_TOKEN", raising=False)
+    token_path = tmp_path / "kimi-code.json"
+    token_path.write_text(json.dumps({"refresh_token": "refresh-sentinel"}))
+    login_calls = 0
+
+    async def spawn(*args: object, **kwargs: object) -> _Process:
+        nonlocal login_calls
+        login_calls += 1
+        return _Process()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"access_token": OAUTH_SENTINEL, "expires_in": 3600},
+        )
+
+    auth = KimiOAuthAuth(
+        credentials_path=token_path,
+        client_factory=lambda: _client(handler),
+        login_coordinator=KimiLoginCoordinator(process_factory=spawn),
+    )
+
+    assert await auth.resolve_bearer_token() == OAUTH_SENTINEL
+    assert login_calls == 0
 
 
 @pytest.mark.asyncio
@@ -310,7 +660,7 @@ def test_atomic_persistence_cleans_temporary_file_on_replace_failure(
     monkeypatch.setattr(os, "replace", fail_replace)
 
     with pytest.raises(OSError, match="replace failed"):
-        auth._save_artifact({"access_token": OAUTH_SENTINEL})  # noqa: SLF001
+        auth._save_artifact({"access_token": OAUTH_SENTINEL})
     assert list(token_path.parent.glob("*.tmp*")) == []
 
 
@@ -322,15 +672,24 @@ async def test_refresh_errors_do_not_expose_credentials(tmp_path: Path) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(401, text=f"{OAUTH_SENTINEL} refresh-sentinel")
 
+    login_calls = 0
+
+    async def spawn(*args: object, **kwargs: object) -> _Process:
+        nonlocal login_calls
+        login_calls += 1
+        return _Process()
+
     auth = KimiOAuthAuth(
         credentials_path=token_path,
         client_factory=lambda: _client(handler),
+        login_coordinator=KimiLoginCoordinator(process_factory=spawn),
     )
 
     with pytest.raises(KimiError) as caught:
         await auth.resolve_bearer_token()
     assert OAUTH_SENTINEL not in str(caught.value)
     assert "refresh-sentinel" not in str(caught.value)
+    assert login_calls == 0
 
 
 @pytest.mark.asyncio
@@ -518,6 +877,7 @@ async def test_unary_401_refreshes_and_retries_only_once(tmp_path: Path) -> None
     token_path = tmp_path / "kimi-code.json"
     _write_token(token_path, access_token="rejected", expires_at=time.time() + 3600)
     chat_calls = 0
+    login_calls = 0
 
     def handler(request: httpx.Request) -> httpx.Response:
         nonlocal chat_calls
@@ -532,8 +892,17 @@ async def test_unary_401_refreshes_and_retries_only_once(tmp_path: Path) -> None
     def factory() -> httpx.AsyncClient:
         return _client(handler)
 
+    async def spawn(*args: object, **kwargs: object) -> _Process:
+        nonlocal login_calls
+        login_calls += 1
+        return _Process()
+
     adapter = KimiAdapter(
-        auth=KimiOAuthAuth(credentials_path=token_path, client_factory=factory),
+        auth=KimiOAuthAuth(
+            credentials_path=token_path,
+            client_factory=factory,
+            login_coordinator=KimiLoginCoordinator(process_factory=spawn),
+        ),
         client_factory=factory,
     )
 
@@ -541,6 +910,34 @@ async def test_unary_401_refreshes_and_retries_only_once(tmp_path: Path) -> None
         await adapter.create_response(ResponsesRequest(model="kimi-k2.5", input="hi"))
     assert chat_calls == 2
     assert OAUTH_SENTINEL not in str(caught.value)
+    assert login_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_upstream_failure_never_starts_login(tmp_path: Path) -> None:
+    token_path = tmp_path / "kimi-code.json"
+    _write_token(token_path, access_token=OAUTH_SENTINEL, expires_at=time.time() + 3600)
+    login_calls = 0
+
+    async def spawn(*args: object, **kwargs: object) -> _Process:
+        nonlocal login_calls
+        login_calls += 1
+        return _Process()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503)
+
+    adapter = KimiAdapter(
+        auth=KimiOAuthAuth(
+            credentials_path=token_path,
+            login_coordinator=KimiLoginCoordinator(process_factory=spawn),
+        ),
+        client_factory=lambda: _client(handler),
+    )
+
+    with pytest.raises(KimiError, match="status 503"):
+        await adapter.create_response(ResponsesRequest(model="kimi-k2.5", input="hi"))
+    assert login_calls == 0
 
 
 @pytest.mark.asyncio

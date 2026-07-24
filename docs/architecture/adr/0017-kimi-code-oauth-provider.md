@@ -31,8 +31,14 @@ Add a first-party `KimiAdapter` at the frozen `ProviderAdapter` boundary.
 - Mount `/kimi/v1` on the Responses gateway.
 - Mount `kimi` on the Anthropic Messages surface and route provider-qualified
   model ids such as `kimi/kimi-k2.5`.
-- Prefer the OAuth access token written by `kimi /login` and refresh it through
+- Prefer the OAuth access token written by `kimi login` and refresh it through
   Kimi's OAuth token endpoint when it approaches expiry.
+- When a request has no usable local credential or bearer fallback, let the
+  gateway supervise exactly one shared `kimi login` process, reload the
+  CLI-owned artifact after success, and resume the waiting request.
+- Keep the Kimi CLI as the OAuth and browser-interaction authority. Reverso
+  bounds and reaps the child process but never handles credential contents or
+  implements the OAuth exchange used by interactive login.
 - Accept `KIMI_BEARER_TOKEN` only as a fallback when the OAuth artifact is not
   available.
 - Use Kimi's OpenAI-compatible chat endpoint through Reverso's existing chat to
@@ -45,9 +51,11 @@ Add a first-party `KimiAdapter` at the frozen `ProviderAdapter` boundary.
 ## Consequences
 
 Kimi subscription traffic is available on both first-party protocol surfaces
-without changing the frozen adapter protocol or adding a dependency. Users must
-complete Kimi Code login separately with `kimi /login`, or explicitly supply a
-bearer token. Reverso does not implement or collect interactive OAuth login.
+without changing the frozen adapter protocol or adding a dependency. Missing
+local authentication can pause the request while the gateway supervises the
+official `kimi login` command. The request resumes only after the CLI exits
+successfully and a usable CLI-owned artifact can be reloaded. Users may still
+run `kimi login` separately or explicitly supply a bearer token.
 
 Kimi initially inherits the existing OpenAI-compatible translated capability
 ceiling. Features the upstream may support but Reverso does not yet translate
@@ -57,4 +65,5 @@ remain gated consistently with the DeepSeek translation path.
 
 Offline tests cover OAuth priority, bearer fallback, chat translation, live
 model discovery, both protocol mounts, provider-qualified Anthropic routing,
-and Headroom dispatch across all registered prefixes.
+Headroom dispatch across all registered prefixes, shared login coordination,
+post-login artifact validation, and request resume after official CLI success.

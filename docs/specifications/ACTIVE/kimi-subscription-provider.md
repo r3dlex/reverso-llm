@@ -70,10 +70,15 @@ without removing implementation work.
    OpenAI-compatible ceiling until richer behavior is explicitly proven.
 10. Prove that Headroom compression still runs before Kimi adapter dispatch on
     both surfaces.
+11. When a request has neither a usable CLI-owned artifact nor a bearer
+    fallback, supervise one shared official `kimi login` process, reload the
+    artifact after success, and resume the waiting request.
 
 ### Out of scope
 
-- Interactive OAuth login inside Reverso. Users authenticate with `kimi /login`.
+- Implementing OAuth login, browser automation, or credential collection inside
+  Reverso. The gateway may only supervise the official `kimi login` command and
+  consume the CLI-owned artifact after the child exits.
 - Kimi account creation, subscription purchase, or browser automation.
 - Importing or vendoring Kimi CLI internals.
 - Adding `kimi-sdk` as a runtime dependency.
@@ -107,7 +112,14 @@ falling back silently after an explicitly rejected OAuth token is not allowed.
 
 If no usable OAuth artifact exists, `KIMI_BEARER_TOKEN` may provide the bearer
 token. Missing credentials must fail with an actionable message that directs
-the user to `kimi /login` or the fallback environment variable.
+the user to `kimi login` or the fallback environment variable.
+
+If both sources are unavailable, the gateway must start or join one shared
+`kimi login` attempt for the local credential surface. The original request
+must remain pending without upstream dispatch, reload the CLI-owned artifact
+after successful process exit, and resume only when that artifact is usable.
+Missing executables, nonzero exits, and absent, malformed, or unusable
+post-login artifacts must fail with bounded, secret-free errors.
 
 ### FR-4: Responses API
 
@@ -248,7 +260,7 @@ prompt-free.
 Prerequisites:
 
 1. Install a current Kimi CLI.
-2. Run `kimi /login` and confirm the credential artifact exists without printing
+2. Run `kimi login` and confirm the credential artifact exists without printing
    its contents.
 3. Start Reverso on loopback.
 
