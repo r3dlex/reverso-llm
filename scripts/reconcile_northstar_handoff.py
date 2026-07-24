@@ -120,6 +120,34 @@ def _extract_sliced_goals(work_item: str) -> str:
     return section
 
 
+def _validate_terminal_sliced_goals(sliced_goals: str) -> None:
+    rows = [
+        [cell.strip() for cell in line.strip().strip("|").split("|")]
+        for line in sliced_goals.splitlines()
+        if line.strip().startswith("|")
+    ]
+    if len(rows) < 3 or "status" not in [cell.casefold() for cell in rows[0]]:
+        raise ReconciliationError(
+            "work item Sliced goals table must contain a Status column and goals"
+        )
+    status_index = [cell.casefold() for cell in rows[0]].index("status")
+    unfinished = []
+    for row in rows[2:]:
+        if len(row) != len(rows[0]):
+            raise ReconciliationError("work item Sliced goals table is malformed")
+        status = row[status_index]
+        if not re.fullmatch(
+            r"(?:complete(?:d)?|shipped|deferred)(?:\s+.*)?",
+            status,
+            re.IGNORECASE,
+        ):
+            unfinished.append(status)
+    if unfinished:
+        raise ReconciliationError(
+            f"unfinished sliced goals prevent completion: {', '.join(unfinished)}"
+        )
+
+
 def _validate_manifest(manifest: dict[str, Any]) -> list[dict[str, Any]]:
     if manifest.get("schema_version") != "1.0":
         raise ReconciliationError("workflow manifest schema_version must be 1.0")
@@ -259,6 +287,8 @@ def _replace_edge(edges: list[dict[str, Any]], replacement: dict[str, Any]) -> N
 def _render_handoff(
     *,
     slug: str,
+    status: str,
+    completed_via: str | None,
     spec_path: str,
     work_item_path: str,
     issue_id: str,
@@ -268,13 +298,17 @@ def _render_handoff(
 ) -> str:
     handoff_path = f".ai/handoff/northstar-{slug}.md"
     manifest_id = f"northstar-handoff-{slug}"
+    completion = (
+        f"Completion: Implemented by {completed_via}.\n\n" if completed_via else ""
+    )
     return (
         "---\n"
         f"title: Northstar A to B handoff for {slug}\n"
-        "status: active\n"
+        f"status: {status}\n"
         f"slug: {slug}\n"
         "---\n\n"
         f"# Northstar A to B Handoff: {slug}\n\n"
+        f"{completion}"
         "## Contract\n\n"
         f"- Spec: `{spec_path}`\n"
         f"- Work item: `{work_item_path}`\n"
@@ -352,6 +386,7 @@ def reconcile(
     spec: str,
     work_item: str,
     slug: str,
+    completed_via: str | None = None,
     replace_fn: Callable[[str | Path, str | Path], None] | None = None,
 ) -> dict[str, str]:
     """Validate, render, and reconcile a single Northstar handoff."""
@@ -361,6 +396,18 @@ def reconcile(
         raise ReconciliationError(f"repo root is not a directory: {root}")
     if not SLUG_PATTERN.fullmatch(slug):
         raise ReconciliationError("slug must use lowercase kebab-case")
+    if completed_via is not None:
+        completed_via = completed_via.strip()
+        forbidden_dashes = (chr(0x2013), chr(0x2014))
+        if (
+            not completed_via
+            or "\n" in completed_via
+            or "\r" in completed_via
+            or any(dash in completed_via for dash in forbidden_dashes)
+        ):
+            raise ReconciliationError(
+                "--completed-via must be a non-empty ASCII-dash single-line value"
+            )
 
     canonical_spec_path = f"docs/specifications/ACTIVE/{slug}.md"
     canonical_work_item_path = f".ai/work-intake/{slug}.md"
@@ -387,6 +434,8 @@ def reconcile(
     if f"`{issue_id}`" not in work_item_text:
         raise ReconciliationError("work item does not declare the expected issue ID")
     sliced_goals = _extract_sliced_goals(work_item_text)
+    if completed_via is not None:
+        _validate_terminal_sliced_goals(sliced_goals)
 
     manifest_file = root / MANIFEST_PATH
     graph_file = root / GRAPH_PATH
@@ -398,26 +447,37 @@ def reconcile(
     manifest = _load_json(manifest_file, "workflow manifest")
     branches = _validate_manifest(manifest)
     manifest_id = f"northstar-handoff-{slug}"
-    _replace_by_id(
-        branches,
-        manifest_id,
-        {
-            "id": manifest_id,
-            "enabled_when": "northstar_handoff_present",
-            "status": "available",
-        },
-    )
 
     graph = _load_json(graph_file, "traceability graph")
     nodes, edges = _validate_graph(graph)
     handoff_path = handoff_file.relative_to(root).as_posix()
+    owned_ids = {issue_id, plan_id, handoff_id}
+    terminal_records = [
+        record
+        for record in (*branches, *nodes)
+        if (record.get("id") == manifest_id or record.get("id") in owned_ids)
+        and record.get("status") == "complete"
+    ]
+    if completed_via is None and terminal_records:
+        raise ReconciliationError("completed handoff requires --completed-via")
+
+    is_complete = completed_via is not None
+    handoff_status = "complete" if is_complete else "active"
+    manifest_record = {
+        "id": manifest_id,
+        "enabled_when": "northstar_handoff_present",
+        "status": "complete" if is_complete else "available",
+    }
+    if completed_via is not None:
+        manifest_record["completed_via"] = completed_via
+    _replace_by_id(branches, manifest_id, manifest_record)
 
     expected_nodes = (
         {
             "id": issue_id,
             "type": "issue",
             "title": f"northstar issue: {slug}",
-            "status": "ready-for-agent",
+            "status": "complete" if is_complete else "ready-for-agent",
             "repo_id": "reverso-root",
             "path": work_item_path,
             "backlinks": [],
@@ -426,7 +486,7 @@ def reconcile(
             "id": plan_id,
             "type": "plan",
             "title": f"northstar sliced plan: {slug}",
-            "status": "active",
+            "status": handoff_status,
             "repo_id": "reverso-root",
             "path": handoff_path,
             "backlinks": [issue_id],
@@ -435,7 +495,7 @@ def reconcile(
             "id": handoff_id,
             "type": "handoff",
             "title": f"northstar A to B handoff: {slug}",
-            "status": "active",
+            "status": handoff_status,
             "repo_id": "reverso-root",
             "path": handoff_path,
             "backlinks": [plan_id],
@@ -509,6 +569,8 @@ def reconcile(
     _validate_graph(graph)
     handoff = _render_handoff(
         slug=slug,
+        status=handoff_status,
+        completed_via=completed_via,
         spec_path=spec_path,
         work_item_path=work_item_path,
         issue_id=issue_id,
@@ -519,7 +581,7 @@ def reconcile(
     handoff_frontmatter = _frontmatter(handoff, "rendered handoff")
     if handoff_frontmatter != {
         "title": f"Northstar A to B handoff for {slug}",
-        "status": "active",
+        "status": handoff_status,
         "slug": slug,
     }:
         raise ReconciliationError("rendered handoff frontmatter is invalid")
@@ -563,6 +625,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--spec", required=True)
     parser.add_argument("--work-item", required=True)
     parser.add_argument("--slug", required=True)
+    parser.add_argument("--completed-via")
     return parser
 
 
@@ -574,6 +637,7 @@ def main(argv: list[str] | None = None) -> int:
             spec=args.spec,
             work_item=args.work_item,
             slug=args.slug,
+            completed_via=args.completed_via,
         )
     except ReconciliationError as exc:
         print(f"northstar-reconcile: {exc}", file=sys.stderr)

@@ -1,6 +1,6 @@
 ---
 title: Work item for Codex encrypted-content include compatibility
-status: in-progress
+status: complete
 category: bug
 slug: codex-encrypted-content-include-compatibility
 ---
@@ -9,7 +9,7 @@ slug: codex-encrypted-content-include-compatibility
 
 - **Traceability node:** `issue:reverso-root:codex-encrypted-content-include-compatibility`
 - **Spec:** [`docs/specifications/ACTIVE/codex-encrypted-content-include-compatibility.md`](../../docs/specifications/ACTIVE/codex-encrypted-content-include-compatibility.md)
-- **State:** `in-progress`
+- **State:** `shipped`
 - **Category:** `bug`
 - **Owner:** unassigned
 - **Surface scope:** standalone, Reverso Responses gateway
@@ -39,7 +39,7 @@ affected translated providers.
 |---|---|---|---|---|
 | S0 | Governed Northstar graph and handoff reconciliation command | AFK | completed in PR #90 | none |
 | S1 | Exact-sentinel compatibility contract across the six-provider matrix | AFK | completed in PR #91 | none |
-| S2 | Cross-provider integration proof and parity documentation | AFK | in-progress | none |
+| S2 | Cross-provider integration proof and parity documentation | AFK | completed in PR #92 | none |
 | S3 | Provider-health follow-up classification | HITL or separate issues | deferred | external credentials, quota, and availability |
 
 ## Acceptance criteria
@@ -68,3 +68,13 @@ affected translated providers.
 - Purchasing or changing Auggie quota.
 - Solving DeepSeek availability or latency.
 - Changing the frozen `ProviderAdapter` protocol.
+
+## Shipped via
+
+- PR #90 -- S0 governed reconciliation command (squash merge, commit ef562ebb)
+- PR #91 -- S1 exact-sentinel compatibility contract (squash merge, commit 25d188cc)
+- PR #92 -- S2 cross-provider proof and parity documentation (squash merge, commit 3dcacdd0)
+
+The AFK compatibility scope is complete. S3 remains deferred as separate HITL
+provider-health follow-up work because it requires external credentials, quota,
+or provider availability.
