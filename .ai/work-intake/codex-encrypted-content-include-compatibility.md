@@ -38,8 +38,8 @@ affected translated providers.
 | Slice | Title | Type | Status | Blocked by |
 |---|---|---|---|---|
 | S0 | Governed Northstar graph and handoff reconciliation command | AFK | completed in PR #90 | none |
-| S1 | Exact-sentinel compatibility contract across the six-provider matrix | AFK | in-progress | none |
-| S2 | Cross-provider integration proof and parity documentation | AFK | blocked | S1 |
+| S1 | Exact-sentinel compatibility contract across the six-provider matrix | AFK | completed in PR #91 | none |
+| S2 | Cross-provider integration proof and parity documentation | AFK | in-progress | none |
 | S3 | Provider-health follow-up classification | HITL or separate issues | deferred | external credentials, quota, and availability |
 
 ## Acceptance criteria

@@ -1,11 +1,13 @@
 """Per-provider Responses feature gate and structured unsupported_feature builder.
 
-The Responses surface that callers may exercise is heterogeneous across the four
-first-party providers (claude, copilot, auggie, deepseek). This module holds the
-single enforcement seam ADR 0002 D4 requires: a generated capability table
-sourced from .omc/research/responses-parity-surface.json (mirrored under
-src/reverso/protocols/data so it ships with the wheel and survives outside the
-repo root), a request-side feature extractor, and one shared error body builder.
+The Responses surface that callers may exercise is heterogeneous across the
+five routed providers (claude, copilot, auggie, deepseek, kimi). The
+rectangular capability table also carries a non-routing codex control column.
+This module holds the single enforcement seam ADR 0002 D4 requires: a generated
+capability table sourced from .omc/research/responses-parity-surface.json
+(mirrored under src/reverso/protocols/data so it ships with the wheel and
+survives outside the repo root), a request-side feature extractor, and one
+shared error body builder.
 
 The gate is HYBRID: responses_app.py applies the fast path BEFORE adapter
 dispatch by calling check_features over extract_features; adapters MAY also
