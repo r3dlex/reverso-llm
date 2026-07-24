@@ -284,6 +284,37 @@
       "backlinks": [
         "plan:reverso-root:northstar-anthropic-prepare-request-seam"
       ]
+    },
+    {
+      "id": "issue:reverso-root:codex-encrypted-content-include-compatibility",
+      "type": "issue",
+      "title": "northstar issue: codex-encrypted-content-include-compatibility",
+      "status": "ready-for-agent",
+      "repo_id": "reverso-root",
+      "path": ".ai/work-intake/codex-encrypted-content-include-compatibility.md",
+      "backlinks": []
+    },
+    {
+      "id": "plan:reverso-root:northstar-codex-encrypted-content-include-compatibility",
+      "type": "plan",
+      "title": "northstar sliced plan: codex-encrypted-content-include-compatibility",
+      "status": "active",
+      "repo_id": "reverso-root",
+      "path": ".ai/handoff/northstar-codex-encrypted-content-include-compatibility.md",
+      "backlinks": [
+        "issue:reverso-root:codex-encrypted-content-include-compatibility"
+      ]
+    },
+    {
+      "id": "handoff:reverso-root:northstar-codex-encrypted-content-include-compatibility",
+      "type": "handoff",
+      "title": "northstar A to B handoff: codex-encrypted-content-include-compatibility",
+      "status": "active",
+      "repo_id": "reverso-root",
+      "path": ".ai/handoff/northstar-codex-encrypted-content-include-compatibility.md",
+      "backlinks": [
+        "plan:reverso-root:northstar-codex-encrypted-content-include-compatibility"
+      ]
     }
   ],
   "edges": [
@@ -419,6 +450,20 @@
       "relation": "summarized-by",
       "created_by": "northstar",
       "evidence_path": ".ai/handoff/northstar-anthropic-prepare-request-seam.md"
+    },
+    {
+      "source": "issue:reverso-root:codex-encrypted-content-include-compatibility",
+      "target": "plan:reverso-root:northstar-codex-encrypted-content-include-compatibility",
+      "relation": "planned-by",
+      "created_by": "northstar-reconciler",
+      "evidence_path": ".ai/work-intake/codex-encrypted-content-include-compatibility.md"
+    },
+    {
+      "source": "plan:reverso-root:northstar-codex-encrypted-content-include-compatibility",
+      "target": "handoff:reverso-root:northstar-codex-encrypted-content-include-compatibility",
+      "relation": "summarized-by",
+      "created_by": "northstar-reconciler",
+      "evidence_path": ".ai/handoff/northstar-codex-encrypted-content-include-compatibility.md"
     }
   ],
   "coverage": {
