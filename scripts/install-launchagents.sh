@@ -17,14 +17,47 @@ set -euo pipefail
 
 REVERSO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CANONICAL_REVERSO_DIR="/Users/andresilvaburgstahler/.local/share/reverso"
-USER_HOME="${HOME}"
+CANONICAL_USER_HOME="/Users/andresilvaburgstahler"
+if [[ -z "${HOME:-}" || "${HOME}" != "${CANONICAL_USER_HOME}" ]]; then
+    echo "ERROR: HOME must match canonical account home ${CANONICAL_USER_HOME}" >&2
+    exit 1
+fi
+USER_HOME="${CANONICAL_USER_HOME}"
 LAUNCHD_DIR="${USER_HOME}/Library/LaunchAgents"
 LOG_DIR="${USER_HOME}/Library/Logs/reverso"
+KIMI_CODE_HOME="${USER_HOME}/Library/Application Support/reverso/kimi-code"
 
 if [[ "${REVERSO_DIR}" != "${CANONICAL_REVERSO_DIR}" ]]; then
     echo "ERROR: installer must run from canonical checkout ${CANONICAL_REVERSO_DIR}" >&2
     exit 1
 fi
+
+require_real_kimi_home_path() {
+    local path_component
+    local resolved_user_home
+    if [[ ! -d "${USER_HOME}" || -L "${USER_HOME}" ]]; then
+        echo "ERROR: canonical account home must be a real directory" >&2
+        exit 1
+    fi
+    resolved_user_home="$(cd "${USER_HOME}" && pwd -P)"
+    if [[ "${resolved_user_home}" != "${USER_HOME}" ]]; then
+        echo "ERROR: canonical account home must resolve without symbolic links" >&2
+        exit 1
+    fi
+    for path_component in \
+        "${USER_HOME}" \
+        "${USER_HOME}/Library" \
+        "${USER_HOME}/Library/Application Support" \
+        "${USER_HOME}/Library/Application Support/reverso" \
+        "${KIMI_CODE_HOME}"; do
+        if [[ -L "${path_component}" ]]; then
+            echo "ERROR: governed KIMI_CODE_HOME path must not contain symbolic links" >&2
+            exit 1
+        fi
+    done
+}
+
+require_real_kimi_home_path
 
 # Locate uv
 UV_BIN="$(command -v uv 2>/dev/null || echo "")"
@@ -43,6 +76,13 @@ run_deployment_drift() {
 }
 
 run_deployment_drift --phase pre-install
+
+require_real_kimi_home_path
+mkdir -p "${KIMI_CODE_HOME}"
+require_real_kimi_home_path
+chmod 0700 "${KIMI_CODE_HOME}"
+require_real_kimi_home_path
+
 run_deployment_drift \
     --phase pre-install \
     --write-provenance
@@ -68,6 +108,7 @@ for AGENT in "${AGENTS[@]}"; do
         -e "s|{{REVERSO_DEPLOYMENT_COMMIT}}|${REVERSO_DEPLOYMENT_COMMIT}|g" \
         -e "s|{{UV_BIN}}|${UV_BIN}|g" \
         -e "s|{{USER_HOME}}|${USER_HOME}|g" \
+        -e "s|{{KIMI_CODE_HOME}}|${KIMI_CODE_HOME}|g" \
         "${TMPL}" > "${DEST}"
 
     echo "Written: ${DEST}"

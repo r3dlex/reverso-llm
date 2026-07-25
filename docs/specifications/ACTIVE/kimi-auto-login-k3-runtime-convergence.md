@@ -76,6 +76,11 @@ profile, and generated catalog converge on Codex-facing `kimi-k3`, upstream
 17. If post-login reload finds the artifact absent or structurally unable to
     provide a usable access or refresh credential, fail with the bounded
     post-login artifact error and do not recursively start login.
+18. The governed LaunchAgent installer creates
+    `~/Library/Application Support/reverso/kimi-code` with mode `0700`, binds
+    that exact path to the proxy as `KIMI_CODE_HOME`, and records it in
+    deployment provenance. The daemon does not receive `KIMI_CODE_HOME`, and
+    the user's default `~/.kimi-code` remains untouched.
 
 ## Architecture decision
 
@@ -115,7 +120,8 @@ credential artifact creation.
 | S2 | Prove cross-surface single-flight and bounded lifecycle cleanup | AFK | blocked | S1 |
 | S3 | Converge K3 model exposure, profile, catalog, and context metadata | AFK | ready-for-agent | none |
 | S4 | Govern canonical LaunchAgent provenance and deployment drift checks | AFK | blocked | S1, S3 |
-| S5 | Deploy, bootstrap live OAuth, sync, and publish evidence | HITL | blocked | S2, S4 |
+| S4A | Govern an isolated Kimi home in deployment provenance | AFK | blocked | S4 |
+| S5 | Deploy, bootstrap live OAuth, sync, and publish evidence | HITL | blocked | S2, S4A |
 
 Each slice is one future PR. S1 and S3 can proceed in parallel in isolated
 worktrees. S5 is HITL only for browser-side OAuth authorization and for any
@@ -162,6 +168,11 @@ host-policy merge authority that cannot be established automatically.
     generated profile or catalog. Only after that request resumes does S5 run
     `pre-sync` and `reverso-codex-sync`, validate generated metadata, and run a
     second normal profile request that does not reopen login.
+18. The installer creates the isolated Reverso Kimi home with mode `0700`;
+    deployment provenance, the rendered proxy LaunchAgent, and the running
+    proxy agree on its exact path. Any mismatch fails closed.
+19. The daemon has no `KIMI_CODE_HOME`, and live bootstrap does not read,
+    copy, delete, or otherwise mutate the user's default `~/.kimi-code`.
 
 ## Red-green proof
 
@@ -180,6 +191,8 @@ Before implementation, add failing tests for:
 - K3-only model exposure and upstream translation;
 - generated Kimi profile and catalog consistency;
 - LaunchAgent project provenance and sync authority.
+- isolated Kimi home provenance, mode, rendered proxy state, running proxy
+  state, and daemon exclusion;
 - positive login triggers for missing and structurally unusable artifacts;
 - negative login-trigger coverage for usable refresh material, refresh
   failures, exhausted HTTP 401 handling, upstream failures, and transient
@@ -208,6 +221,8 @@ captured evidence for debug markers and leaked secrets.
 ## Deployment acceptance
 
 1. Install and restart LaunchAgents from the governed canonical checkout.
+   Confirm the installer-created isolated Kimi home has mode `0700`, proxy
+   provenance converges on it, and `~/.kimi-code` is not used or mutated.
 2. With `KIMI_BEARER_TOKEN` absent and the artifact absent or structurally
    unable to provide usable access or refresh material, create a mode-700
    temporary `CODEX_HOME` whose `config.toml` explicitly sets

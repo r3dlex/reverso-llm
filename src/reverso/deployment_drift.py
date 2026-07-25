@@ -12,6 +12,7 @@ import datetime as dt
 import json
 import os
 import plistlib
+import pwd
 import re
 import shutil
 import subprocess
@@ -27,7 +28,7 @@ from typing import Any
 CANONICAL_CHECKOUT = Path("/Users/andresilvaburgstahler/.local/share/reverso")
 DEPLOYMENT_REPOSITORY = "git@github.com:r3dlex/reverso-llm.git"
 INSTALLER_IDENTITY = str(CANONICAL_CHECKOUT / "scripts/install-launchagents.sh")
-PROVENANCE_SCHEMA_VERSION = 1
+PROVENANCE_SCHEMA_VERSION = 2
 PROVENANCE_RELATIVE_PATH = (
     Path("Library") / "Application Support" / "reverso" / "deployment-provenance.json"
 )
@@ -110,6 +111,10 @@ class DriftEnvironment:
     def kimi_profile_path(self) -> Path:
         return self.home / ".codex" / "kimi.config.toml"
 
+    @property
+    def kimi_code_home(self) -> Path:
+        return self.home / "Library" / "Application Support" / "reverso" / "kimi-code"
+
 
 def _git(env: DriftEnvironment, *args: str) -> str:
     return env.command_runner(("git", *args), env.repo_root).strip()
@@ -153,6 +158,7 @@ def _expected_provenance(
         "commit": selected_commit,
         "installer": INSTALLER_IDENTITY,
         "launcher": str(env.launcher),
+        "kimi_code_home": str(env.kimi_code_home),
     }
 
 
@@ -185,6 +191,10 @@ def _validate_provenance(
         raise DeploymentDriftError("deployment provenance is required for this phase")
 
     record = _load_json_object(path, "deployment provenance")
+    if record.get("schema_version") == 1 and allow_predecessor:
+        return _validate_schema_one_predecessor(env, record, selected_commit)
+    if record.get("schema_version") != PROVENANCE_SCHEMA_VERSION:
+        raise DeploymentDriftError("deployment provenance schema is unsupported")
     required = {
         "schema_version",
         "repository",
@@ -192,14 +202,13 @@ def _validate_provenance(
         "commit",
         "installer",
         "launcher",
+        "kimi_code_home",
         "installed_at_utc",
     }
     if set(record) != required:
         raise DeploymentDriftError(
             "deployment provenance has missing or unsupported fields"
         )
-    if record["schema_version"] != PROVENANCE_SCHEMA_VERSION:
-        raise DeploymentDriftError("deployment provenance schema is unsupported")
     expected = _expected_provenance(env, selected_commit)
     for field, expected_value in expected.items():
         if field in {"commit", "launcher"}:
@@ -254,6 +263,77 @@ def _validate_provenance(
     return "valid"
 
 
+def _validate_schema_one_predecessor(
+    env: DriftEnvironment,
+    record: dict[str, Any],
+    selected_commit: str,
+) -> str:
+    """Authorize only a fully converged S4 deployment for one S4A upgrade."""
+    required = {
+        "schema_version",
+        "repository",
+        "canonical_checkout",
+        "commit",
+        "installer",
+        "launcher",
+        "installed_at_utc",
+    }
+    if set(record) != required:
+        raise DeploymentDriftError(
+            "legacy deployment provenance has missing or unsupported fields"
+        )
+    expected = _expected_provenance(env, selected_commit)
+    for field in ("repository", "canonical_checkout", "installer"):
+        if record.get(field) != expected[field]:
+            raise DeploymentDriftError(
+                f"legacy deployment provenance {field} does not match governed source"
+            )
+    recorded_commit = record.get("commit")
+    if not isinstance(recorded_commit, str) or not re.fullmatch(
+        r"[0-9a-f]{40}", recorded_commit
+    ):
+        raise DeploymentDriftError(
+            "legacy deployment provenance commit must be a full Git SHA"
+        )
+    recorded_launcher = record.get("launcher")
+    if (
+        not isinstance(recorded_launcher, str)
+        or not Path(recorded_launcher).is_absolute()
+    ):
+        raise DeploymentDriftError(
+            "legacy deployment provenance launcher must be an absolute path"
+        )
+    _validate_installed_at(record["installed_at_utc"])
+    _validate_launch_agents(
+        env,
+        recorded_commit,
+        recorded_launcher,
+        require_kimi_home=False,
+    )
+    _validate_running_agents(
+        env,
+        recorded_commit,
+        recorded_launcher,
+        require_kimi_home=False,
+    )
+    try:
+        env.command_runner(
+            (
+                "git",
+                "merge-base",
+                "--is-ancestor",
+                recorded_commit,
+                selected_commit,
+            ),
+            env.repo_root,
+        )
+    except DeploymentDriftError as exc:
+        raise DeploymentDriftError(
+            "legacy deployment predecessor is not a known ancestor of selected commit"
+        ) from exc
+    return "valid-schema-one-predecessor"
+
+
 def _atomic_write_json(path: Path, payload: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary_name = tempfile.mkstemp(
@@ -287,6 +367,7 @@ def write_deployment_provenance(
     installed_at = installed_at_utc or dt.datetime.now(dt.UTC)
     if installed_at.tzinfo is None or installed_at.utcoffset() != dt.timedelta(0):
         raise DeploymentDriftError("installed_at_utc must be timezone-aware UTC")
+    _validate_kimi_code_home(env)
     record: dict[str, object] = {
         **_expected_provenance(env, selected_commit),
         "installed_at_utc": installed_at.astimezone(dt.UTC)
@@ -339,6 +420,8 @@ def _validate_launch_agents(
     env: DriftEnvironment,
     selected_commit: str,
     expected_launcher: str,
+    *,
+    require_kimi_home: bool = True,
 ) -> None:
     canonical = str(env.canonical_checkout)
     for label in LAUNCH_AGENT_LABELS:
@@ -372,6 +455,23 @@ def _validate_launch_agents(
         if environment.get("REVERSO_DEPLOYMENT_COMMIT") != selected_commit:
             raise DeploymentDriftError(
                 f"rendered LaunchAgent {label} revision provenance is stale"
+            )
+        rendered_kimi_home = environment.get("KIMI_CODE_HOME")
+        if label == "com.user.reverso-proxy":
+            if require_kimi_home and rendered_kimi_home != str(env.kimi_code_home):
+                raise DeploymentDriftError(
+                    "rendered LaunchAgent com.user.reverso-proxy "
+                    "KIMI_CODE_HOME is stale"
+                )
+            if not require_kimi_home and rendered_kimi_home is not None:
+                raise DeploymentDriftError(
+                    "legacy rendered LaunchAgent com.user.reverso-proxy "
+                    "must not set KIMI_CODE_HOME"
+                )
+        elif rendered_kimi_home is not None:
+            raise DeploymentDriftError(
+                "rendered LaunchAgent com.user.reverso-daemon "
+                "must not set KIMI_CODE_HOME"
             )
 
 
@@ -412,6 +512,8 @@ def _validate_running_agents(
     env: DriftEnvironment,
     selected_commit: str,
     expected_launcher: str,
+    *,
+    require_kimi_home: bool = True,
 ) -> None:
     canonical = str(env.canonical_checkout)
     for label in LAUNCH_AGENT_LABELS:
@@ -436,6 +538,23 @@ def _validate_running_agents(
             raise DeploymentDriftError(
                 f"running checkout for LaunchAgent {label} is stale"
             )
+        running_kimi_home = _launchctl_value(environment_output, "KIMI_CODE_HOME")
+        if label == "com.user.reverso-proxy":
+            if require_kimi_home and running_kimi_home != str(env.kimi_code_home):
+                raise DeploymentDriftError(
+                    "running KIMI_CODE_HOME for LaunchAgent "
+                    "com.user.reverso-proxy is stale"
+                )
+            if not require_kimi_home and running_kimi_home is not None:
+                raise DeploymentDriftError(
+                    "legacy running LaunchAgent com.user.reverso-proxy "
+                    "must not set KIMI_CODE_HOME"
+                )
+        elif running_kimi_home is not None:
+            raise DeploymentDriftError(
+                "running LaunchAgent com.user.reverso-daemon "
+                "must not set KIMI_CODE_HOME"
+            )
         if _launchctl_assignment(output, "working directory") != canonical:
             raise DeploymentDriftError(
                 f"running WorkingDirectory for LaunchAgent {label} is stale"
@@ -459,6 +578,24 @@ def _validate_running_agents(
             raise DeploymentDriftError(
                 f"running LaunchAgent {label} does not match rendered ProgramArguments"
             )
+
+
+def _validate_kimi_code_home(env: DriftEnvironment) -> None:
+    path = env.kimi_code_home
+    try:
+        resolved_path = path.resolve()
+    except (OSError, RuntimeError) as exc:
+        raise DeploymentDriftError(
+            "governed KIMI_CODE_HOME path cannot be resolved safely"
+        ) from exc
+    if not path.is_absolute() or resolved_path != path:
+        raise DeploymentDriftError(
+            "governed KIMI_CODE_HOME path must not contain symbolic links"
+        )
+    if not path.is_dir():
+        raise DeploymentDriftError("governed KIMI_CODE_HOME must be a real directory")
+    if path.stat().st_mode & 0o777 != 0o700:
+        raise DeploymentDriftError("governed KIMI_CODE_HOME must have mode 0700")
 
 
 def _validate_live_kimi(env: DriftEnvironment) -> None:
@@ -541,6 +678,7 @@ def check_deployment_drift(
         allow_predecessor=phase == "pre-install",
     )
     if phase != "pre-install":
+        _validate_kimi_code_home(env)
         _validate_launch_agents(env, selected_commit, str(env.launcher))
     if phase in {"post-restart", "pre-sync", "acceptance"}:
         _validate_running_agents(env, selected_commit, str(env.launcher))
@@ -554,6 +692,44 @@ def check_deployment_drift(
 def _selected_commit(env: DriftEnvironment) -> str:
     selected = os.environ.get("REVERSO_DEPLOYMENT_COMMIT")
     return selected if selected is not None else _git(env, "rev-parse", "HEAD")
+
+
+def _production_home() -> Path:
+    """Return the immutable account home used by the production command."""
+    try:
+        account_home_value = pwd.getpwuid(os.getuid()).pw_dir
+    except (KeyError, OSError) as exc:
+        raise DeploymentDriftError(
+            "unable to resolve the governed account home"
+        ) from exc
+    if not isinstance(account_home_value, str) or not account_home_value:
+        raise DeploymentDriftError("governed account home is missing")
+
+    account_home = Path(account_home_value)
+    configured_home = os.environ.get("HOME")
+    if configured_home is None:
+        raise DeploymentDriftError("HOME must match the governed account home")
+    if Path(configured_home) != account_home:
+        raise DeploymentDriftError("HOME must match the governed account home")
+
+    try:
+        first_resolution = account_home.resolve(strict=True)
+        second_resolution = account_home.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise DeploymentDriftError(
+            "governed account home cannot be resolved safely"
+        ) from exc
+    if (
+        not account_home.is_absolute()
+        or account_home.is_symlink()
+        or not account_home.is_dir()
+        or first_resolution != account_home
+        or second_resolution != first_resolution
+    ):
+        raise DeploymentDriftError(
+            "governed account home must be absolute, real, and free of symbolic links"
+        )
+    return account_home
 
 
 def main(argv: list[str] | None = None, *, repo_root: Path | None = None) -> int:
@@ -570,9 +746,9 @@ def main(argv: list[str] | None = None, *, repo_root: Path | None = None) -> int
     if args.write_provenance and args.phase != "pre-install":
         parser.error("--write-provenance is valid only with --phase pre-install")
 
-    root = (repo_root or Path.cwd()).resolve()
-    env = DriftEnvironment(repo_root=root, home=Path.home())
     try:
+        root = (repo_root or Path.cwd()).resolve()
+        env = DriftEnvironment(repo_root=root, home=_production_home())
         selected_commit = _selected_commit(env)
         report = check_deployment_drift(
             args.phase,
