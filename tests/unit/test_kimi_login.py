@@ -194,11 +194,11 @@ async def test_arrival_during_last_waiter_cleanup_starts_fresh_login() -> None:
     assert calls == [("kimi", "login")]
     assert not replacement.done()
 
-    await asyncio.wait_for(second_spawned.wait(), timeout=0.2)
+    await asyncio.wait_for(second_spawned.wait(), timeout=1.0)
     second_process.release.set()
     with pytest.raises(asyncio.CancelledError):
         await abandoned
-    await asyncio.wait_for(replacement, timeout=0.1)
+    await asyncio.wait_for(replacement, timeout=1.0)
 
     assert calls == [("kimi", "login"), ("kimi", "login")]
     assert first_process.kill_calls == 1

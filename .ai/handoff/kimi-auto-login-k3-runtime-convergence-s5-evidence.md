@@ -2,9 +2,9 @@
 title: Kimi automatic login K3 runtime convergence S5 evidence
 slug: kimi-auto-login-k3-runtime-convergence-s5-evidence
 status: passed
-date: 2026-07-25
-deployment_commit: 8c7b7d232a372afce7072069d4dde68a32c7eaf4
-delivery_status: pending
+date: 2026-07-26
+deployment_commit: 14d8d96be40037d44ee0b5cd10ae2f113201c0fb
+delivery_status: passed
 ---
 
 # Kimi automatic login K3 runtime convergence S5 evidence
@@ -20,7 +20,7 @@ private command captures.
 
 - The canonical checkout at
   `/Users/andresilvaburgstahler/.local/share/reverso` was clean at merged commit
-  `8c7b7d232a372afce7072069d4dde68a32c7eaf4`.
+  `14d8d96be40037d44ee0b5cd10ae2f113201c0fb`.
 - The `pre-install`, `pre-restart`, `post-restart`, `pre-sync`, and `acceptance`
   deployment drift phases passed.
 - The proxy and daemon were reinstalled and restarted from the canonical
@@ -95,11 +95,38 @@ The final readback on 2026-07-25 reconfirmed:
 - isolated Kimi home mode `0700`, credential mode `0600`, and daemon exclusion;
 - no remaining `kimi login` subprocess.
 
+## Post-refresh acceptance
+
+The final readback on 2026-07-26 reconfirmed the deployed dependency refresh
+and generated client surfaces:
+
+- canonical checkout, `origin/main`, and deployment provenance commit
+  `14d8d96be40037d44ee0b5cd10ae2f113201c0fb`;
+- passing `acceptance` deployment drift with provenance `valid`;
+- gateway smoke result `5 passed, 0 failed`;
+- required loopback listeners on ports `64946`, `58787`, `58788`, and `58789`;
+- Codex profile `reverso-kimi` returned exactly
+  `CODEX_REVERSO_KIMI_OK` with exit code zero;
+- managed alias `claude-kimi` with model `kimi-k3` returned exactly
+  `CLAUDE_ALIAS_KIMI_OK` with exit code zero;
+- no `kimi login` subprocess before or after either request;
+- Codex sync convergence reported `changed: false`;
+- Claude sync convergence reported `changed: false`, no conflicting launchers,
+  and no error;
+- Kimi catalog exposure contained only `kimi-k3` with context window
+  `1048576`, and the generated Kimi profile selected the same model and context;
+- all managed Claude aliases existed and were executable:
+  `claude-reverso`, `claude-claude`, `claude-codex`, `claude-copilot`,
+  `claude-auggie`, `claude-deepseek`, and `claude-kimi`.
+
+The post-refresh capture retained only the exact sentinel outputs and sanitized
+status fields. It did not record credentials, tokens, authorization headers,
+device codes, or provider output.
+
 ## Verification and delivery governance
 
-The live acceptance result and the delivery gates are tracked separately. Live
-acceptance passed; delivery remains fail-closed until the dedicated PR reaches
-hosted green and receives run-specific merge authority.
+The live acceptance result and delivery gates are tracked separately. Live
+acceptance and dedicated delivery passed.
 
 ### Deployment and redaction verification
 
@@ -116,8 +143,8 @@ hosted green and receives run-specific merge authority.
 
 ### Local verification
 
-All local verification ran against deployment commit
-`8c7b7d232a372afce7072069d4dde68a32c7eaf4` plus this evidence-only change:
+The original S5 local verification ran against deployment commit
+`8c7b7d232a372afce7072069d4dde68a32c7eaf4` plus its evidence-only change:
 
 - `uv run pytest tests/unit/test_kimi_adapter.py -q`: 58 passed.
 - `uv run pytest tests/integration/test_kimi_surfaces.py -q`: 31 passed.
@@ -136,34 +163,28 @@ All local verification ran against deployment commit
 
 ### Hosted and review gates
 
-- Hosted CI: `not-run`. The S5 branch and dedicated PR do not exist on the host
-  at the time of this evidence commit. All five required checks must pass on the
-  exact PR head before merge.
-- Architecture review: `changes-requested` on the predecessor evidence commit
-  because this governance ledger was missing; the finding is addressed here.
-  Exact-head follow-up review is `pending`.
-- Code review: `changes-requested` on the predecessor evidence commit for the
-  same omission; the finding is addressed here. Exact-head follow-up review is
-  `pending`.
-- Review threads: `not-run` until the dedicated PR exists; zero unresolved
-  threads are required before merge.
+- S5 shipped through PR #105 at exact head
+  `ba183f2dbc7a3313c1b670b75aa516b4ac7f001b` and squash merge commit
+  `10b43a11a8c7a80dcaacf41e870cb32c18265da0`.
+- All five required hosted checks succeeded on the exact S5 PR head.
+- Exact-head architecture and code reviews had no blocking findings.
+- Hosted readback found zero unresolved review threads.
+- Follow-up convergence and dependency work shipped through PRs #106 and #107.
 
 ### Host merge authority
 
-- State: `not-run`.
-- A fresh run-specific host-policy verdict may be generated only after local
-  verification, hosted checks, exact-head reviews, and review-thread readback
-  are green.
-- No prior confirmation token or verdict is reused. No token value is recorded
-  in this artifact.
-- Unless that fresh verdict is approved with policy-reported valid authority,
-  the merge remains fail-closed.
+- Merge authority remained a per-PR, run-specific gate and was not inferred from
+  hosted green status.
+- No confirmation token or private host-policy capture is recorded in this
+  artifact.
+- This closure record does not reuse or claim historical host-policy authority
+  for PR #105.
 
 ## Result
 
 S5 deployment and live OAuth acceptance passed. The original credential-free
 request resumed after the shared official login flow, generated metadata
 converged on K3 with the required context window, and the normal profile request
-did not reopen login. Dedicated-PR delivery remains pending until hosted CI,
-exact-head reviews, resolved-thread readback, and fresh host merge authority are
-all green.
+did not reopen login. Dedicated delivery passed, subsequent installation and
+dependency refreshes remained converged, and fresh Codex and Claude alias
+acceptance passed without reopening login.

@@ -320,7 +320,7 @@
       "id": "plan:reverso-root:northstar-kimi-auto-login-k3-runtime-convergence",
       "type": "plan",
       "title": "northstar sliced plan: kimi-auto-login-k3-runtime-convergence",
-      "status": "active",
+      "status": "complete",
       "repo_id": "reverso-root",
       "path": ".ai/handoff/northstar-kimi-auto-login-k3-runtime-convergence.md",
       "backlinks": [
@@ -330,8 +330,8 @@
     {
       "id": "handoff:reverso-root:northstar-kimi-auto-login-k3-runtime-convergence",
       "type": "handoff",
-      "title": "northstar A->B handoff: kimi-auto-login-k3-runtime-convergence",
-      "status": "active",
+      "title": "northstar A to B handoff: kimi-auto-login-k3-runtime-convergence",
+      "status": "complete",
       "repo_id": "reverso-root",
       "path": ".ai/handoff/northstar-kimi-auto-login-k3-runtime-convergence.md",
       "backlinks": [
@@ -342,7 +342,7 @@
       "id": "issue:reverso-root:kimi-auto-login-k3-runtime-convergence",
       "type": "issue",
       "title": "northstar issue: kimi-auto-login-k3-runtime-convergence",
-      "status": "ready-for-agent",
+      "status": "complete",
       "repo_id": "reverso-root",
       "path": ".ai/work-intake/kimi-auto-login-k3-runtime-convergence.md",
       "backlinks": []
@@ -500,15 +500,15 @@
       "source": "plan:reverso-root:northstar-kimi-auto-login-k3-runtime-convergence",
       "target": "handoff:reverso-root:northstar-kimi-auto-login-k3-runtime-convergence",
       "relation": "summarized-by",
-      "created_by": "northstar",
+      "created_by": "northstar-reconciler",
       "evidence_path": ".ai/handoff/northstar-kimi-auto-login-k3-runtime-convergence.md"
     },
     {
       "source": "issue:reverso-root:kimi-auto-login-k3-runtime-convergence",
       "target": "plan:reverso-root:northstar-kimi-auto-login-k3-runtime-convergence",
       "relation": "planned-by",
-      "created_by": "northstar",
-      "evidence_path": ".ai/handoff/northstar-kimi-auto-login-k3-runtime-convergence.md"
+      "created_by": "northstar-reconciler",
+      "evidence_path": ".ai/work-intake/kimi-auto-login-k3-runtime-convergence.md"
     }
   ],
   "coverage": {

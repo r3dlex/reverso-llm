@@ -1,6 +1,6 @@
 ---
 title: Kimi automatic login and K3 runtime convergence
-status: active
+status: complete
 slug: kimi-auto-login-k3-runtime-convergence
 ---
 
@@ -10,7 +10,7 @@ slug: kimi-auto-login-k3-runtime-convergence
 |---|---|
 | **Slug** | `kimi-auto-login-k3-runtime-convergence` |
 | **Repo** | `r3dlex/reverso-llm` |
-| **Status** | active |
+| **Status** | complete |
 | **Raised** | 2026-07-24 via `northstar` |
 | **Category** | enhancement |
 | **Owner** | unassigned |
@@ -270,6 +270,13 @@ Automatic merge is requested but remains fail-closed. Green local tests and
 hosted CI are necessary but not sufficient. Every review comment must be
 resolved and a valid host-policy-approved merge verdict or token must authorize
 the merge. Without that authority, the terminal state is `ready-for-human`.
+
+## Completion
+
+The implementation, deployment acceptance, compatibility repairs, installation
+convergence, and dependency refresh shipped in PRs #97 through #107. The
+sanitized live and post-refresh evidence is recorded in
+`.ai/handoff/kimi-auto-login-k3-runtime-convergence-s5-evidence.md`.
 
 ## References
 
