@@ -51,7 +51,7 @@ import os
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from reverso.protocols.adapter import ProviderAdapter, ResponsesRequest
 from reverso.protocols.anthropic_feature_gate import AnthropicFeatureRejected
@@ -71,6 +71,9 @@ from reverso.protocols.surface_registry import (
     resolve_anthropic_backend,
 )
 from reverso.proxy.profile_routing import CURRENT_PROFILE_WORKSPACE
+
+if TYPE_CHECKING:
+    from reverso.protocols.adapters.kimi import KimiOAuthAuth
 
 logger = logging.getLogger(__name__)
 
@@ -411,11 +414,14 @@ async def _send_error(
 def _safe_backend_error_message(exc: Exception) -> str:
     """Return a secret-free backend-failure string for the 502 envelope.
 
-    Only the exception class name is surfaced: a backend adapter's exception may
-    carry an upstream URL, status echo, or other internal detail, so the message
-    text never includes the exception's own payload (mirrors
-    responses_app._safe_error_message).
+    Generic exception payloads may carry an upstream URL, status echo, or other
+    internal detail, so only the class name is surfaced by default. Provider
+    exceptions may opt in to exposing a curated ``public_message``, matching the
+    Responses surface without exposing the exception's arbitrary payload.
     """
+    public_message = getattr(exc, "public_message", None)
+    if isinstance(public_message, str) and public_message:
+        return f"upstream backend error ({type(exc).__name__}): {public_message}"
     return f"upstream backend error ({type(exc).__name__})"
 
 
@@ -909,7 +915,10 @@ class AnthropicMessagesApp:
         return None
 
 
-def build_anthropic_adapters() -> dict[str, ProviderAdapter]:
+def build_anthropic_adapters(
+    *,
+    kimi_auth: KimiOAuthAuth | None = None,
+) -> dict[str, ProviderAdapter]:
     """Construct the Anthropic-surface backends, including the claude adapter.
 
     Mirrors reverso.proxy.compose.build_adapters and constructs copilot,
@@ -932,17 +941,19 @@ def build_anthropic_adapters() -> dict[str, ProviderAdapter]:
         "auggie": AuggieAdapter(),
         "codex": CodexAdapter(),
         "claude": ClaudeAdapter(),
-        "kimi": KimiAdapter(),
+        "kimi": KimiAdapter(auth=kimi_auth),
     }
 
 
 def build_anthropic_app(
     adapters: dict[str, ProviderAdapter] | None = None,
+    *,
+    kimi_auth: KimiOAuthAuth | None = None,
 ) -> AnthropicMessagesApp:
     """Build the Anthropic Messages app from a {backend: adapter} registry.
 
     Defaults to the real Anthropic-surface backends from build_anthropic_adapters.
     """
     if adapters is None:
-        adapters = build_anthropic_adapters()
+        adapters = build_anthropic_adapters(kimi_auth=kimi_auth)
     return AnthropicMessagesApp(adapters)

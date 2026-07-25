@@ -51,7 +51,9 @@ Receive = Callable[[], Awaitable[dict[str, Any]]]
 Scope = dict[str, Any]
 Send = Callable[[dict[str, Any]], Awaitable[None]]
 
-_LIFESPAN_CLEANUP_TIMEOUT_SECONDS = 10.0
+# Kimi cleanup can spend two exit-grace windows reaping the child and two more
+# finishing pipe drains. Keep the ASGI bound above that 20-second worst case.
+_LIFESPAN_CLEANUP_TIMEOUT_SECONDS = 25.0
 CODEX_DIRECT_BACKEND_ENV = "REVERSO_CODEX_DIRECT_BACKEND"
 OPENAI_BACKEND_ENV = "REVERSO_OPENAI_BACKEND"
 REVERSO_HOST_ENV = "REVERSO_HOST"
@@ -186,7 +188,9 @@ class CompositionRoot:
             else build_app(build_adapters(kimi_auth=self._kimi_auth))
         )
         self._anthropic_app = (
-            anthropic_app if anthropic_app is not None else build_anthropic_app()
+            anthropic_app
+            if anthropic_app is not None
+            else build_anthropic_app(kimi_auth=self._kimi_auth)
         )
         self._legacy_app = legacy_app
 

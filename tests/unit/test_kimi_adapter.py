@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import stat
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import pytest
@@ -268,7 +269,9 @@ async def test_whitespace_artifact_without_fallback_raises_actionable_error(
 
 @pytest.mark.asyncio
 async def test_missing_artifact_callers_share_one_login_and_reload(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     monkeypatch.delenv("KIMI_BEARER_TOKEN", raising=False)
     token_path = tmp_path / "credentials" / "kimi-code.json"
@@ -303,18 +306,33 @@ async def test_missing_artifact_callers_share_one_login_and_reload(
     )
     process.release.set()
 
-    assert await asyncio.gather(*waiters) == [OAUTH_SENTINEL, OAUTH_SENTINEL]
+    with caplog.at_level(logging.INFO):
+        assert await asyncio.gather(*waiters) == [OAUTH_SENTINEL, OAUTH_SENTINEL]
     assert process.wait_calls == 1
+    reload_events = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "kimi_auth_reloaded"
+    ]
+    assert len(reload_events) == 2
+    assert {getattr(record, "outcome", None) for record in reload_events} == {
+        "succeeded"
+    }
+    assert OAUTH_SENTINEL not in caplog.text
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("raw", "message"),
+    ("raw", "message", "failure_kind"),
     [
-        (None, "did not create"),
-        ("not-json", "malformed"),
-        (b"\xff\xfe", "malformed"),
-        ('{"access_token":" ","refresh_token":" "}', "unusable"),
+        (None, "did not create", "artifact_absent"),
+        ("not-json", "malformed", "artifact_malformed"),
+        (b"\xff\xfe", "malformed", "artifact_malformed"),
+        (
+            '{"access_token":" ","refresh_token":" "}',
+            "unusable",
+            "artifact_unusable",
+        ),
     ],
 )
 async def test_successful_login_requires_usable_reloaded_artifact(
@@ -322,6 +340,8 @@ async def test_successful_login_requires_usable_reloaded_artifact(
     monkeypatch: pytest.MonkeyPatch,
     raw: str | bytes | None,
     message: str,
+    failure_kind: str,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     monkeypatch.delenv("KIMI_BEARER_TOKEN", raising=False)
     token_path = tmp_path / "kimi-code.json"
@@ -340,9 +360,21 @@ async def test_successful_login_requires_usable_reloaded_artifact(
         login_coordinator=KimiLoginCoordinator(process_factory=spawn),
     )
 
-    with pytest.raises(KimiError, match=message):
+    with (
+        caplog.at_level(logging.INFO),
+        pytest.raises(KimiError, match=message),
+    ):
         await auth.resolve_bearer_token()
     assert process.wait_calls == 1
+    reload_event = next(
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "kimi_auth_reloaded"
+    )
+    assert getattr(reload_event, "outcome", None) == "failed"
+    assert getattr(reload_event, "failure_kind", None) == failure_kind
+    assert "access_token" not in caplog.text
+    assert "refresh_token" not in caplog.text
 
 
 @pytest.mark.asyncio
@@ -392,7 +424,7 @@ async def test_login_failures_are_classified_without_child_output(
         credentials_path=tmp_path / "missing.json",
         login_coordinator=KimiLoginCoordinator(process_factory=missing),
     )
-    with pytest.raises(KimiError) as caught:
+    with caplog.at_level(logging.INFO), pytest.raises(KimiError) as caught:
         await auth.resolve_bearer_token()
     assert "seeded-secret" not in str(caught.value)
 
@@ -413,11 +445,19 @@ async def test_login_failures_are_classified_without_child_output(
     await asyncio.wait_for(process.stdout.read_started.wait(), timeout=0.1)
     await asyncio.wait_for(process.stderr.read_started.wait(), timeout=0.1)
     process.release.set()
-    with pytest.raises(KimiError) as caught:
+    with caplog.at_level(logging.INFO), pytest.raises(KimiError) as caught:
         await failed_login
     assert child_secret.decode() not in str(caught.value)
     assert child_secret.decode() not in caplog.text
     assert process.wait_calls == 1
+    assert {"cli_unavailable", "nonzero_exit"} <= {
+        getattr(record, "failure_kind", None) for record in caplog.records
+    }
+    assert "exited" in {
+        getattr(record, "outcome", None)
+        for record in caplog.records
+        if getattr(record, "event", None) == "kimi_login.child_reaped"
+    }
 
 
 @pytest.mark.asyncio
@@ -450,8 +490,60 @@ async def test_artifact_io_failure_does_not_start_login(
 
 
 @pytest.mark.asyncio
+async def test_post_login_artifact_io_failure_is_classified_and_redacted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.delenv("KIMI_BEARER_TOKEN", raising=False)
+    token_path = tmp_path / "kimi-code.json"
+    process = _Process()
+    login_finished = False
+    original_read_text = Path.read_text
+
+    def unreadable(
+        path: Path,
+        encoding: str | None = None,
+        errors: str | None = None,
+    ) -> str:
+        if path == token_path and login_finished:
+            raise PermissionError("private-post-login-path-detail")
+        return original_read_text(path, encoding=encoding, errors=errors)
+
+    async def spawn(*args: object, **kwargs: object) -> _Process:
+        nonlocal login_finished
+        login_finished = True
+        process.release.set()
+        return process
+
+    monkeypatch.setattr(Path, "read_text", unreadable)
+    auth = KimiOAuthAuth(
+        credentials_path=token_path,
+        login_coordinator=KimiLoginCoordinator(process_factory=spawn),
+    )
+
+    with (
+        caplog.at_level(logging.INFO),
+        pytest.raises(KimiError, match="artifact could not be read") as caught,
+    ):
+        await auth.resolve_bearer_token()
+
+    reload_event = next(
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "kimi_auth_reloaded"
+    )
+    assert getattr(reload_event, "outcome", None) == "failed"
+    assert getattr(reload_event, "failure_kind", None) == "artifact_unreadable"
+    assert "private-post-login-path-detail" not in str(caught.value)
+    assert "private-post-login-path-detail" not in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_refresh_failure_after_login_is_not_reclassified_as_unusable(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     monkeypatch.delenv("KIMI_BEARER_TOKEN", raising=False)
     token_path = tmp_path / "kimi-code.json"
@@ -474,10 +566,21 @@ async def test_refresh_failure_after_login_is_not_reclassified_as_unusable(
         login_coordinator=KimiLoginCoordinator(process_factory=spawn),
     )
 
-    with pytest.raises(KimiError, match="refresh returned status 503"):
+    with (
+        caplog.at_level(logging.INFO),
+        pytest.raises(KimiError, match="refresh returned status 503"),
+    ):
         await auth.resolve_bearer_token()
 
     assert login_calls == 1
+    reload_event = next(
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "kimi_auth_reloaded"
+    )
+    assert getattr(reload_event, "outcome", None) == "failed"
+    assert getattr(reload_event, "failure_kind", None) == "credential_resolution_failed"
+    assert "refresh-sentinel" not in caplog.text
 
 
 @pytest.mark.asyncio
@@ -496,8 +599,10 @@ async def test_pipe_drains_are_cancelled_after_child_exit() -> None:
             return b""
 
     process = _Process()
-    process.stdout = BlockingPipe()
-    process.stderr = BlockingPipe()
+    stdout = BlockingPipe()
+    stderr = BlockingPipe()
+    process.stdout = cast(Any, stdout)
+    process.stderr = cast(Any, stderr)
 
     async def spawn(*args: object, **kwargs: object) -> _Process:
         return process
@@ -508,13 +613,13 @@ async def test_pipe_drains_are_cancelled_after_child_exit() -> None:
     )
 
     login = asyncio.create_task(coordinator.login())
-    await asyncio.wait_for(process.stdout.started.wait(), timeout=0.1)
-    await asyncio.wait_for(process.stderr.started.wait(), timeout=0.1)
+    await asyncio.wait_for(stdout.started.wait(), timeout=0.1)
+    await asyncio.wait_for(stderr.started.wait(), timeout=0.1)
     process.release.set()
     await asyncio.wait_for(login, timeout=0.1)
 
-    assert process.stdout.cancelled.is_set()
-    assert process.stderr.cancelled.is_set()
+    assert stdout.cancelled.is_set()
+    assert stderr.cancelled.is_set()
 
 
 @pytest.mark.asyncio
