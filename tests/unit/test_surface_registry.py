@@ -269,15 +269,22 @@ def test_dynamic_discovery_aliases_route_and_keep_kimi_k3_only() -> None:
         }
     )
     ids = {row["id"] for row in rows}
+    aliases = {row["id"]: row["backend"] for row in rows}
 
     assert "anthropic-claude-claude-future-live" in ids
     assert "anthropic-copilot-copilot-future-live" in ids
     assert "anthropic-kimi-kimi-k3" in ids
     assert "anthropic-kimi-kimi-future-live" not in ids
-    assert resolve_anthropic_backend("anthropic-claude-claude-future-live") == "claude"
     assert (
-        resolve_anthropic_backend("anthropic-copilot-copilot-future-live") == "copilot"
+        resolve_anthropic_backend("anthropic-claude-claude-future-live", aliases)
+        == "claude"
     )
+    assert (
+        resolve_anthropic_backend("anthropic-copilot-copilot-future-live", aliases)
+        == "copilot"
+    )
+    assert resolve_anthropic_backend("anthropic-claude-claude-future-live") is None
+    assert resolve_anthropic_backend("anthropic-codex-never-listed") is None
 
 
 def test_discovery_alias_malformed_fails_closed() -> None:

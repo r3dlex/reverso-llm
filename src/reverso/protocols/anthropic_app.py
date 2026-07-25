@@ -415,6 +415,7 @@ class AnthropicMessagesApp:
                 f"allowed: {sorted(_ANTHROPIC_SURFACE_BACKENDS)}"
             )
         self._adapters = dict(adapters)
+        self._discovery_aliases: dict[str, str] = {}
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope.get("type") != "http":
@@ -813,9 +814,9 @@ class AnthropicMessagesApp:
                 and isinstance((model_id := row.get("id")), str)
                 and model_id
             ]
-        rows = list_anthropic_surface_models() + list_anthropic_discovery_aliases(
-            adapter_models
-        )
+        alias_rows = list_anthropic_discovery_aliases(adapter_models)
+        self._discovery_aliases = {row["id"]: row["backend"] for row in alias_rows}
+        rows = list_anthropic_surface_models() + alias_rows
         data = [
             {
                 "type": "model",
@@ -852,7 +853,7 @@ class AnthropicMessagesApp:
             if route.profile in self._adapters:
                 return route.profile
             return None
-        backend = resolve_anthropic_backend(model)
+        backend = resolve_anthropic_backend(model, self._discovery_aliases)
         if backend is not None and backend in self._adapters:
             return backend
         return None

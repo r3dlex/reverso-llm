@@ -60,11 +60,11 @@ filter, and route the alias back to its real backend:
 
 3. **The resolver and `canonical_model_id` route the alias back, in lockstep.** Both detect
    `anthropic-<backend>-<bare>` via the shared `_split_discovery_alias` BEFORE the
-   provider-qualified `/` split: `resolve_anthropic_backend` returns `<backend>` (fail-closed
-   unless `<backend>` is an Anthropic-surface backend and `<bare>` is non-empty), and
-   `canonical_model_id` returns the bare `<bare>` the adapter expects. The backend validates the
-   bare model downstream (e.g. an unservable copilot id yields a clean `UnsupportedFeature`), so
-   the alias never fail-opens to a misroute.
+   provider-qualified `/` split. Static aliases must validate through the static taxonomy or
+   curated fallback. Dynamic aliases route only when they are present in the application-scoped
+   map produced by the most recent successful adapter catalogs. A syntactically valid alias that
+   was never listed fails closed with HTTP 404 before adapter dispatch. After resolution,
+   `canonical_model_id` returns the bare `<bare>` the adapter expects.
 
 ## Consequences
 
@@ -74,6 +74,8 @@ filter, and route the alias back to its real backend:
   listing, provider-qualified routing (ADR 0008), and claude routing (ADR 0009) are unchanged.
 - The curated rowless set is a fallback seed, not the authoritative live catalog. It preserves
   known-good picker entries when a provider listing is unavailable.
+- A free-text `anthropic-<backend>-<model>` value cannot bypass provider model validation:
+  only static or actually listed aliases route.
 - A slow, failed, or unauthenticated provider cannot hold the complete catalog response. Kimi's
   static `kimi-k3` fallback remains selectable without triggering authentication.
 - The launcher (`claude-reverso`) sets `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1`, so every

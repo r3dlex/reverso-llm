@@ -260,7 +260,18 @@ def _resolve_qualified(provider: str, bare: str) -> str | None:
     return None
 
 
-def resolve_anthropic_backend(model: str | None) -> str | None:
+def _resolve_static_discovery_alias(backend: str, bare: str) -> str | None:
+    """Resolve an alias backed by the static taxonomy or curated fallback."""
+    if backend in _BACKENDS_WITH_ROWS or backend == "kimi":
+        return _resolve_qualified(backend, bare)
+    curated = _DISCOVERY_ROWLESS_MODELS.get(backend, ())
+    return backend if bare in curated else None
+
+
+def resolve_anthropic_backend(
+    model: str | None,
+    discovery_aliases: Mapping[str, str] | None = None,
+) -> str | None:
     """Resolve a requested model to an Anthropic-surface backend, or None.
 
     Returns None for an unknown model. A claude-family model resolves to the
@@ -268,6 +279,11 @@ def resolve_anthropic_backend(model: str | None) -> str | None:
     names are normalized (stripped, lowercased, custom/ prefix dropped) so
     mixed-case ids route correctly. A resolved backend is always a member of
     SURFACE_BACKENDS["anthropic"].
+
+    A discovery alias routes only when it is validated by the static taxonomy or
+    curated fallback, or when the application supplies the exact alias minted from
+    a successful live adapter catalog. A syntactically valid but never-listed alias
+    fails closed.
 
     A fully-qualified ``provider/model`` id routes by its explicit provider prefix
     (provider up front), so callers can disambiguate conflicting model names; the
@@ -280,9 +296,15 @@ def resolve_anthropic_backend(model: str | None) -> str | None:
     normalized = _normalize_model(model)
     alias = _split_discovery_alias(normalized)
     if alias is not None:
-        # Discovery aliases are minted from an adapter's live catalog and therefore
-        # may name models absent from the static index. Kimi remains K3-only.
-        return _resolve_qualified(*alias) if alias[0] == "kimi" else alias[0]
+        static_backend = _resolve_static_discovery_alias(*alias)
+        if static_backend is not None:
+            return static_backend
+        if (
+            discovery_aliases is not None
+            and discovery_aliases.get(normalized) == alias[0]
+        ):
+            return alias[0]
+        return None
     provider, bare = _split_provider_qualified(normalized)
     if provider is not None:
         return _resolve_qualified(provider, bare)

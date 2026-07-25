@@ -20,7 +20,7 @@ import pytest
 from conftest import FixtureAdapter
 
 from reverso.protocols import anthropic_app as anthropic_app_module
-from reverso.protocols.adapter import ModelList
+from reverso.protocols.adapter import ModelList, ResponseEnvelope, ResponsesRequest
 from reverso.protocols.anthropic_app import build_anthropic_app
 from reverso.protocols.responses_app import build_app
 from reverso.protocols.surface_registry import (
@@ -43,6 +43,16 @@ class _CatalogFixtureAdapter(FixtureAdapter):
 
     async def list_models(self) -> ModelList:
         return ModelList(data=[{"id": model_id} for model_id in self._model_ids])
+
+
+class _RecordingCatalogFixtureAdapter(_CatalogFixtureAdapter):
+    def __init__(self, provider: str, model_ids: list[str]) -> None:
+        super().__init__(provider, model_ids)
+        self.requests: list[ResponsesRequest] = []
+
+    async def create_response(self, request: ResponsesRequest) -> ResponseEnvelope:
+        self.requests.append(request)
+        return await super().create_response(request)
 
 
 class _FailingCatalogFixtureAdapter(FixtureAdapter):
@@ -237,6 +247,69 @@ async def test_models_discovery_includes_every_adapter_catalog_model() -> None:
         "anthropic-kimi-kimi-k3",
     } <= ids
     assert "anthropic-kimi-kimi-live" not in ids
+
+
+@pytest.mark.asyncio
+async def test_catalog_minted_dynamic_alias_routes_with_canonical_model() -> None:
+    """A live catalog alias routes only after listing and preserves its bare id."""
+    codex = _RecordingCatalogFixtureAdapter("codex", ["gpt-codex-live"])
+    app = build_anthropic_app({"codex": codex})
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://127.0.0.1:64946"
+    ) as client:
+        models = await client.get("/v1/models")
+        response = await client.post(
+            "/v1/messages",
+            json=_messages_body("anthropic-codex-gpt-codex-live", "hi"),
+        )
+
+    assert models.status_code == 200
+    assert response.status_code == 200
+    assert len(codex.requests) == 1
+    assert codex.requests[0].model == "gpt-codex-live"
+
+
+@pytest.mark.asyncio
+async def test_never_listed_dynamic_alias_returns_404() -> None:
+    """Alias syntax alone never authorizes a dynamic provider model."""
+    app = build_anthropic_app(
+        {"claude": _CatalogFixtureAdapter("claude", ["claude-listed-live"])}
+    )
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://127.0.0.1:64946"
+    ) as client:
+        await client.get("/v1/models")
+        response = await client.post(
+            "/v1/messages",
+            json=_messages_body("anthropic-claude-claude-never-listed", "hi"),
+        )
+
+    assert response.status_code == 404
+    assert response.json()["error"]["type"] == "not_found_error"
+
+
+@pytest.mark.asyncio
+async def test_invalid_codex_alias_never_dispatches_default_model() -> None:
+    """An unknown Codex alias cannot fall through to the adapter's default model."""
+    codex = _RecordingCatalogFixtureAdapter("codex", ["gpt-codex-live"])
+    app = build_anthropic_app({"codex": codex})
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://127.0.0.1:64946"
+    ) as client:
+        await client.get("/v1/models")
+        response = await client.post(
+            "/v1/messages",
+            json=_messages_body("anthropic-codex-never-listed", "hi"),
+        )
+
+    assert response.status_code == 404
+    assert codex.requests == []
 
 
 @pytest.mark.asyncio
