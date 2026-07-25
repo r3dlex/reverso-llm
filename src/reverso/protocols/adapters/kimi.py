@@ -41,6 +41,18 @@ _KIMI_CODE_PLATFORM = "kimi_code_cli"
 logger = logging.getLogger(__name__)
 
 
+def _log_auth_reload(
+    *,
+    outcome: str,
+    failure_kind: str | None = None,
+) -> None:
+    """Emit a bounded post-login reload result without credential data."""
+    extra = {"event": "kimi_auth_reloaded", "outcome": outcome}
+    if failure_kind is not None:
+        extra["failure_kind"] = failure_kind
+    logger.info("Kimi auth reload", extra=extra)
+
+
 class KimiError(RuntimeError):
     """Secret-free Kimi authentication or upstream failure."""
 
@@ -294,16 +306,35 @@ class KimiOAuthAuth:
                 raise KimiError(login_exc.public_message) from login_exc
             # Do not recursively start another login when the CLI exits without a
             # usable artifact; return the post-login error to this request.
-            state, artifact = self._read_artifact()
+            try:
+                state, artifact = self._read_artifact()
+            except KimiError:
+                _log_auth_reload(
+                    outcome="failed",
+                    failure_kind="artifact_unreadable",
+                )
+                raise
             if state is _ArtifactState.ABSENT:
+                _log_auth_reload(outcome="failed", failure_kind="artifact_absent")
                 raise KimiError("kimi login did not create the credential artifact")
             if state is _ArtifactState.MALFORMED:
+                _log_auth_reload(outcome="failed", failure_kind="artifact_malformed")
                 raise KimiError("kimi login created a malformed credential artifact")
             if not (
                 self._has_usable_access(artifact) or self._has_usable_refresh(artifact)
             ):
+                _log_auth_reload(outcome="failed", failure_kind="artifact_unusable")
                 raise KimiError("kimi login created an unusable credential artifact")
-            return await self._resolve_bearer_token_once(force_refresh=False)
+            try:
+                token = await self._resolve_bearer_token_once(force_refresh=False)
+            except KimiError:
+                _log_auth_reload(
+                    outcome="failed",
+                    failure_kind="credential_resolution_failed",
+                )
+                raise
+            _log_auth_reload(outcome="succeeded")
+            return token
 
     async def resolve_existing_bearer_token(
         self, *, force_refresh: bool = False
