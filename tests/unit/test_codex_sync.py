@@ -2271,6 +2271,36 @@ def test_sync_unchanged_run_regenerates_deleted_catalogs(tmp_path: Path) -> None
     assert copilot_catalog.read_text(encoding="utf-8") == catalog_text
 
 
+def test_sync_catalog_write_failure_does_not_create_dependent_profile(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+    catalog_dir = tmp_path / "reverso"
+    profile = tmp_path / "reverso-kimi.config.toml"
+    catalog = catalog_dir / "kimi.json"
+    atomic_write = codex_sync._atomic_write
+
+    def fail_catalog_write(path: Path, text: str) -> None:
+        if path == catalog:
+            raise OSError("injected catalog write failure")
+        atomic_write(path, text)
+
+    monkeypatch.setattr(codex_sync, "_atomic_write", fail_catalog_write)
+
+    with pytest.raises(OSError, match="injected catalog write failure"):
+        codex_sync.sync(
+            target=target,
+            prefixes=("kimi",),
+            fetcher=_make_fetcher({"kimi": ["kimi-k3"]}),
+            catalog_dir=catalog_dir,
+        )
+
+    assert not profile.exists()
+    assert not catalog.exists()
+
+
 def test_sync_does_not_rewrite_byte_identical_catalogs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

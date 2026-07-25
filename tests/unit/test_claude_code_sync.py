@@ -224,6 +224,33 @@ def test_sync_reports_invalid_json_without_overwriting(tmp_path: Path) -> None:
     assert settings_path.read_text(encoding="utf-8") == "{"
 
 
+def test_sync_rejects_symlinked_settings_without_mutation(tmp_path: Path) -> None:
+    target = tmp_path / "user-settings.json"
+    settings = {
+        "env": {"ANTHROPIC_BASE_URL": "http://127.0.0.1:64946"},
+        "_reverso_prev_model": "claude-opus-4-8",
+        "model": "haiku",
+    }
+    _write_settings(target, settings)
+    settings_path = tmp_path / "settings.json"
+    settings_path.symlink_to(target)
+    claude = tmp_path / "claude"
+    _fake_claude(claude)
+
+    result = sync_claude_code_settings(
+        settings_path,
+        launcher_dir=tmp_path / "bin",
+        claude_executable=claude,
+    )
+
+    assert result.changed is False
+    assert result.error == f"settings path must not be a symlink: {settings_path}"
+    assert settings_path.is_symlink()
+    assert _read_settings(target) == settings
+    assert not (tmp_path / "bin").exists()
+    assert not list(tmp_path.glob("settings.json.reverso.bak.*"))
+
+
 def test_cli_returns_error_for_invalid_json(tmp_path: Path, capsys) -> None:
     settings_path = tmp_path / "settings.json"
     settings_path.write_text("{", encoding="utf-8")

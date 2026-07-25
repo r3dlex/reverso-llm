@@ -66,6 +66,8 @@ class ClaudeCodeSyncResult:
 
 
 def _load_settings(settings_path: Path) -> tuple[dict[str, Any] | None, str | None]:
+    if settings_path.is_symlink():
+        return None, f"settings path must not be a symlink: {settings_path}"
     if not settings_path.exists():
         return None, None
     try:

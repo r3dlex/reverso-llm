@@ -1235,6 +1235,11 @@ def sync(
     if new_text != old_text:
         _parse_toml(new_text, "rendered config")
 
+    catalogs, catalogs_changed = _write_per_provider_catalogs(
+        provider_models,
+        catalog_dir,
+        dry_run=dry_run,
+    )
     (
         profiles,
         profile_backups,
@@ -1244,11 +1249,6 @@ def sync(
         profile_files,
         now=now,
         keep_backups=keep_backups,
-        dry_run=dry_run,
-    )
-    catalogs, catalogs_changed = _write_per_provider_catalogs(
-        provider_models,
-        catalog_dir,
         dry_run=dry_run,
     )
     archived_profiles = _archive_legacy_managed_reverso_profiles(
