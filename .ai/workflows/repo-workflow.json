@@ -80,7 +80,7 @@
       "id": "northstar-handoff-kimi-auto-login-k3-runtime-convergence",
       "enabled_when": "northstar_handoff_present",
       "status": "complete",
-      "completed_via": "PRs #97 through #107"
+      "completed_via": "PRs #97 through #108"
     },
     {
       "id": "northstar-handoff-codex-oauth-provider-reverso",

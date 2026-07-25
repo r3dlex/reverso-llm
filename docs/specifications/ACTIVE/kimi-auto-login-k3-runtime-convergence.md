@@ -274,7 +274,7 @@ the merge. Without that authority, the terminal state is `ready-for-human`.
 ## Completion
 
 The implementation, deployment acceptance, compatibility repairs, installation
-convergence, and dependency refresh shipped in PRs #97 through #107. The
+convergence, dependency refresh, and closure shipped in PRs #97 through #108. The
 sanitized live and post-refresh evidence is recorded in
 `.ai/handoff/kimi-auto-login-k3-runtime-convergence-s5-evidence.md`.
 

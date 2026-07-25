@@ -78,5 +78,6 @@ converge the installed gateway and all Codex-facing metadata on K3.
 - PRs #99, #101, and #103 - compatibility repairs discovered during convergence.
 - PR #106 - Reverso client installation and catalog convergence.
 - PR #107 - locked dependency refresh and post-refresh verification.
+- PR #108 - terminal Northstar reconciliation and post-refresh evidence.
 
 The Northstar scope and its required convergence follow-ups are complete.

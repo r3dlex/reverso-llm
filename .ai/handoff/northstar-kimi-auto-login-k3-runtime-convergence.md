@@ -6,7 +6,7 @@ slug: kimi-auto-login-k3-runtime-convergence
 
 # Northstar A to B Handoff: kimi-auto-login-k3-runtime-convergence
 
-Completion: Implemented by PRs #97 through #107.
+Completion: Implemented by PRs #97 through #108.
 
 ## Contract
 
