@@ -852,6 +852,45 @@ def test_sync_fails_closed_on_unowned_catalog_before_any_write(tmp_path: Path) -
     assert after == before
 
 
+def test_sync_rejects_byte_identical_unowned_catalog_before_any_write(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+    catalog_dir = tmp_path / "reverso"
+    catalog_dir.mkdir()
+    catalog = catalog_dir / "kimi.json"
+    catalog.write_text(
+        codex_sync._generate_catalog_json(
+            codex_sync.ProviderModels("kimi", ("kimi-k3",))
+        ),
+        encoding="utf-8",
+    )
+    before = {
+        path.relative_to(tmp_path): path.read_bytes()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
+
+    with pytest.raises(
+        RuntimeError,
+        match="unmanaged per-provider catalog conflicts",
+    ):
+        codex_sync.sync(
+            target=target,
+            prefixes=("kimi",),
+            fetcher=_make_fetcher({"kimi": ["kimi-k3"]}),
+            catalog_dir=catalog_dir,
+        )
+
+    after = {
+        path.relative_to(tmp_path): path.read_bytes()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
+    assert after == before
+
+
 @pytest.mark.parametrize(
     "target_kind",
     [

@@ -961,9 +961,6 @@ def _validate_catalog_mutations(
         catalog_path = _catalog_path_for(catalog_dir, entry.prefix)
         if not catalog_path.exists():
             continue
-        new_bytes = _generate_catalog_json(entry).encode()
-        if catalog_path.read_bytes() == new_bytes:
-            continue
         if not _catalog_is_owned(
             catalog_path,
             config_dir=config_dir,

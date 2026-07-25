@@ -85,7 +85,7 @@ def test_sync_preserves_user_owned_global_credentials_and_unrelated_headers(
     tmp_path: Path,
 ) -> None:
     settings_path = tmp_path / "settings.json"
-    settings = {
+    settings: dict[str, object] = {
         "env": {
             "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
             "ANTHROPIC_AUTH_TOKEN": "user-owned-auth-token",
