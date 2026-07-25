@@ -46,6 +46,11 @@ GATEWAY_BASE_URL = "http://127.0.0.1:64946"
 PROFILE_ARCHIVE_DIR = Path("Archive") / "reverso-codex-sync"
 PROFILE_MANAGED_MARKER = "# Managed by reverso-codex-sync."
 OPTIONAL_DISCOVERY_PREFIXES = frozenset({"codex-direct"})
+MANAGED_REVERSO_PROFILE_PREFIXES = (
+    *model_exposure.REVERSO_ROUTED_CODEX_PROFILE_PREFIXES,
+    "codex-direct",
+    "openai-pass-through",
+)
 
 
 def _codex_responses_compatible_models(prefix: str, model_ids: list[str]) -> list[str]:
@@ -938,14 +943,14 @@ def _validate_sync_paths(
         ),
         *(
             _reverso_profile_path_for(target.parent, prefix)
-            for prefix in model_exposure.reverso_routed_codex_profile_prefixes()
+            for prefix in MANAGED_REVERSO_PROFILE_PREFIXES
         ),
         *(
             _catalog_path_for(catalog_dir, prefix)
-            for prefix in model_exposure.reverso_routed_codex_profile_prefixes()
+            for prefix in MANAGED_REVERSO_PROFILE_PREFIXES
         ),
     }
-    for prefix in model_exposure.reverso_routed_codex_profile_prefixes():
+    for prefix in MANAGED_REVERSO_PROFILE_PREFIXES:
         profile_path = _reverso_profile_path_for(target.parent, prefix)
         if not profile_path.exists() or profile_path.is_symlink():
             continue
@@ -1042,7 +1047,7 @@ def _archive_stale_managed_reverso_profiles(
     from the current gateway listing.
     """
     archived: list[Path] = []
-    for prefix in model_exposure.reverso_routed_codex_profile_prefixes():
+    for prefix in MANAGED_REVERSO_PROFILE_PREFIXES:
         if prefix in live_prefixes:
             continue
         archived.extend(
@@ -1183,7 +1188,16 @@ def sync(
             "required reverso provider model discovery failed for: "
             + ", ".join(missing_prefixes)
         )
-
+    empty_prefixes = [
+        entry.prefix
+        for entry in provider_models
+        if entry.prefix in required_prefixes and not entry.models
+    ]
+    if empty_prefixes:
+        raise RuntimeError(
+            "required reverso provider model discovery returned no compatible models for: "
+            + ", ".join(empty_prefixes)
+        )
     catalog_dir = resolved_catalog_dir
 
     _reject_symlink(target, "config target")

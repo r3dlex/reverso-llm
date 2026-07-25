@@ -380,26 +380,33 @@ def test_sync_preserves_managed_artifacts_when_required_discovery_is_empty(
     target.write_text(_baseline_config_text(), encoding="utf-8")
     catalog_dir = tmp_path / "reverso"
     catalog_dir.mkdir()
-    profile = tmp_path / f"reverso-{prefix}.config.toml"
-    catalog = catalog_dir / f"{prefix}.json"
-    profile.write_text(
-        codex_sync._render_profile_file(
-            model="last-known-good",
-            model_provider=f"reverso_{prefix}",
-            catalog_path=catalog,
-        ),
-        encoding="utf-8",
-    )
-    catalog.write_bytes(b'{"models":[{"slug":"last-known-good"}]}\n')
-    before = {path: path.read_bytes() for path in (profile, catalog)}
+    managed_artifacts = [target]
+    for managed_prefix in codex_sync.MANAGED_REVERSO_PROFILE_PREFIXES:
+        profile = tmp_path / f"reverso-{managed_prefix}.config.toml"
+        catalog = catalog_dir / f"{managed_prefix}.json"
+        profile.write_text(
+            codex_sync._render_profile_file(
+                model="last-known-good",
+                model_provider=f"reverso_{managed_prefix}",
+                catalog_path=catalog,
+            ),
+            encoding="utf-8",
+        )
+        catalog.write_bytes(b'{"models":[{"slug":"last-known-good"}]}\n')
+        managed_artifacts.extend((profile, catalog))
+    before = {path: path.read_bytes() for path in managed_artifacts}
     payload = _fixture_payload()
     payload[prefix] = models
 
-    codex_sync.sync(
-        target=target,
-        fetcher=_make_fetcher(payload),
-        catalog_dir=catalog_dir,
-    )
+    with pytest.raises(
+        RuntimeError,
+        match="required reverso provider model discovery returned no compatible models",
+    ):
+        codex_sync.sync(
+            target=target,
+            fetcher=_make_fetcher(payload),
+            catalog_dir=catalog_dir,
+        )
 
     assert {path: path.read_bytes() for path in before} == before
     assert not (tmp_path / codex_sync.PROFILE_ARCHIVE_DIR).exists()
@@ -447,6 +454,141 @@ def test_sync_preserves_optional_codex_direct_artifacts_when_unavailable(
         provider.prefix for provider in result.provider_models
     }
     assert {path: path.read_bytes() for path in before} == before
+
+
+@pytest.mark.parametrize("fully_filtered", [False, True])
+def test_sync_preserves_optional_codex_direct_artifacts_when_listing_is_empty(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fully_filtered: bool,
+) -> None:
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+    catalog_dir = tmp_path / "reverso"
+    catalog_dir.mkdir()
+    profile = tmp_path / "reverso-codex-direct.config.toml"
+    catalog = catalog_dir / "codex-direct.json"
+    profile.write_text(
+        codex_sync._render_profile_file(
+            model="gpt-5.5",
+            model_provider="reverso_codex-direct",
+            catalog_path=catalog,
+        ),
+        encoding="utf-8",
+    )
+    catalog.write_bytes(b'{"models":[{"slug":"last-known-good"}]}\n')
+    before = {path: path.read_bytes() for path in (profile, catalog)}
+    payload = _fixture_payload()
+    payload["codex-direct"] = (
+        ["filtered-by-compatibility-policy"] if fully_filtered else []
+    )
+    if fully_filtered:
+        original_filter = codex_sync._codex_responses_compatible_models
+
+        def filter_models(prefix: str, model_ids: list[str]) -> list[str]:
+            if prefix == "codex-direct":
+                return []
+            return original_filter(prefix, model_ids)
+
+        monkeypatch.setattr(
+            codex_sync, "_codex_responses_compatible_models", filter_models
+        )
+
+    result = codex_sync.sync(
+        target=target,
+        fetcher=_make_fetcher(payload),
+        catalog_dir=catalog_dir,
+    )
+
+    assert (
+        next(
+            provider.models
+            for provider in result.provider_models
+            if provider.prefix == "codex-direct"
+        )
+        == ()
+    )
+    assert {path: path.read_bytes() for path in before} == before
+
+
+@pytest.mark.parametrize(
+    ("prefix", "env_name"),
+    [
+        ("codex-direct", "REVERSO_CODEX_DIRECT_BACKEND"),
+        ("openai-pass-through", "REVERSO_OPENAI_BACKEND"),
+    ],
+)
+def test_sync_archives_disabled_marker_owned_optional_profile_and_catalog(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    prefix: str,
+    env_name: str,
+) -> None:
+    monkeypatch.setenv(env_name, "0")
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+    catalog_dir = tmp_path / "reverso"
+    catalog_dir.mkdir()
+    profile = tmp_path / f"reverso-{prefix}.config.toml"
+    catalog = catalog_dir / f"{prefix}.json"
+    profile.write_text(
+        codex_sync._render_profile_file(
+            model="gpt-5.5",
+            model_provider=f"reverso_{prefix}",
+            catalog_path=catalog,
+        ),
+        encoding="utf-8",
+    )
+    catalog.write_bytes(b'{"models":[{"slug":"last-known-good"}]}\n')
+
+    result = codex_sync.sync(
+        target=target,
+        fetcher=_make_fetcher(),
+        catalog_dir=catalog_dir,
+    )
+
+    assert not profile.exists()
+    assert not catalog.exists()
+    archived_names = {
+        path.name.split(codex_sync.BACKUP_SUFFIX_PREFIX)[0]
+        for path in result.archived_profiles
+    }
+    assert archived_names >= {
+        f"reverso-{prefix}.config.toml",
+        f"{prefix}.json",
+    }
+
+
+def test_sync_preserves_disabled_unmarked_codex_direct_profile_and_catalog(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("REVERSO_CODEX_DIRECT_BACKEND", "0")
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+    catalog_dir = tmp_path / "reverso"
+    catalog_dir.mkdir()
+    profile = tmp_path / "reverso-codex-direct.config.toml"
+    catalog = catalog_dir / "codex-direct.json"
+    profile_bytes = (
+        b'model = "user-owned"\n'
+        b'model_provider = "reverso_codex-direct"\n'
+        + f'model_catalog_json = "{catalog}"\n'.encode()
+    )
+    catalog_bytes = b'{"models":[{"slug":"user-owned"}]}\n'
+    profile.write_bytes(profile_bytes)
+    catalog.write_bytes(catalog_bytes)
+
+    result = codex_sync.sync(
+        target=target,
+        fetcher=_make_fetcher(),
+        catalog_dir=catalog_dir,
+    )
+
+    assert profile.read_bytes() == profile_bytes
+    assert catalog.read_bytes() == catalog_bytes
+    assert profile not in result.archived_profiles
+    assert catalog not in result.archived_profiles
 
 
 def test_default_model_for_prefers_deepseek_v4_pro() -> None:
@@ -1396,16 +1538,11 @@ def test_sync_keeps_only_five_newest_backups(tmp_path: Path) -> None:
     target = tmp_path / "config.toml"
     target.write_text(_baseline_config_text(), encoding="utf-8")
 
-    payloads: list[dict[str, list[str]]] = [
-        {
-            "claude": [f"claude-rev-{i}"],
-            "copilot": [],
-            "auggie": [],
-            "deepseek": [],
-            "kimi": ["kimi-k3"],
-        }
-        for i in range(7)
-    ]
+    payloads: list[dict[str, list[str]]] = []
+    for i in range(7):
+        payload = _fixture_payload()
+        payload["claude"] = [f"claude-rev-{i}"]
+        payloads.append(payload)
 
     base_ts = datetime.datetime(2026, 6, 10, 12, 0, 0, tzinfo=datetime.UTC)
     for i, payload in enumerate(payloads):
@@ -1859,28 +1996,27 @@ def test_toml_table_key_replaces_invalid_characters() -> None:
     assert codex_sync._toml_table_key("") == "model"
 
 
-def test_sync_with_no_models_writes_direct_profiles_only(tmp_path: Path) -> None:
+def test_sync_with_no_required_models_fails_without_writing(tmp_path: Path) -> None:
     target = tmp_path / "config.toml"
-    target.write_text(_baseline_config_text(), encoding="utf-8")
+    baseline = _baseline_config_text()
+    target.write_text(baseline, encoding="utf-8")
     empty = _make_fetcher({"claude": [], "copilot": [], "auggie": [], "deepseek": []})
 
-    result = codex_sync.sync(
-        target=target,
-        prefixes=("claude", "copilot", "auggie", "deepseek"),
-        fetcher=empty,
-        catalog_dir=tmp_path / "reverso",
-    )
-    text = target.read_text(encoding="utf-8")
-    assert codex_sync.PROFILES_BEGIN not in text
-    assert "[profiles." not in text
-    assert codex_sync.NUX_BEGIN not in text
-    assert "[tui.model_availability_nux]" not in text
-    assert result.catalogs == []
-    assert {p.name for p in result.profiles} == {
-        "openai.config.toml",
-        "minimax.config.toml",
-    }
-    tomllib.loads(text)
+    with pytest.raises(
+        RuntimeError,
+        match="required reverso provider model discovery returned no compatible models",
+    ):
+        codex_sync.sync(
+            target=target,
+            prefixes=("claude", "copilot", "auggie", "deepseek"),
+            fetcher=empty,
+            catalog_dir=tmp_path / "reverso",
+        )
+
+    assert target.read_text(encoding="utf-8") == baseline
+    assert not (tmp_path / "openai.config.toml").exists()
+    assert not (tmp_path / "minimax.config.toml").exists()
+    assert not (tmp_path / "reverso").exists()
 
 
 def test_atomic_write_round_trip(tmp_path: Path) -> None:
@@ -1988,10 +2124,12 @@ def test_renderers_escape_hostile_model_ids(tmp_path: Path) -> None:
     target = tmp_path / "config.toml"
     target.write_text(_baseline_config_text(), encoding="utf-8")
     catalog_dir = tmp_path / "reverso"
+    payload = _fixture_payload()
+    payload["claude"] = [hostile]
 
     codex_sync.sync(
         target=target,
-        fetcher=_make_fetcher({"claude": [hostile], "kimi": ["kimi-k3"]}),
+        fetcher=_make_fetcher(payload),
         catalog_dir=catalog_dir,
     )
     profile = tomllib.loads((tmp_path / "reverso-claude.config.toml").read_text())
@@ -2319,12 +2457,12 @@ def test_sync_opt_in_openai_pass_through_profile(
     target = tmp_path / "config.toml"
     target.write_text(_baseline_config_text(), encoding="utf-8")
     catalog_dir = tmp_path / "reverso"
+    payload = _fixture_payload()
+    payload["openai-pass-through"] = ["gpt-5.5"]
 
     result = codex_sync.sync(
         target=target,
-        fetcher=_make_fetcher(
-            {"openai-pass-through": ["gpt-5.5"], "kimi": ["kimi-k3"]}
-        ),
+        fetcher=_make_fetcher(payload),
         catalog_dir=catalog_dir,
     )
 
