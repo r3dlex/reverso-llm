@@ -33,7 +33,8 @@ converge the installed gateway and all Codex-facing metadata on K3.
 | S2 | Prove cross-surface single-flight and bounded lifecycle cleanup | AFK | blocked | S1 |
 | S3 | Converge K3 model exposure, profile, catalog, and context metadata | AFK | ready-for-agent | none |
 | S4 | Govern canonical LaunchAgent provenance and deployment drift checks | AFK | blocked | S1, S3 |
-| S5 | Deploy, sync, and perform live OAuth acceptance | HITL | blocked | S2, S4 |
+| S4A | Govern an isolated Kimi home in deployment provenance | AFK | blocked | S4 |
+| S5 | Deploy, sync, and perform live OAuth acceptance | HITL | blocked | S2, S4A |
 
 ## Acceptance criteria
 
@@ -53,6 +54,9 @@ converge the installed gateway and all Codex-facing metadata on K3.
 8. Local and hosted verification is green before any merge.
 9. Automatic merge occurs only with resolved reviews and valid host-policy
    authority. Otherwise the work stops at `ready-for-human`.
+10. The proxy uses a mode-`0700` isolated Reverso Kimi home bound through
+    deployment provenance, while the daemon and `~/.kimi-code` remain outside
+    that authority.
 
 ## Out of scope
 

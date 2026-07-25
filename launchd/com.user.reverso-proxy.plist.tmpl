@@ -12,6 +12,7 @@
     {{REVERSO_DEPLOYMENT_COMMIT}} - exact installed Git revision
     {{UV_BIN}}        - absolute path to the uv binary (e.g. /Users/you/.local/bin/uv)
     {{USER_HOME}}     - $HOME of the running user
+    {{KIMI_CODE_HOME}} - governed isolated Kimi CLI data root
 -->
 <plist version="1.0">
 <dict>
@@ -41,6 +42,8 @@
         <string>{{REVERSO_DEPLOYMENT_COMMIT}}</string>
         <key>REVERSO_PROJECT_DIR</key>
         <string>{{REVERSO_DIR}}</string>
+        <key>KIMI_CODE_HOME</key>
+        <string>{{KIMI_CODE_HOME}}</string>
         <key>PATH</key>
         <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:{{USER_HOME}}/.local/bin</string>
         <key>REVERSO_HOST</key>

@@ -47,6 +47,10 @@ This handoff is the only Northstar authority for this work. The archived
   context metadata at `1048576`.
 - Canonical deployment provenance prevents a stale checkout from restoring
   K2.5.
+- The installed proxy uses the governed mode-`0700` Reverso Kimi home at
+  `~/Library/Application Support/reverso/kimi-code`; provenance and drift
+  checks bind that path without exposing it to the daemon or touching
+  `~/.kimi-code`.
 - Automatic merge occurs only with local tests, hosted CI, resolved reviews,
   repository policy, and valid host-policy merge authority all green.
 
@@ -58,7 +62,8 @@ This handoff is the only Northstar authority for this work. The archived
 | S2 | Cross-surface lifecycle, cancellation, shutdown, and ASGI acceptance | S1 | one isolated PR |
 | S3 | K3 alias, upstream mapping, model exposure, profile, catalog, and context convergence | none | one isolated PR |
 | S4 | Canonical LaunchAgent provenance and deployment drift enforcement | S1, S3 | one isolated PR |
-| S5 | Governed deployment, live OAuth acceptance, and sanitized evidence handoff | S2, S4 | one isolated PR |
+| S4A | Isolated Reverso Kimi home provenance and drift enforcement | S4 | one isolated PR |
+| S5 | Governed deployment, live OAuth acceptance, and sanitized evidence handoff | S2, S4A | one isolated PR |
 
 S1 and S3 may run in parallel in separate worktrees. All other dependency edges
 are sequential. Preserve every unrelated dirty path and never reset, clean,
@@ -72,10 +77,12 @@ hosted CI, resolved review comments, and fail-closed host-policy merge authority
 Green CI alone never authorizes merge.
 
 S5 first uses the isolated credential-free `reverso_kimi` plus `kimi-k3`
-bootstrap configuration. Sync and normal generated-profile acceptance occur only
-after the original request resumes. If browser authorization cannot be
-completed, S5 records `blocked-external` in the named sanitized evidence artifact
-without treating live assertions as passed.
+bootstrap configuration against the proxy's governed isolated Kimi home. It
+must not read, copy, delete, or mutate `~/.kimi-code`. Sync and normal
+generated-profile acceptance occur only after the original request resumes.
+If browser authorization cannot be completed, S5 records `blocked-external`
+in the named sanitized evidence artifact without treating live assertions as
+passed.
 
 ## Traceability
 

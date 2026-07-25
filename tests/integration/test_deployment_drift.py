@@ -5,14 +5,17 @@ import json
 import plistlib
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
+from reverso import deployment_drift
 from reverso.deployment_drift import (
     CANONICAL_CHECKOUT,
     DEPLOYMENT_REPOSITORY,
     INSTALLER_IDENTITY,
+    PROVENANCE_SCHEMA_VERSION,
     DeploymentDriftError,
     DriftEnvironment,
     check_deployment_drift,
@@ -35,6 +38,8 @@ class FakeRunner:
         self.remote = DEPLOYMENT_REPOSITORY
         self.running_environment_commit = COMMIT
         self.running_environment_checkout = str(CANONICAL_CHECKOUT)
+        self.running_kimi_code_home: str | None = None
+        self.running_daemon_kimi_code_home: str | None = None
         self.running_program = LAUNCHER
         self.running_argument_zero = LAUNCHER
         self.running_project = str(CANONICAL_CHECKOUT)
@@ -67,6 +72,17 @@ class FakeRunner:
                 *self.running_extra_arguments.get(label, []),
             ]
             rendered_arguments = "\n".join(f"        {value}" for value in arguments)
+            kimi_environment = (
+                f"        KIMI_CODE_HOME => {self.running_kimi_code_home}\n"
+                if label == "com.user.reverso-proxy"
+                and self.running_kimi_code_home is not None
+                else (
+                    f"        KIMI_CODE_HOME => {self.running_daemon_kimi_code_home}\n"
+                    if label == "com.user.reverso-daemon"
+                    and self.running_daemon_kimi_code_home is not None
+                    else ""
+                )
+            )
             return (
                 f"gui/501/{label} = {{\n"
                 f"    program = {self.running_program}\n"
@@ -79,6 +95,7 @@ class FakeRunner:
                 f"{self.running_environment_commit}\n"
                 "        REVERSO_PROJECT_DIR => "
                 f"{self.running_environment_checkout}\n"
+                f"{kimi_environment}"
                 "    }\n"
                 "}\n"
             )
@@ -91,6 +108,7 @@ def _write_plists(
     checkout: Path,
     commit: str = COMMIT,
     launcher: str = LAUNCHER,
+    include_kimi_home: bool = True,
 ) -> None:
     launchd_dir = home / "Library" / "LaunchAgents"
     launchd_dir.mkdir(parents=True, exist_ok=True)
@@ -114,6 +132,10 @@ def _write_plists(
                 "REVERSO_PROJECT_DIR": str(checkout),
             },
         }
+        if label == "com.user.reverso-proxy" and include_kimi_home:
+            payload["EnvironmentVariables"]["KIMI_CODE_HOME"] = str(
+                home / "Library" / "Application Support" / "reverso" / "kimi-code"
+            )
         with (launchd_dir / f"{label}.plist").open("wb") as handle:
             plistlib.dump(payload, handle)
 
@@ -171,10 +193,13 @@ def _env(tmp_path: Path) -> tuple[DriftEnvironment, FakeRunner]:
         uid=501,
         launcher=Path(LAUNCHER),
     )
+    runner.running_kimi_code_home = str(env.kimi_code_home)
     return env, runner
 
 
 def _bootstrap(env: DriftEnvironment) -> None:
+    env.kimi_code_home.mkdir(parents=True, mode=0o700)
+    env.kimi_code_home.chmod(0o700)
     write_deployment_provenance(
         env,
         selected_commit=COMMIT,
@@ -188,6 +213,8 @@ def _prepare_predecessor(
     runner: FakeRunner,
     predecessor: str = OLD_COMMIT,
 ) -> None:
+    env.kimi_code_home.mkdir(parents=True, mode=0o700)
+    env.kimi_code_home.chmod(0o700)
     runner.head = predecessor
     write_deployment_provenance(
         env,
@@ -278,6 +305,8 @@ def test_pre_install_validates_predecessor_with_its_recorded_launcher(
         uid=current_env.uid,
         launcher=Path(PREDECESSOR_LAUNCHER),
     )
+    predecessor_env.kimi_code_home.mkdir(parents=True, mode=0o700)
+    predecessor_env.kimi_code_home.chmod(0o700)
     runner.head = OLD_COMMIT
     write_deployment_provenance(
         predecessor_env,
@@ -302,6 +331,68 @@ def test_pre_install_validates_predecessor_with_its_recorded_launcher(
     )
 
     assert report["provenance"] == "valid-predecessor"
+
+
+def test_pre_install_allows_one_way_schema_one_upgrade(tmp_path: Path) -> None:
+    env, runner = _env(tmp_path)
+    legacy_record = {
+        "schema_version": 1,
+        "repository": DEPLOYMENT_REPOSITORY,
+        "canonical_checkout": str(env.canonical_checkout),
+        "commit": OLD_COMMIT,
+        "installer": INSTALLER_IDENTITY,
+        "launcher": LAUNCHER,
+        "installed_at_utc": "2026-07-24T00:00:00Z",
+    }
+    env.provenance_path.parent.mkdir(parents=True)
+    env.provenance_path.write_text(json.dumps(legacy_record), encoding="utf-8")
+    _write_plists(
+        env.home,
+        checkout=env.canonical_checkout,
+        commit=OLD_COMMIT,
+        include_kimi_home=False,
+    )
+    runner.running_environment_commit = OLD_COMMIT
+    runner.running_kimi_code_home = None
+
+    report = check_deployment_drift("pre-install", env, selected_commit=COMMIT)
+
+    assert report["provenance"] == "valid-schema-one-predecessor"
+
+    with pytest.raises(DeploymentDriftError, match="schema is unsupported"):
+        check_deployment_drift("pre-restart", env, selected_commit=COMMIT)
+
+
+@pytest.mark.parametrize("authority", ("rendered", "running"))
+def test_pre_install_schema_one_rejects_legacy_kimi_home(
+    tmp_path: Path,
+    authority: str,
+) -> None:
+    env, runner = _env(tmp_path)
+    legacy_record = {
+        "schema_version": 1,
+        "repository": DEPLOYMENT_REPOSITORY,
+        "canonical_checkout": str(env.canonical_checkout),
+        "commit": OLD_COMMIT,
+        "installer": INSTALLER_IDENTITY,
+        "launcher": LAUNCHER,
+        "installed_at_utc": "2026-07-24T00:00:00Z",
+    }
+    env.provenance_path.parent.mkdir(parents=True)
+    env.provenance_path.write_text(json.dumps(legacy_record), encoding="utf-8")
+    _write_plists(
+        env.home,
+        checkout=env.canonical_checkout,
+        commit=OLD_COMMIT,
+        include_kimi_home=authority == "rendered",
+    )
+    runner.running_environment_commit = OLD_COMMIT
+    runner.running_kimi_code_home = (
+        str(env.kimi_code_home) if authority == "running" else None
+    )
+
+    with pytest.raises(DeploymentDriftError, match="must not set KIMI_CODE_HOME"):
+        check_deployment_drift("pre-install", env, selected_commit=COMMIT)
 
 
 @pytest.mark.parametrize(
@@ -370,6 +461,8 @@ def test_existing_invalid_provenance_fails_even_at_pre_install(
 
 def test_provenance_write_is_atomic_and_read_back(tmp_path: Path) -> None:
     env, _ = _env(tmp_path)
+    env.kimi_code_home.mkdir(parents=True, mode=0o700)
+    env.kimi_code_home.chmod(0o700)
 
     record = write_deployment_provenance(
         env,
@@ -379,16 +472,36 @@ def test_provenance_write_is_atomic_and_read_back(tmp_path: Path) -> None:
 
     assert record == json.loads(env.provenance_path.read_text(encoding="utf-8"))
     assert record == {
-        "schema_version": 1,
+        "schema_version": PROVENANCE_SCHEMA_VERSION,
         "repository": DEPLOYMENT_REPOSITORY,
         "canonical_checkout": str(env.canonical_checkout),
         "commit": COMMIT,
         "installer": INSTALLER_IDENTITY,
         "launcher": LAUNCHER,
+        "kimi_code_home": str(env.kimi_code_home),
         "installed_at_utc": "2026-07-25T12:30:00Z",
     }
     assert env.provenance_path.stat().st_mode & 0o777 == 0o600
     assert not list(env.provenance_path.parent.glob("*.tmp"))
+
+
+def test_provenance_write_rejects_symlinked_reverso_parent(
+    tmp_path: Path,
+) -> None:
+    env, _ = _env(tmp_path)
+    default_kimi_home = env.home / ".kimi-code"
+    redirected_kimi_home = default_kimi_home / "kimi-code"
+    redirected_kimi_home.mkdir(parents=True, mode=0o700)
+    env.kimi_code_home.parent.parent.mkdir(parents=True)
+    env.kimi_code_home.parent.symlink_to(
+        default_kimi_home,
+        target_is_directory=True,
+    )
+
+    with pytest.raises(DeploymentDriftError, match="must not contain symbolic links"):
+        write_deployment_provenance(env, selected_commit=COMMIT)
+
+    assert not env.provenance_path.exists()
 
 
 def test_exact_deployment_rejects_provenance_launcher_drift(tmp_path: Path) -> None:
@@ -399,6 +512,74 @@ def test_exact_deployment_rejects_provenance_launcher_drift(tmp_path: Path) -> N
     env.provenance_path.write_text(json.dumps(record), encoding="utf-8")
 
     with pytest.raises(DeploymentDriftError, match="provenance launcher"):
+        check_deployment_drift("pre-restart", env, selected_commit=COMMIT)
+
+
+def test_pre_restart_rejects_provenance_kimi_home_drift(tmp_path: Path) -> None:
+    env, _ = _env(tmp_path)
+    _bootstrap(env)
+    record = json.loads(env.provenance_path.read_text(encoding="utf-8"))
+    record["kimi_code_home"] = str(tmp_path / "stale-kimi-home")
+    env.provenance_path.write_text(json.dumps(record), encoding="utf-8")
+
+    with pytest.raises(DeploymentDriftError, match="kimi_code_home"):
+        check_deployment_drift("pre-restart", env, selected_commit=COMMIT)
+
+
+@pytest.mark.parametrize("mode", (0o755, 0o750, 0o777))
+def test_pre_restart_requires_private_kimi_home(tmp_path: Path, mode: int) -> None:
+    env, _ = _env(tmp_path)
+    _bootstrap(env)
+    env.kimi_code_home.chmod(mode)
+
+    with pytest.raises(DeploymentDriftError, match="mode 0700"):
+        check_deployment_drift("pre-restart", env, selected_commit=COMMIT)
+
+
+def test_pre_restart_requires_kimi_home_directory(tmp_path: Path) -> None:
+    env, _ = _env(tmp_path)
+    _bootstrap(env)
+    env.kimi_code_home.rmdir()
+
+    with pytest.raises(DeploymentDriftError, match="real directory"):
+        check_deployment_drift("pre-restart", env, selected_commit=COMMIT)
+
+
+def test_pre_restart_rejects_symlinked_kimi_home(tmp_path: Path) -> None:
+    env, _ = _env(tmp_path)
+    _bootstrap(env)
+    env.kimi_code_home.rmdir()
+    target = tmp_path / "external-kimi-home"
+    target.mkdir()
+    env.kimi_code_home.symlink_to(target, target_is_directory=True)
+
+    with pytest.raises(DeploymentDriftError, match="must not contain symbolic links"):
+        check_deployment_drift("pre-restart", env, selected_commit=COMMIT)
+
+
+def test_pre_restart_rejects_symlinked_reverso_parent_to_default_kimi_home(
+    tmp_path: Path,
+) -> None:
+    env, _ = _env(tmp_path)
+    _bootstrap(env)
+    provenance = env.provenance_path.read_text(encoding="utf-8")
+    env.kimi_code_home.rmdir()
+    env.provenance_path.unlink()
+    env.kimi_code_home.parent.rmdir()
+    default_kimi_home = env.home / ".kimi-code"
+    default_kimi_home.mkdir()
+    (default_kimi_home / env.provenance_path.name).write_text(
+        provenance,
+        encoding="utf-8",
+    )
+    env.kimi_code_home.parent.symlink_to(
+        default_kimi_home,
+        target_is_directory=True,
+    )
+    redirected_kimi_home = default_kimi_home / "kimi-code"
+    redirected_kimi_home.mkdir(mode=0o700)
+
+    with pytest.raises(DeploymentDriftError, match="must not contain symbolic links"):
         check_deployment_drift("pre-restart", env, selected_commit=COMMIT)
 
 
@@ -434,6 +615,32 @@ def test_pre_restart_rejects_rendered_launchagent_drift(
         plistlib.dump(payload, handle)
 
     message = "Program$" if mutation == "unauthorized-program" else "ProgramArguments"
+    with pytest.raises(DeploymentDriftError, match=message):
+        check_deployment_drift("pre-restart", env, selected_commit=COMMIT)
+
+
+@pytest.mark.parametrize(
+    ("label", "value", "message"),
+    (
+        ("com.user.reverso-proxy", "/stale/kimi-home", "KIMI_CODE_HOME"),
+        ("com.user.reverso-daemon", "/unauthorized/kimi-home", "must not set"),
+    ),
+)
+def test_pre_restart_rejects_rendered_kimi_home_drift(
+    tmp_path: Path,
+    label: str,
+    value: str,
+    message: str,
+) -> None:
+    env, _ = _env(tmp_path)
+    _bootstrap(env)
+    path = env.home / "Library" / "LaunchAgents" / f"{label}.plist"
+    with path.open("rb") as handle:
+        payload = plistlib.load(handle)
+    payload["EnvironmentVariables"]["KIMI_CODE_HOME"] = value
+    with path.open("wb") as handle:
+        plistlib.dump(payload, handle)
+
     with pytest.raises(DeploymentDriftError, match=message):
         check_deployment_drift("pre-restart", env, selected_commit=COMMIT)
 
@@ -516,6 +723,28 @@ def test_post_restart_passes_without_live_discovery(tmp_path: Path) -> None:
         check_deployment_drift("post-restart", env, selected_commit=COMMIT)["status"]
         == "passed"
     )
+
+
+@pytest.mark.parametrize("value", (None, "/stale/kimi-home"))
+def test_post_restart_rejects_running_proxy_kimi_home_drift(
+    tmp_path: Path,
+    value: str | None,
+) -> None:
+    env, runner = _env(tmp_path)
+    _bootstrap(env)
+    runner.running_kimi_code_home = value
+
+    with pytest.raises(DeploymentDriftError, match="running KIMI_CODE_HOME"):
+        check_deployment_drift("post-restart", env, selected_commit=COMMIT)
+
+
+def test_post_restart_rejects_running_daemon_kimi_home(tmp_path: Path) -> None:
+    env, runner = _env(tmp_path)
+    _bootstrap(env)
+    runner.running_daemon_kimi_code_home = str(env.kimi_code_home)
+
+    with pytest.raises(DeploymentDriftError, match="daemon must not set"):
+        check_deployment_drift("post-restart", env, selected_commit=COMMIT)
 
 
 def test_pre_sync_rejects_joint_unauthorized_rendered_and_running_launcher(
@@ -654,9 +883,36 @@ def test_installer_orders_all_drift_gates_around_launchctl() -> None:
 
     assert pre_install < write < pre_restart < launchctl < post_restart < done
     assert str(CANONICAL_CHECKOUT) in script
+    assert 'CANONICAL_USER_HOME="/Users/andresilvaburgstahler"' in script
+    assert '"${HOME}" != "${CANONICAL_USER_HOME}"' in script
+    assert 'USER_HOME="${CANONICAL_USER_HOME}"' in script
     assert 'export REVERSO_UV_BIN="${UV_BIN}"' in script
     assert '"${UV_BIN}" run --project "${REVERSO_DIR}" python' in script
     assert '"${REVERSO_DIR}/scripts/check-deployment-drift.py"' in script
+    assert (
+        'KIMI_CODE_HOME="${USER_HOME}/Library/Application Support/reverso/kimi-code"'
+        in script
+    )
+    assert "require_real_kimi_home_path() {" in script
+    assert '"${USER_HOME}" \\' in script
+    assert '"${USER_HOME}/Library/Application Support/reverso"' in script
+    assert 'if [[ -L "${path_component}" ]]; then' in script
+    assert script.index('"${HOME}" != "${CANONICAL_USER_HOME}"') < script.index(
+        "# Locate uv"
+    )
+    assert script.index("require_real_kimi_home_path\n\n# Locate uv") < script.index(
+        'REVERSO_DEPLOYMENT_COMMIT="$(git'
+    )
+    assert script.count("require_real_kimi_home_path") == 5
+    assert 'chmod 0700 "${KIMI_CODE_HOME}"' in script
+    proxy_template = Path("launchd/com.user.reverso-proxy.plist.tmpl").read_text(
+        encoding="utf-8"
+    )
+    daemon_template = Path("launchd/com.user.reverso-daemon.plist.tmpl").read_text(
+        encoding="utf-8"
+    )
+    assert "<key>KIMI_CODE_HOME</key>" in proxy_template
+    assert "KIMI_CODE_HOME" not in daemon_template
 
 
 def test_drift_cli_is_available_and_rejects_this_arbitrary_checkout() -> None:
@@ -677,3 +933,72 @@ def test_drift_cli_is_available_and_rejects_this_arbitrary_checkout() -> None:
     assert result.returncode == 2
     assert "canonical checkout" in result.stderr
     assert "Traceback" not in result.stderr
+
+
+@pytest.mark.parametrize("configured_home", (None, "/tmp/poisoned-home"))
+def test_main_rejects_missing_or_overridden_home_before_provenance_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    configured_home: str | None,
+) -> None:
+    account_home = tmp_path / "account-home"
+    account_home.mkdir()
+    monkeypatch.setattr(deployment_drift.os, "getuid", lambda: 501)
+    monkeypatch.setattr(
+        deployment_drift.pwd,
+        "getpwuid",
+        lambda _uid: SimpleNamespace(pw_dir=str(account_home)),
+    )
+    if configured_home is None:
+        monkeypatch.delenv("HOME", raising=False)
+    else:
+        monkeypatch.setenv("HOME", configured_home)
+
+    result = deployment_drift.main(
+        ["--phase", "pre-install", "--write-provenance"],
+        repo_root=tmp_path,
+    )
+
+    assert result == 2
+    assert "HOME must match the governed account home" in capsys.readouterr().err
+    assert not (
+        account_home
+        / "Library"
+        / "Application Support"
+        / "reverso"
+        / "deployment-provenance.json"
+    ).exists()
+
+
+def test_main_rejects_symlinked_account_home_before_provenance_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    real_home = tmp_path / "real-home"
+    real_home.mkdir()
+    account_home = tmp_path / "account-home"
+    account_home.symlink_to(real_home, target_is_directory=True)
+    monkeypatch.setenv("HOME", str(account_home))
+    monkeypatch.setattr(deployment_drift.os, "getuid", lambda: 501)
+    monkeypatch.setattr(
+        deployment_drift.pwd,
+        "getpwuid",
+        lambda _uid: SimpleNamespace(pw_dir=str(account_home)),
+    )
+
+    result = deployment_drift.main(
+        ["--phase", "pre-install", "--write-provenance"],
+        repo_root=tmp_path,
+    )
+
+    assert result == 2
+    assert "free of symbolic links" in capsys.readouterr().err
+    assert not (
+        real_home
+        / "Library"
+        / "Application Support"
+        / "reverso"
+        / "deployment-provenance.json"
+    ).exists()
