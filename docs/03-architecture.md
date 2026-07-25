@@ -340,8 +340,9 @@ dispatching the translated Responses request to any resolved backend. The Anthro
 returns before the seam. The seam projects text-bearing Responses fields to Headroom
 messages, leaves whitespace-only fields byte-for-byte unchanged, and bypasses the cold
 Headroom import when a conservative upper bound proves that every message is below the
-pinned dependency's 250-token compression floor. Otherwise it runs Headroom off the event
-loop with a short timeout, then
+pinned default `agent-90` profile's 120-token compression floor. Custom profiles always
+load Headroom because their threshold is not known locally. Otherwise the seam runs
+Headroom off the event loop with a short timeout, then
 reconstructs the original Responses shape. It preserves non-text content, tool
 metadata, response ids, and adapter boundaries. Unsafe output, timeout, exceptions, or
 token inflation fail open to the original request. Public `/input_items` returns the

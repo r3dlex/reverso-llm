@@ -27,7 +27,7 @@ _FALSE_VALUES = {"0", "false", "no", "off", "disabled"}
 _DEFAULT_PROFILE = "agent-90"
 _DEFAULT_TIMEOUT_SECONDS = 2.0
 _DEFAULT_MODEL_LIMIT = 200000
-_HEADROOM_MIN_TOKENS_TO_COMPRESS = 250
+_DEFAULT_PROFILE_MIN_TOKENS_TO_COMPRESS = 120
 
 CompressCallable = Callable[..., Any]
 
@@ -364,17 +364,22 @@ def _read_result_float(result: Any, name: str) -> float:
     return value if isinstance(value, int | float) else 0.0
 
 
-def _may_reach_headroom_token_floor(messages: list[dict[str, Any]]) -> bool:
+def _may_reach_headroom_token_floor(
+    messages: list[dict[str, Any]],
+    profile: str,
+) -> bool:
     """Return whether any message may meet Headroom's compression threshold.
 
-    The dependency is pinned, so this threshold tracks its CompressConfig
-    default. A tokenizer cannot produce more tokens than the UTF-8 bytes in
-    non-whitespace content. This upper bound lets tiny requests bypass the
-    expensive cold import without suppressing any definitely eligible message.
+    The pinned default profile uses a 120-token floor. A tokenizer cannot
+    produce more tokens than the UTF-8 bytes in non-whitespace content, so this
+    upper bound can safely bypass the expensive cold import for tiny default
+    requests. Custom profiles may use a lower floor and therefore always import.
     """
+    if profile != _DEFAULT_PROFILE:
+        return True
     return any(
         len(message["content"].strip().encode("utf-8"))
-        >= _HEADROOM_MIN_TOKENS_TO_COMPRESS
+        >= _DEFAULT_PROFILE_MIN_TOKENS_TO_COMPRESS
         for message in messages
     )
 
@@ -404,7 +409,10 @@ async def compress_responses_request(
         return await finish(
             HeadroomCompressionOutcome(request=request, reason="no_text")
         )
-    if compressor is None and not _may_reach_headroom_token_floor(projection.messages):
+    if compressor is None and not _may_reach_headroom_token_floor(
+        projection.messages,
+        resolved.profile,
+    ):
         return await finish(
             HeadroomCompressionOutcome(request=request, reason="below_min_tokens")
         )

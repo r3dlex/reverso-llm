@@ -144,7 +144,7 @@ async def test_tiny_prompt_bypasses_headroom_import(
 async def test_sufficiently_large_prompt_still_imports_and_calls_headroom(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    request = ResponsesRequest(model="m", input="word " * 250)
+    request = ResponsesRequest(model="m", input="x" * 120)
     calls = 0
 
     def fake_compress(messages: list[dict[str, Any]], **_: Any) -> FakeHeadroomResult:
@@ -162,6 +162,37 @@ async def test_sufficiently_large_prompt_still_imports_and_calls_headroom(
 
     outcome = await compress_responses_request(
         request,
+        metrics=HeadroomUsageMetrics(),
+    )
+
+    assert calls == 1
+    assert outcome.compressed is True
+    assert outcome.request.input == "compressed user"
+
+
+@pytest.mark.asyncio
+async def test_custom_profile_never_uses_default_profile_bypass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = ResponsesRequest(model="m", input="hi")
+    calls = 0
+
+    def fake_compress(messages: list[dict[str, Any]], **_: Any) -> FakeHeadroomResult:
+        nonlocal calls
+        calls += 1
+        return FakeHeadroomResult(
+            messages=[{"role": "user", "content": "compressed user"}]
+        )
+
+    monkeypatch.setattr(
+        headroom_compression,
+        "_import_headroom_compress",
+        lambda: fake_compress,
+    )
+
+    outcome = await compress_responses_request(
+        request,
+        config=HeadroomCompressionConfig(profile="custom"),
         metrics=HeadroomUsageMetrics(),
     )
 
