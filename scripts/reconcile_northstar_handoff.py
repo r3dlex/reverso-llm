@@ -100,13 +100,13 @@ def _repo_file(root: Path, raw_path: str, label: str) -> tuple[str, Path]:
     return relative.as_posix(), resolved
 
 
-def _extract_sliced_goals(work_item: str) -> str:
-    lines = work_item.splitlines()
+def _extract_sliced_goals(document: str, label: str) -> str:
+    lines = document.splitlines()
     try:
         start = lines.index("## Sliced goals")
     except ValueError as exc:
         raise ReconciliationError(
-            "work item must contain a Sliced goals section"
+            f"{label} must contain a Sliced goals section"
         ) from exc
 
     end = len(lines)
@@ -116,11 +116,11 @@ def _extract_sliced_goals(work_item: str) -> str:
             break
     section = "\n".join(lines[start:end]).strip()
     if "|" not in section:
-        raise ReconciliationError("work item Sliced goals section must contain a table")
+        raise ReconciliationError(f"{label} Sliced goals section must contain a table")
     return section
 
 
-def _validate_terminal_sliced_goals(sliced_goals: str) -> None:
+def _validate_terminal_sliced_goals(sliced_goals: str, label: str) -> None:
     rows = [
         [cell.strip() for cell in line.strip().strip("|").split("|")]
         for line in sliced_goals.splitlines()
@@ -128,13 +128,13 @@ def _validate_terminal_sliced_goals(sliced_goals: str) -> None:
     ]
     if len(rows) < 3 or "status" not in [cell.casefold() for cell in rows[0]]:
         raise ReconciliationError(
-            "work item Sliced goals table must contain a Status column and goals"
+            f"{label} Sliced goals table must contain a Status column and goals"
         )
     status_index = [cell.casefold() for cell in rows[0]].index("status")
     unfinished = []
     for row in rows[2:]:
         if len(row) != len(rows[0]):
-            raise ReconciliationError("work item Sliced goals table is malformed")
+            raise ReconciliationError(f"{label} Sliced goals table is malformed")
         status = row[status_index]
         if not re.fullmatch(
             r"(?:complete(?:d)?|shipped|deferred)(?:\s+.*)?",
@@ -144,7 +144,8 @@ def _validate_terminal_sliced_goals(sliced_goals: str) -> None:
             unfinished.append(status)
     if unfinished:
         raise ReconciliationError(
-            f"unfinished sliced goals prevent completion: {', '.join(unfinished)}"
+            f"unfinished {label} sliced goals prevent completion: "
+            f"{', '.join(unfinished)}"
         )
 
 
@@ -433,9 +434,12 @@ def reconcile(
     handoff_id = f"handoff:reverso-root:northstar-{slug}"
     if f"`{issue_id}`" not in work_item_text:
         raise ReconciliationError("work item does not declare the expected issue ID")
-    sliced_goals = _extract_sliced_goals(work_item_text)
+    sliced_goals = _extract_sliced_goals(work_item_text, "work item")
     if completed_via is not None:
-        _validate_terminal_sliced_goals(sliced_goals)
+        _validate_terminal_sliced_goals(sliced_goals, "work item")
+        if "## Sliced goals" in spec_text:
+            spec_sliced_goals = _extract_sliced_goals(spec_text, "spec")
+            _validate_terminal_sliced_goals(spec_sliced_goals, "spec")
 
     manifest_file = root / MANIFEST_PATH
     graph_file = root / GRAPH_PATH

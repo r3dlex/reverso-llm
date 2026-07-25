@@ -1,6 +1,6 @@
 ---
 title: Work item for Kimi automatic login and K3 runtime convergence
-status: ready-for-agent
+status: complete
 category: enhancement
 slug: kimi-auto-login-k3-runtime-convergence
 ---
@@ -11,7 +11,7 @@ slug: kimi-auto-login-k3-runtime-convergence
   `issue:reverso-root:kimi-auto-login-k3-runtime-convergence`
 - **Spec:**
   [`docs/specifications/ACTIVE/kimi-auto-login-k3-runtime-convergence.md`](../../docs/specifications/ACTIVE/kimi-auto-login-k3-runtime-convergence.md)
-- **State:** `ready-for-agent`
+- **State:** `shipped`
 - **Category:** `enhancement`
 - **Owner:** unassigned
 - **Surface scope:** Responses, Anthropic, Codex sync, and LaunchAgent install
@@ -19,22 +19,23 @@ slug: kimi-auto-login-k3-runtime-convergence
 
 ## Summary
 
-Reverso currently fails missing Kimi OAuth with retryable HTTP 502, while its
-running LaunchAgent exposes stale K2.5 authority and regenerates the Codex
-profile and catalog from that stale runtime. Add a gateway-wide supervisor for
-the official `kimi login` command, preserve Kimi CLI ownership of OAuth, and
-converge the installed gateway and all Codex-facing metadata on K3.
+At intake, Reverso failed missing Kimi OAuth with retryable HTTP 502, while its
+running LaunchAgent exposed stale K2.5 authority and regenerated the Codex
+profile and catalog from that stale runtime. The shipped outcome adds a
+gateway-wide supervisor for the official `kimi login` command, preserves Kimi
+CLI ownership of OAuth, and converges the installed gateway and all
+Codex-facing metadata on K3.
 
 ## Sliced goals
 
 | Slice | Title | Type | Status | Blocked by |
 |---|---|---|---|---|
-| S1 | Govern shared login coordinator and first resumed Responses request | AFK | ready-for-agent | none |
-| S2 | Prove cross-surface single-flight and bounded lifecycle cleanup | AFK | blocked | S1 |
-| S3 | Converge K3 model exposure, profile, catalog, and context metadata | AFK | ready-for-agent | none |
-| S4 | Govern canonical LaunchAgent provenance and deployment drift checks | AFK | blocked | S1, S3 |
-| S4A | Govern an isolated Kimi home in deployment provenance | AFK | blocked | S4 |
-| S5 | Deploy, sync, and perform live OAuth acceptance | HITL | blocked | S2, S4A |
+| S1 | Govern shared login coordinator and first resumed Responses request | AFK | completed in PR #97 | none |
+| S2 | Prove cross-surface single-flight and bounded lifecycle cleanup | AFK | completed in PR #102 | S1 |
+| S3 | Converge K3 model exposure, profile, catalog, and context metadata | AFK | completed in PR #98 | none |
+| S4 | Govern canonical LaunchAgent provenance and deployment drift checks | AFK | completed in PR #100 | S1, S3 |
+| S4A | Govern an isolated Kimi home in deployment provenance | AFK | completed in PR #104 | S4 |
+| S5 | Deploy, sync, and perform live OAuth acceptance | HITL | completed in PR #105 | S2, S4A |
 
 ## Acceptance criteria
 
@@ -66,3 +67,18 @@ converge the installed gateway and all Codex-facing metadata on K3.
 - Reading or recording credential contents.
 - Reusing archived Codex OAuth handoffs.
 - Disturbing unrelated dirty work.
+
+## Shipped via
+
+- PR #97 - S1 supervised Kimi auto-login.
+- PR #98 - S3 K3 model exposure and Codex metadata convergence.
+- PR #100 - S4 canonical deployment provenance gates.
+- PR #102 - S2 shared login lifecycle hardening.
+- PR #104 - S4A isolated Kimi runtime credentials.
+- PR #105 - S5 live K3 acceptance evidence.
+- PRs #99, #101, and #103 - compatibility repairs discovered during convergence.
+- PR #106 - Reverso client installation and catalog convergence.
+- PR #107 - locked dependency refresh and post-refresh verification.
+- PR #108 - terminal Northstar reconciliation and post-refresh evidence.
+
+The Northstar scope and its required convergence follow-ups are complete.
