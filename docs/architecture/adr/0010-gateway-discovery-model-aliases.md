@@ -64,7 +64,9 @@ filter, and route the alias back to its real backend:
    curated fallback. Dynamic aliases route only when they are present in the application-scoped
    map produced by the most recent successful adapter catalogs. A syntactically valid alias that
    was never listed fails closed with HTTP 404 before adapter dispatch. After resolution,
-   `canonical_model_id` returns the bare `<bare>` the adapter expects.
+   `canonical_model_id` returns the bare `<bare>` the adapter expects. Catalog refreshes retain
+   each provider's last successful snapshot across transient failures and serialize concurrent
+   refreshes so an older slow request cannot overwrite newer state.
 
 ## Consequences
 

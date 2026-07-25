@@ -415,6 +415,8 @@ class AnthropicMessagesApp:
                 f"allowed: {sorted(_ANTHROPIC_SURFACE_BACKENDS)}"
             )
         self._adapters = dict(adapters)
+        self._model_catalog_lock = asyncio.Lock()
+        self._adapter_model_cache: dict[str, list[str]] = {}
         self._discovery_aliases: dict[str, str] = {}
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
@@ -783,40 +785,39 @@ class AnthropicMessagesApp:
         stable ISO 8601 value rather than a per-request now() so the listing is
         deterministic and cache-friendly.
         """
-        # Bare surface listing PLUS discovery aliases from both the static registry
-        # and every adapter's own catalog. Adapter failures are isolated so one
-        # unavailable provider cannot hide the curated fallback rows for the others.
-        adapter_items = list(self._adapters.items())
+        # Serialize refreshes so a slow older GET cannot overwrite a newer catalog.
+        # Per-provider last-successful snapshots survive transient adapter failures.
+        async with self._model_catalog_lock:
+            adapter_items = list(self._adapters.items())
 
-        async def list_models(adapter: ProviderAdapter) -> Any:
-            return await asyncio.wait_for(
-                adapter.list_models(),
-                timeout=_MODEL_LIST_TIMEOUT_SECONDS,
-            )
-
-        results = await asyncio.gather(
-            *(list_models(adapter) for _, adapter in adapter_items),
-            return_exceptions=True,
-        )
-        adapter_models: dict[str, list[str]] = {}
-        for (backend, _adapter), result in zip(adapter_items, results, strict=True):
-            if isinstance(result, BaseException):
-                logger.warning(
-                    "%s model listing unavailable (%s); using discovery fallback",
-                    backend,
-                    type(result).__name__,
+            async def list_models(adapter: ProviderAdapter) -> Any:
+                return await asyncio.wait_for(
+                    adapter.list_models(),
+                    timeout=_MODEL_LIST_TIMEOUT_SECONDS,
                 )
-                continue
-            adapter_models[backend] = [
-                model_id
-                for row in result.data
-                if isinstance(row, dict)
-                and isinstance((model_id := row.get("id")), str)
-                and model_id
-            ]
-        alias_rows = list_anthropic_discovery_aliases(adapter_models)
-        self._discovery_aliases = {row["id"]: row["backend"] for row in alias_rows}
-        rows = list_anthropic_surface_models() + alias_rows
+
+            results = await asyncio.gather(
+                *(list_models(adapter) for _, adapter in adapter_items),
+                return_exceptions=True,
+            )
+            for (backend, _adapter), result in zip(adapter_items, results, strict=True):
+                if isinstance(result, BaseException):
+                    logger.warning(
+                        "%s model listing unavailable (%s); using cached catalog",
+                        backend,
+                        type(result).__name__,
+                    )
+                    continue
+                self._adapter_model_cache[backend] = [
+                    model_id
+                    for row in result.data
+                    if isinstance(row, dict)
+                    and isinstance((model_id := row.get("id")), str)
+                    and model_id
+                ]
+            alias_rows = list_anthropic_discovery_aliases(self._adapter_model_cache)
+            self._discovery_aliases = {row["id"]: row["backend"] for row in alias_rows}
+            rows = list_anthropic_surface_models() + alias_rows
         data = [
             {
                 "type": "model",

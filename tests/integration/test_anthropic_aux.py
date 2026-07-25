@@ -66,6 +66,42 @@ class _HangingCatalogFixtureAdapter(FixtureAdapter):
         raise AssertionError("unreachable")
 
 
+class _FailAfterSuccessCatalogFixtureAdapter(_RecordingCatalogFixtureAdapter):
+    def __init__(self, provider: str, model_ids: list[str]) -> None:
+        super().__init__(provider, model_ids)
+        self.list_calls = 0
+
+    async def list_models(self) -> ModelList:
+        self.list_calls += 1
+        if self.list_calls > 1:
+            raise RuntimeError("transient catalog failure")
+        return await super().list_models()
+
+
+class _OrderedCatalogFixtureAdapter(_RecordingCatalogFixtureAdapter):
+    def __init__(self, provider: str) -> None:
+        super().__init__(provider, [])
+        self.first_started = asyncio.Event()
+        self.release_first = asyncio.Event()
+        self.list_calls = 0
+        self.active_calls = 0
+        self.max_active_calls = 0
+
+    async def list_models(self) -> ModelList:
+        self.list_calls += 1
+        call = self.list_calls
+        self.active_calls += 1
+        self.max_active_calls = max(self.max_active_calls, self.active_calls)
+        try:
+            if call == 1:
+                self.first_started.set()
+                await self.release_first.wait()
+                return ModelList(data=[{"id": "gpt-old-live"}])
+            return ModelList(data=[{"id": "gpt-new-live"}])
+        finally:
+            self.active_calls -= 1
+
+
 def _anthropic_client() -> httpx.AsyncClient:
     app = build_anthropic_app({b: FixtureAdapter(b) for b in ANTHROPIC_BACKENDS})
     transport = httpx.ASGITransport(app=app)
@@ -310,6 +346,76 @@ async def test_invalid_codex_alias_never_dispatches_default_model() -> None:
 
     assert response.status_code == 404
     assert codex.requests == []
+
+
+@pytest.mark.asyncio
+async def test_transient_catalog_failure_retains_last_successful_alias() -> None:
+    """A failed refresh keeps the provider's most recent successful catalog."""
+    codex = _FailAfterSuccessCatalogFixtureAdapter("codex", ["gpt-cached-live"])
+    app = build_anthropic_app({"codex": codex})
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://127.0.0.1:64946"
+    ) as client:
+        first_models = await client.get("/v1/models")
+        first_route = await client.post(
+            "/v1/messages",
+            json=_messages_body("anthropic-codex-gpt-cached-live", "hi"),
+        )
+        second_models = await client.get("/v1/models")
+        second_route = await client.post(
+            "/v1/messages",
+            json=_messages_body("anthropic-codex-gpt-cached-live", "hi again"),
+        )
+
+    assert first_models.status_code == 200
+    assert first_route.status_code == 200
+    assert second_models.status_code == 200
+    second_ids = {row["id"] for row in second_models.json()["data"]}
+    assert "anthropic-codex-gpt-cached-live" in second_ids
+    assert second_route.status_code == 200
+    assert [request.model for request in codex.requests] == [
+        "gpt-cached-live",
+        "gpt-cached-live",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_catalog_refreshes_cannot_stale_overwrite() -> None:
+    """Concurrent GETs serialize so the later refresh owns the final snapshot."""
+    codex = _OrderedCatalogFixtureAdapter("codex")
+    app = build_anthropic_app({"codex": codex})
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://127.0.0.1:64946"
+    ) as client:
+        first_task = asyncio.create_task(client.get("/v1/models"))
+        await codex.first_started.wait()
+        second_task = asyncio.create_task(client.get("/v1/models"))
+        await asyncio.sleep(0)
+        assert codex.list_calls == 1
+        codex.release_first.set()
+        first_models, second_models = await asyncio.gather(first_task, second_task)
+        new_route = await client.post(
+            "/v1/messages",
+            json=_messages_body("anthropic-codex-gpt-new-live", "hi"),
+        )
+        old_route = await client.post(
+            "/v1/messages",
+            json=_messages_body("anthropic-codex-gpt-old-live", "hi"),
+        )
+
+    assert first_models.status_code == 200
+    assert second_models.status_code == 200
+    assert codex.list_calls == 2
+    assert codex.max_active_calls == 1
+    second_ids = {row["id"] for row in second_models.json()["data"]}
+    assert "anthropic-codex-gpt-new-live" in second_ids
+    assert "anthropic-codex-gpt-old-live" not in second_ids
+    assert new_route.status_code == 200
+    assert old_route.status_code == 404
 
 
 @pytest.mark.asyncio
