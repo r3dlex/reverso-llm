@@ -252,8 +252,13 @@ def test_kimi_routes_only_converged_k3_alias() -> None:
         for row in list_anthropic_discovery_aliases()
         if row["backend"] == "kimi"
     }
+    surface_ids = {
+        row["id"] for row in list_anthropic_surface_models() if row["backend"] == "kimi"
+    }
 
     assert aliases == {"anthropic-kimi-kimi-k3"}
+    assert surface_ids == {"kimi-k3"}
+    assert resolve_anthropic_backend("kimi-k3") == "kimi"
     assert resolve_anthropic_backend("kimi/kimi-k3") == "kimi"
     assert resolve_anthropic_backend("anthropic-kimi-kimi-k3") == "kimi"
     assert resolve_anthropic_backend("kimi/kimi-k2.5") is None

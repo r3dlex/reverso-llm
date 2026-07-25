@@ -87,6 +87,7 @@ DEFAULT_ANTHROPIC_VERSION = "2023-06-01"
 # than a per-request now(), keeping the listing deterministic and cache-friendly.
 _MODELS_CREATED_AT = "2026-06-20T00:00:00Z"
 _MODEL_LIST_TIMEOUT_SECONDS = 10.0
+_MODEL_CATALOG_HEADER = b"x-reverso-model-catalog"
 
 # The Anthropic-surface backends with optional per-profile path prefixes. claude
 # is now part of SURFACE_BACKENDS["anthropic"] and is served first-party via the
@@ -218,6 +219,27 @@ def _workspace_from_headers(headers: list[tuple[bytes, bytes]]) -> str | None:
             if candidate and os.path.isabs(candidate) and os.path.isdir(candidate):
                 return candidate
             return None
+    return None
+
+
+def _model_catalog_from_headers(
+    headers: list[tuple[bytes, bytes]],
+) -> str | None:
+    """Return a provider-scoped catalog name, or None for the aggregate catalog.
+
+    Reverso launchers send ``x-reverso-model-catalog`` so each provider-specific
+    Claude alias sees only its own models in gateway discovery. A missing header
+    or the explicit value ``all`` preserves the aggregate claude-reverso catalog.
+    """
+    for key, value in headers:
+        if key.lower() != _MODEL_CATALOG_HEADER:
+            continue
+        catalog = value.decode("utf-8", "replace").strip().lower()
+        if catalog == "all":
+            return None
+        if catalog in _ANTHROPIC_SURFACE_BACKENDS:
+            return catalog
+        raise ValueError("invalid Reverso model catalog")
     return None
 
 
@@ -463,7 +485,22 @@ class AnthropicMessagesApp:
                     anthropic_version=anthropic_version,
                 )
                 return
-            await self._handle_models(send, anthropic_version=anthropic_version)
+            try:
+                catalog_backend = _model_catalog_from_headers(headers)
+            except ValueError:
+                await _send_error(
+                    send,
+                    400,
+                    "invalid_request_error",
+                    "invalid Reverso model catalog",
+                    anthropic_version=anthropic_version,
+                )
+                return
+            await self._handle_models(
+                send,
+                anthropic_version=anthropic_version,
+                catalog_backend=catalog_backend,
+            )
             return
 
         if method != "POST":
@@ -772,7 +809,13 @@ class AnthropicMessagesApp:
             anthropic_version=anthropic_version,
         )
 
-    async def _handle_models(self, send: Send, *, anthropic_version: str) -> None:
+    async def _handle_models(
+        self,
+        send: Send,
+        *,
+        anthropic_version: str,
+        catalog_backend: str | None,
+    ) -> None:
         """Return the Anthropic-shaped /v1/models listing (AC8).
 
         Combines the surface_registry authority's static model set with every
@@ -788,7 +831,11 @@ class AnthropicMessagesApp:
         # Serialize refreshes so a slow older GET cannot overwrite a newer catalog.
         # Per-provider last-successful snapshots survive transient adapter failures.
         async with self._model_catalog_lock:
-            adapter_items = list(self._adapters.items())
+            adapter_items = [
+                (backend, adapter)
+                for backend, adapter in self._adapters.items()
+                if catalog_backend is None or backend == catalog_backend
+            ]
 
             async def list_models(adapter: ProviderAdapter) -> Any:
                 return await asyncio.wait_for(
@@ -818,6 +865,8 @@ class AnthropicMessagesApp:
             alias_rows = list_anthropic_discovery_aliases(self._adapter_model_cache)
             self._discovery_aliases = {row["id"]: row["backend"] for row in alias_rows}
             rows = list_anthropic_surface_models() + alias_rows
+            if catalog_backend is not None:
+                rows = [row for row in rows if row["backend"] == catalog_backend]
         data = [
             {
                 "type": "model",

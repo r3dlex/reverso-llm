@@ -68,6 +68,12 @@ filter, and route the alias back to its real backend:
    each provider's last successful snapshot across transient failures and serialize concurrent
    refreshes so an older slow request cannot overwrite newer state.
 
+4. **Launchers scope discovery with `x-reverso-model-catalog`.** The aggregate
+   `claude-reverso` launcher sends `all` and receives every provider catalog. Each
+   provider-specific launcher sends its backend name and receives only the bare and
+   discovery-alias rows owned by that backend. Request routing remains model-driven;
+   the header changes only the `GET /v1/models` listing.
+
 ## Consequences
 
 - With discovery enabled, every model returned by every available adapter is selectable in
@@ -82,3 +88,5 @@ filter, and route the alias back to its real backend:
   static `kimi-k3` fallback remains selectable without triggering authentication.
 - The launcher (`claude-reverso`) sets `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1`, so every
   reverso-backed session gets discovery; the builtin (direct-to-Anthropic) launchers do not.
+- Provider launchers no longer show unrelated provider models in `/model`; the
+  aggregate catalog remains available only through `claude-reverso`.
