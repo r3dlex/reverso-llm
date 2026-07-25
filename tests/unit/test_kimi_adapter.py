@@ -901,6 +901,60 @@ async def test_adapter_translates_responses_to_kimi_chat_with_bearer(
     assert response.output[0]["content"][0]["text"] == "hello"
 
 
+def test_adapter_merges_adjacent_assistant_history_for_kimi() -> None:
+    adapter = KimiAdapter()
+    request = ResponsesRequest(
+        model="kimi-k3",
+        input=[
+            {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "inspect"}],
+            },
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "running"}],
+            },
+            {
+                "type": "function_call",
+                "call_id": "call_1",
+                "name": "Bash",
+                "arguments": "{}",
+            },
+            {
+                "type": "function_call_output",
+                "call_id": "call_1",
+                "output": "ok",
+            },
+            {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "continue"}],
+            },
+        ],
+    )
+
+    body = adapter._build_body(request, stream=True)
+
+    assert body["messages"] == [
+        {"role": "user", "content": "inspect"},
+        {
+            "role": "assistant",
+            "content": "running",
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "Bash", "arguments": "{}"},
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call_1", "content": "ok"},
+        {"role": "user", "content": "continue"},
+    ]
+
+
 @pytest.mark.asyncio
 async def test_adapter_defaults_empty_model_to_upstream_k3(tmp_path: Path) -> None:
     token_path = tmp_path / "kimi-code.json"

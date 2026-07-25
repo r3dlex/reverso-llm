@@ -53,6 +53,37 @@ def _log_auth_reload(
     logger.info("Kimi auth reload", extra=extra)
 
 
+def _merge_adjacent_assistant_messages(
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    for message in messages:
+        if (
+            message.get("role") == "assistant"
+            and merged
+            and merged[-1].get("role") == "assistant"
+        ):
+            previous = merged[-1]
+            content = message.get("content")
+            if isinstance(content, str) and content:
+                previous_content = previous.get("content")
+                previous["content"] = (
+                    f"{previous_content}\n\n{content}"
+                    if isinstance(previous_content, str) and previous_content
+                    else content
+                )
+            tool_calls = message.get("tool_calls")
+            if isinstance(tool_calls, list) and tool_calls:
+                previous_calls = previous.get("tool_calls")
+                previous["tool_calls"] = [
+                    *(previous_calls if isinstance(previous_calls, list) else []),
+                    *tool_calls,
+                ]
+            continue
+        merged.append(message)
+    return merged
+
+
 class KimiError(RuntimeError):
     """Secret-free Kimi authentication or upstream failure."""
 
@@ -393,6 +424,11 @@ class KimiAdapter(DeepSeekAdapter):
         if request.model and request.model != KIMI_DEFAULT_MODEL:
             raise KimiModelError
         body["model"] = KIMI_UPSTREAM_MODEL
+        messages = body.get("messages")
+        if isinstance(messages, list) and all(
+            isinstance(message, dict) for message in messages
+        ):
+            body["messages"] = _merge_adjacent_assistant_messages(messages)
         return body
 
     async def _post(
