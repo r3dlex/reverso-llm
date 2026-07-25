@@ -239,11 +239,25 @@ def test_discovery_alias_resolves_and_canonicalizes() -> None:
         "anthropic-copilot-gpt-5.5": ("copilot", "gpt-5.5"),
         "anthropic-auggie-opus4.7": ("auggie", "opus4.7"),
         "anthropic-claude-claude-opus-4-8": ("claude", "claude-opus-4-8"),
-        "anthropic-kimi-kimi-k2.5": ("kimi", "kimi-k2.5"),
+        "anthropic-kimi-kimi-k3": ("kimi", "kimi-k3"),
     }
     for alias, (backend, bare) in cases.items():
         assert resolve_anthropic_backend(alias) == backend, alias
         assert canonical_model_id(alias) == bare, alias
+
+
+def test_kimi_routes_only_converged_k3_alias() -> None:
+    aliases = {
+        row["id"]
+        for row in list_anthropic_discovery_aliases()
+        if row["backend"] == "kimi"
+    }
+
+    assert aliases == {"anthropic-kimi-kimi-k3"}
+    assert resolve_anthropic_backend("kimi/kimi-k3") == "kimi"
+    assert resolve_anthropic_backend("anthropic-kimi-kimi-k3") == "kimi"
+    assert resolve_anthropic_backend("kimi/kimi-k2.5") is None
+    assert resolve_anthropic_backend("anthropic-kimi-kimi-k2.5") is None
 
 
 def test_discovery_alias_malformed_fails_closed() -> None:

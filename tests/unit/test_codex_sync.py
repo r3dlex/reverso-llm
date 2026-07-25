@@ -12,6 +12,7 @@ import datetime
 import json
 import tomllib
 from pathlib import Path
+from typing import cast
 
 import httpx
 import pytest
@@ -27,6 +28,7 @@ def _fixture_payload() -> dict[str, list[str]]:
         "copilot": ["claude-fable-5", "gpt-4o", "gpt-5.5", "claude-opus-4.8"],
         "auggie": ["prism-a"],
         "deepseek": ["deepseek-v3", "deepseek-r1"],
+        "kimi": ["kimi-k3"],
         "codex-direct": ["gpt-5.5"],
     }
 
@@ -203,7 +205,7 @@ def test_default_fetcher_accepts_only_live_kimi_discovery(
         },
         {
             "object": "list",
-            "data": [{"id": "kimi-k2.5"}, {"id": "kimi-k2"}],
+            "data": [{"id": "kimi-k3"}],
             "model_discovery_source": "live",
         },
     ]
@@ -216,8 +218,85 @@ def test_default_fetcher_accepts_only_live_kimi_discovery(
     monkeypatch.setattr(codex_sync.httpx, "get", get)
     fetch = codex_sync._default_fetcher("http://127.0.0.1:64946")
 
-    assert fetch("kimi") == []
-    assert fetch("kimi") == ["kimi-k2.5", "kimi-k2"]
+    with pytest.raises(RuntimeError, match="live Kimi model discovery"):
+        fetch("kimi")
+    assert fetch("kimi") == ["kimi-k3"]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"data": [{"id": "kimi-k3"}]},
+        {
+            "data": [{"id": "kimi-k3"}],
+            "model_discovery_source": "fallback",
+        },
+        {
+            "data": [{"id": "kimi-k2.5"}],
+            "model_discovery_source": "live",
+        },
+        {
+            "data": [],
+            "model_discovery_source": "live",
+        },
+    ],
+)
+def test_sync_fails_closed_on_noncanonical_kimi_discovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    payload: object,
+) -> None:
+    target = tmp_path / "config.toml"
+    baseline = _baseline_config_text()
+    target.write_text(baseline, encoding="utf-8")
+
+    def get(url: str, *, timeout: float) -> httpx.Response:
+        if "/kimi/" in url:
+            return httpx.Response(200, json=payload, request=httpx.Request("GET", url))
+        return httpx.Response(
+            200,
+            json={"data": [{"id": "provider-model"}]},
+            request=httpx.Request("GET", url),
+        )
+
+    monkeypatch.setattr(codex_sync.httpx, "get", get)
+
+    with pytest.raises(RuntimeError, match="live Kimi model discovery"):
+        codex_sync.sync(target=target)
+
+    assert target.read_text(encoding="utf-8") == baseline
+    assert not (tmp_path / "kimi.config.toml").exists()
+
+
+@pytest.mark.parametrize(
+    "model_ids",
+    [
+        [],
+        ["kimi-k2.5"],
+        ["k3"],
+        ["kimi-k3", "kimi-k2.5"],
+        ["kimi-k3", "k3"],
+        ["kimi-k3", "kimi-k3"],
+        ["kimi-k3", None],
+    ],
+)
+def test_sync_rejects_injected_stale_kimi_model_ids(
+    tmp_path: Path,
+    model_ids: list[object],
+) -> None:
+    target = tmp_path / "config.toml"
+    baseline = _baseline_config_text()
+    target.write_text(baseline, encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="live Kimi model discovery"):
+        codex_sync.sync(
+            target=target,
+            prefixes=("kimi",),
+            fetcher=lambda _prefix: cast(list[str], model_ids),
+        )
+
+    assert target.read_text(encoding="utf-8") == baseline
+    assert not (tmp_path / "kimi.config.toml").exists()
 
 
 def test_sync_fails_closed_when_all_default_provider_fetches_fail(
@@ -271,6 +350,7 @@ def test_profile_files_emit_one_file_per_live_prefix(
         codex_sync.ProviderModels("copilot", ("gpt-5.5", "gpt-4o")),
         codex_sync.ProviderModels("auggie", ("prism-a",)),
         codex_sync.ProviderModels("deepseek", ("deepseek-v3", "deepseek-v4-pro")),
+        codex_sync.ProviderModels("kimi", ("kimi-k3",)),
         codex_sync.ProviderModels("codex-direct", ("gpt-5.5",)),
     ]
     catalog_dir = tmp_path / "reverso"
@@ -281,6 +361,7 @@ def test_profile_files_emit_one_file_per_live_prefix(
         "copilot.config.toml",
         "auggie.config.toml",
         "deepseek.config.toml",
+        "kimi.config.toml",
         "codex-direct.config.toml",
     ]
     parsed = {
@@ -294,6 +375,12 @@ def test_profile_files_emit_one_file_per_live_prefix(
     assert parsed["claude"]["model"] == "claude-fable-5"
     assert parsed["copilot"]["model"] == "gpt-5.5"
     assert parsed["deepseek"]["model"] == "deepseek-v4-pro"
+    assert parsed["kimi"] == {
+        "model": "kimi-k3",
+        "model_provider": "reverso_kimi",
+        "model_catalog_json": str(catalog_dir / "kimi.json"),
+        "model_context_window": 1048576,
+    }
     assert parsed["codex-direct"]["model"] == "gpt-5.5"
     assert parsed["codex-direct"]["model_catalog_json"] == str(
         catalog_dir / "codex-direct.json"
@@ -329,11 +416,34 @@ def test_sync_writes_profiles_for_each_live_prefix(tmp_path: Path) -> None:
         assert profile["model_provider"] == f"reverso_{prefix}"
         assert profile["model_catalog_json"] == str(catalog_dir / f"{prefix}.json")
         assert profile["model"]
+    kimi = tomllib.loads((tmp_path / "kimi.config.toml").read_text())
+    assert kimi["model_context_window"] == 1048576
     openai = tomllib.loads((tmp_path / "openai.config.toml").read_text())
     minimax = tomllib.loads((tmp_path / "minimax.config.toml").read_text())
     assert openai == {"model": "gpt-5.5", "model_provider": "openai"}
     assert minimax["model_provider"] == "minimax"
     assert minimax["model"] == "MiniMax-M3"
+
+
+def test_kimi_sync_rejects_mixed_injected_discovery_before_filtering(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "config.toml"
+    baseline = _baseline_config_text()
+    target.write_text(baseline, encoding="utf-8")
+    catalog_dir = tmp_path / "reverso"
+
+    def fetch(prefix: str) -> list[str]:
+        if prefix == "kimi":
+            return ["kimi-k2.5", "kimi-k3", "k3", "kimi-k3"]
+        return ["provider-model"]
+
+    with pytest.raises(codex_sync.KimiDiscoveryError):
+        codex_sync.sync(target=target, fetcher=fetch, catalog_dir=catalog_dir)
+
+    assert target.read_text(encoding="utf-8") == baseline
+    assert not (tmp_path / "kimi.config.toml").exists()
+    assert not (catalog_dir / "kimi.json").exists()
 
 
 def test_sync_disables_reasoning_summary_for_unsupported_profiles(
@@ -534,7 +644,11 @@ def test_sync_archives_stale_managed_reverso_profile_and_catalog(
     result = codex_sync.sync(
         target=target,
         fetcher=_make_fetcher(
-            {"copilot": ["gpt-5.5"], "deepseek": ["deepseek-v4-pro"]}
+            {
+                "copilot": ["gpt-5.5"],
+                "deepseek": ["deepseek-v4-pro"],
+                "kimi": ["kimi-k3"],
+            }
         ),
         catalog_dir=catalog_dir,
     )
@@ -551,13 +665,17 @@ def test_sync_archives_stale_managed_reverso_profile_and_catalog(
     assert "auggie.config.toml" not in archived_names
 
 
-def test_sync_archives_stale_managed_kimi_profile_and_catalog(tmp_path: Path) -> None:
+def test_sync_preserves_all_kimi_output_bytes_when_live_discovery_is_invalid(
+    tmp_path: Path,
+) -> None:
     target = tmp_path / "config.toml"
     target.write_text(_baseline_config_text(), encoding="utf-8")
     catalog_dir = tmp_path / "reverso"
     catalog_dir.mkdir()
     stale_profile = tmp_path / "kimi.config.toml"
     stale_catalog = catalog_dir / "kimi.json"
+    other_profile = tmp_path / "claude.config.toml"
+    other_catalog = catalog_dir / "claude.json"
     stale_profile.write_text(
         codex_sync._render_profile_file(
             model="kimi-k2.5",
@@ -567,23 +685,63 @@ def test_sync_archives_stale_managed_kimi_profile_and_catalog(tmp_path: Path) ->
         encoding="utf-8",
     )
     stale_catalog.write_text('{"models": []}\n', encoding="utf-8")
-
-    result = codex_sync.sync(
-        target=target,
-        fetcher=_make_fetcher({"claude": ["claude-fable-5"]}),
-        catalog_dir=catalog_dir,
+    other_profile.write_text(
+        codex_sync._render_profile_file(
+            model="claude-fable-5",
+            model_provider="reverso_claude",
+            catalog_path=other_catalog,
+        ),
+        encoding="utf-8",
     )
+    other_catalog.write_text('{"models": []}\n', encoding="utf-8")
+    before = {
+        path: path.read_bytes()
+        for path in (
+            target,
+            stale_profile,
+            stale_catalog,
+            other_profile,
+            other_catalog,
+        )
+    }
 
-    assert not stale_profile.exists()
-    assert not stale_catalog.exists()
-    archived_names = {
-        path.name.split(codex_sync.BACKUP_SUFFIX_PREFIX)[0]
-        for path in result.archived_profiles
-    }
-    assert archived_names >= {
-        "kimi.config.toml",
-        "kimi.json",
-    }
+    with pytest.raises(RuntimeError, match="live Kimi model discovery"):
+        codex_sync.sync(
+            target=target,
+            fetcher=_make_fetcher({"claude": ["claude-fable-5"]}),
+            catalog_dir=catalog_dir,
+        )
+
+    assert {path: path.read_bytes() for path in before} == before
+    archive_dir = tmp_path / codex_sync.PROFILE_ARCHIVE_DIR
+    assert not archive_dir.exists()
+
+
+def test_sync_preserves_user_owned_kimi_output_when_live_discovery_is_missing(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+    catalog_dir = tmp_path / "reverso"
+    catalog_dir.mkdir()
+    user_profile = tmp_path / "kimi.config.toml"
+    user_catalog = catalog_dir / "user-kimi.json"
+    user_profile.write_text(
+        f'model = "user-kimi"\nmodel_catalog_json = "{user_catalog}"\n',
+        encoding="utf-8",
+    )
+    user_catalog.write_text('{"models": [{"slug": "user-kimi"}]}\n', encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="live Kimi model discovery"):
+        codex_sync.sync(
+            target=target,
+            fetcher=_make_fetcher({"claude": ["claude-fable-5"]}),
+            catalog_dir=catalog_dir,
+        )
+
+    assert user_profile.exists()
+    assert user_catalog.exists()
+    assert not (tmp_path / codex_sync.PROFILE_ARCHIVE_DIR).exists()
 
 
 def test_sync_default_config_exposes_no_reverso_models_globally(
@@ -628,6 +786,7 @@ def test_sync_writes_per_provider_catalog_files_with_profile_safe_slugs(
         "copilot.json",
         "auggie.json",
         "deepseek.json",
+        "kimi.json",
     }
 
     copilot = json.loads((catalog_dir / "copilot.json").read_text(encoding="utf-8"))
@@ -656,6 +815,13 @@ def test_sync_writes_per_provider_catalog_files_with_profile_safe_slugs(
         "deepseek-v3",
         "deepseek-r1",
     ]
+
+    kimi = json.loads((catalog_dir / "kimi.json").read_text(encoding="utf-8"))
+    assert len(kimi["models"]) == 1
+    kimi_model = kimi["models"][0]
+    assert kimi_model["slug"] == "kimi-k3"
+    assert kimi_model["context_window"] == 1048576
+    assert kimi_model["max_context_window"] == 1048576
 
 
 def test_sync_strips_legacy_clutter_blocks(tmp_path: Path) -> None:
@@ -877,11 +1043,17 @@ def test_sync_keeps_only_five_newest_backups(tmp_path: Path) -> None:
     target.write_text(_baseline_config_text(), encoding="utf-8")
 
     payloads: list[dict[str, list[str]]] = [
-        {"claude": [f"claude-rev-{i}"], "copilot": [], "auggie": [], "deepseek": []}
+        {
+            "claude": [f"claude-rev-{i}"],
+            "copilot": [],
+            "auggie": [],
+            "deepseek": [],
+            "kimi": ["kimi-k3"],
+        }
         for i in range(7)
     ]
 
-    base_ts = datetime.datetime(2026, 6, 10, 12, 0, 0, tzinfo=datetime.timezone.utc)
+    base_ts = datetime.datetime(2026, 6, 10, 12, 0, 0, tzinfo=datetime.UTC)
     for i, payload in enumerate(payloads):
         result = codex_sync.sync(
             target=target,
@@ -1051,6 +1223,40 @@ def test_main_dry_run_does_not_write(
     assert "claude-fable-5" in out
 
 
+def test_main_dry_run_reports_invalid_kimi_discovery_without_writing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    target = tmp_path / "config.toml"
+    catalog_dir = tmp_path / "reverso"
+    catalog_dir.mkdir()
+    profile = tmp_path / "kimi.config.toml"
+    catalog = catalog_dir / "kimi.json"
+    target.write_bytes(b"config-before\n")
+    profile.write_bytes(b"profile-before\n")
+    catalog.write_bytes(b"catalog-before\n")
+    before = {path: path.read_bytes() for path in (target, profile, catalog)}
+
+    monkeypatch.setenv("REVERSO_CODEX_CONFIG", str(target))
+    monkeypatch.setenv("REVERSO_CODEX_CATALOG_DIR", str(catalog_dir))
+    monkeypatch.setattr(
+        codex_sync,
+        "_default_fetcher",
+        lambda base_url: _make_fetcher({"kimi": ["kimi-k2.5"]}),
+    )
+
+    rc = codex_sync.main(["--dry-run"])
+
+    captured = capsys.readouterr()
+    assert rc == 3
+    assert captured.out == ""
+    assert captured.err == (
+        "reverso-codex-sync: live Kimi model discovery must contain only kimi-k3\n"
+    )
+    assert {path: path.read_bytes() for path in before} == before
+
+
 def test_main_writes_when_not_dry_run(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1079,6 +1285,7 @@ def test_main_writes_when_not_dry_run(
         "codex-direct.json",
         "copilot.json",
         "deepseek.json",
+        "kimi.json",
     ]
     assert sorted(Path(p).name for p in report["profiles"]) == [
         "auggie.config.toml",
@@ -1086,6 +1293,7 @@ def test_main_writes_when_not_dry_run(
         "codex-direct.config.toml",
         "copilot.config.toml",
         "deepseek.config.toml",
+        "kimi.config.toml",
         "minimax.config.toml",
         "openai.config.toml",
     ]
@@ -1180,7 +1388,10 @@ def test_sync_with_no_models_writes_direct_profiles_only(tmp_path: Path) -> None
     empty = _make_fetcher({"claude": [], "copilot": [], "auggie": [], "deepseek": []})
 
     result = codex_sync.sync(
-        target=target, fetcher=empty, catalog_dir=tmp_path / "reverso"
+        target=target,
+        prefixes=("claude", "copilot", "auggie", "deepseek"),
+        fetcher=empty,
+        catalog_dir=tmp_path / "reverso",
     )
     text = target.read_text(encoding="utf-8")
     assert codex_sync.PROFILES_BEGIN not in text
@@ -1303,7 +1514,7 @@ def test_renderers_escape_hostile_model_ids(tmp_path: Path) -> None:
 
     codex_sync.sync(
         target=target,
-        fetcher=_make_fetcher({"claude": [hostile]}),
+        fetcher=_make_fetcher({"claude": [hostile], "kimi": ["kimi-k3"]}),
         catalog_dir=catalog_dir,
     )
     profile = tomllib.loads((tmp_path / "claude.config.toml").read_text())
@@ -1394,6 +1605,17 @@ def test_generate_catalog_json_keeps_supported_reasoning(prefix: str) -> None:
     model = payload["models"][0]
     assert model["default_reasoning_level"] == "medium"
     assert model["supported_reasoning_levels"]
+
+
+def test_catalog_context_window_isolated_by_provider_prefix() -> None:
+    payload = json.loads(
+        codex_sync._generate_catalog_json(
+            codex_sync.ProviderModels("copilot", ("kimi-k3",))
+        )
+    )
+
+    assert payload["models"][0]["context_window"] == 128000
+    assert payload["models"][0]["max_context_window"] == 128000
 
 
 def test_generate_catalog_json_dedupes_within_provider() -> None:
@@ -1565,7 +1787,9 @@ def test_sync_opt_in_openai_pass_through_profile(
 
     result = codex_sync.sync(
         target=target,
-        fetcher=_make_fetcher({"openai-pass-through": ["gpt-5.5"]}),
+        fetcher=_make_fetcher(
+            {"openai-pass-through": ["gpt-5.5"], "kimi": ["kimi-k3"]}
+        ),
         catalog_dir=catalog_dir,
     )
 

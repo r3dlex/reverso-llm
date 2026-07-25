@@ -99,7 +99,7 @@ class _AnthropicSpy:
         return ModelList()
 
     async def get_response(self, response_id: str) -> ResponseEnvelope:
-        return ResponseEnvelope(id=response_id, model="kimi-k2.5")
+        return ResponseEnvelope(id=response_id, model="kimi-k3")
 
     async def list_input_items(self, response_id: str) -> InputItemList:
         return InputItemList(response_id=response_id)
@@ -137,7 +137,7 @@ async def test_missing_auth_waits_for_login_then_resumes_responses_request(
         return httpx.Response(
             200,
             json={
-                "model": "kimi-k2.5",
+                "model": "k3",
                 "choices": [
                     {
                         "message": {"role": "assistant", "content": "resumed"},
@@ -168,7 +168,7 @@ async def test_missing_auth_waits_for_login_then_resumes_responses_request(
         request = asyncio.create_task(
             client.post(
                 "/kimi/v1/responses",
-                json={"model": "kimi-k2.5", "input": "hello"},
+                json={"model": "kimi-k3", "input": "hello"},
             )
         )
         await asyncio.wait_for(spawned.wait(), timeout=1)
@@ -202,7 +202,7 @@ async def test_login_failure_has_actionable_secret_safe_http_envelope(
     async with _asgi_client(app) as client:
         response = await client.post(
             "/kimi/v1/responses",
-            json={"model": "kimi-k2.5", "input": "hello"},
+            json={"model": "kimi-k3", "input": "hello"},
         )
 
     assert response.status_code == 502
@@ -222,7 +222,7 @@ async def test_kimi_responses_surface_stores_and_chains_turns() -> None:
         return httpx.Response(
             200,
             json={
-                "model": "kimi-k2.5",
+                "model": "k3",
                 "choices": [
                     {
                         "message": {"role": "assistant", "content": "answer"},
@@ -248,7 +248,7 @@ async def test_kimi_responses_surface_stores_and_chains_turns() -> None:
     async with _asgi_client(app) as client:
         first = await client.post(
             "/kimi/v1/responses",
-            json={"model": "kimi-k2.5", "input": "first"},
+            json={"model": "kimi-k3", "input": "first"},
         )
         response_id = first.json()["id"]
         stored = await client.get(f"/kimi/v1/responses/{response_id}")
@@ -256,7 +256,7 @@ async def test_kimi_responses_surface_stores_and_chains_turns() -> None:
         second = await client.post(
             "/kimi/v1/responses",
             json={
-                "model": "kimi-k2.5",
+                "model": "kimi-k3",
                 "input": "second",
                 "previous_response_id": response_id,
             },
@@ -274,12 +274,89 @@ async def test_kimi_responses_surface_stores_and_chains_turns() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("model", ["kimi-k2.5", "k3", "other"])
+async def test_kimi_responses_surface_rejects_noncanonical_model(model: str) -> None:
+    upstream_calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal upstream_calls
+        upstream_calls += 1
+        return httpx.Response(200, json={})
+
+    app = build_app(
+        {
+            "kimi": KimiAdapter(
+                auth=cast(Any, _StaticAuth()),
+                client_factory=lambda: httpx.AsyncClient(
+                    transport=httpx.MockTransport(handler)
+                ),
+            )
+        }
+    )
+
+    async with _asgi_client(app) as client:
+        response = await client.post(
+            "/kimi/v1/responses",
+            json={"model": model, "input": "hello"},
+        )
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "error": {
+            "message": "Kimi supports only kimi-k3",
+            "type": "invalid_request_error",
+        }
+    }
+    assert upstream_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_kimi_responses_surface_defaults_absent_model_to_k3() -> None:
+    bodies: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "model": "k3",
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "ok"},
+                        "finish_reason": "stop",
+                    }
+                ],
+            },
+        )
+
+    app = build_app(
+        {
+            "kimi": KimiAdapter(
+                auth=cast(Any, _StaticAuth()),
+                client_factory=lambda: httpx.AsyncClient(
+                    transport=httpx.MockTransport(handler)
+                ),
+            )
+        }
+    )
+
+    async with _asgi_client(app) as client:
+        response = await client.post(
+            "/kimi/v1/responses",
+            json={"input": "hello"},
+        )
+
+    assert response.status_code == 200
+    assert bodies[0]["model"] == "k3"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("path", "model"),
     [
-        ("/kimi/v1/messages", "kimi-k2.5"),
-        ("/v1/messages", "kimi/kimi-k2.5"),
-        ("/v1/messages", "anthropic-kimi-kimi-k2.5"),
+        ("/kimi/v1/messages", "kimi-k3"),
+        ("/v1/messages", "kimi/kimi-k3"),
+        ("/v1/messages", "anthropic-kimi-kimi-k3"),
     ],
 )
 async def test_kimi_messages_routes_and_strips_routing_alias(
@@ -299,7 +376,7 @@ async def test_kimi_messages_routes_and_strips_routing_alias(
         )
 
     assert response.status_code == 200
-    assert adapter.requests[0].model == "kimi-k2.5"
+    assert adapter.requests[0].model == "kimi-k3"
 
 
 def test_kimi_prefix_is_owned_by_first_party_responses_app() -> None:

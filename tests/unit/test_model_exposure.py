@@ -7,12 +7,12 @@ from reverso.protocols.model_exposure import (
     CODEX_DEFAULT_MODEL,
     CODEX_DIRECT_BACKEND_ENV,
     CODEX_FRONTIER_MODELS,
+    DIRECT_CODEX_PROFILE_SPECS,
     OPENAI_BACKEND_ENV,
     REVERSO_HOST_ENV,
-    DIRECT_CODEX_PROFILE_SPECS,
     REVERSO_ROUTED_CODEX_PROFILE_PREFIXES,
-    STATIC_CATALOG_SEEDS,
     STALE_CODEX_VARIANT_PROFILE_STEMS,
+    STATIC_CATALOG_SEEDS,
     claude_code_selector_model_id,
     codex_builtin_model_backends,
     codex_catalog_context_window,
@@ -171,6 +171,11 @@ def test_model_exposure_owns_codex_profile_default_model_policy() -> None:
     assert spec.model == "gpt-5.5"
     assert spec.model_provider == "reverso_copilot"
     assert spec.uses_model_catalog is True
+    kimi = reverso_codex_profile_spec("kimi", ("kimi-k3",))
+    assert kimi.model == "kimi-k3"
+    assert kimi.model_provider == "reverso_kimi"
+    assert kimi.uses_model_catalog is True
+    assert kimi.model_context_window == 1048576
 
 
 def test_model_exposure_owns_codex_responses_model_eligibility() -> None:
@@ -201,6 +206,9 @@ def test_model_exposure_owns_codex_responses_model_eligibility() -> None:
     assert codex_responses_compatible_model_ids(
         "deepseek", ("deepseek-v3", "deepseek-r1")
     ) == ("deepseek-v3", "deepseek-r1")
+    assert codex_responses_compatible_model_ids(
+        "kimi", ("kimi-k2.5", "kimi-k3", "k3", "kimi-k3")
+    ) == ("kimi-k3", "kimi-k3")
 
 
 def test_model_exposure_owns_codex_catalog_and_stale_profile_policy() -> None:
@@ -215,8 +223,10 @@ def test_model_exposure_owns_codex_catalog_and_stale_profile_policy() -> None:
         provider_scoped_catalog_slug("claude", "claude-sonnet-4-6")
         == "claude-sonnet-4-6"
     )
-    assert codex_catalog_context_window("regular-model") == 128000
-    assert codex_catalog_context_window("claude-500k") == 500000
+    assert codex_catalog_context_window("claude", "regular-model") == 128000
+    assert codex_catalog_context_window("claude", "claude-500k") == 500000
+    assert codex_catalog_context_window("kimi", "kimi-k3") == 1048576
+    assert codex_catalog_context_window("copilot", "kimi-k3") == 128000
     assert stale_codex_variant_profile_stems() == STALE_CODEX_VARIANT_PROFILE_STEMS
     assert "deepseek-gpt54" in stale_codex_variant_profile_stems()
     assert "minimax-spark" in stale_codex_variant_profile_stems()

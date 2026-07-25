@@ -26,7 +26,7 @@ provider on both supported inbound protocol surfaces:
 
 - OpenAI Responses under `/kimi/v1`.
 - Anthropic Messages under `/kimi/v1/messages` and through provider-qualified
-  model routing such as `kimi/kimi-k2.5` on `/v1/messages`.
+  model routing such as `kimi/kimi-k3` on `/v1/messages`.
 
 The implementation must use Kimi Code OAuth as the primary credential path,
 send the resulting access token as an HTTP bearer token, permit an explicit
@@ -61,11 +61,11 @@ without removing implementation work.
    `/chat/completions` request shape for unary and streaming calls.
 5. Translate Kimi responses and SSE deltas back to the frozen
    `ProviderAdapter` Responses contract.
-6. Expose authenticated live model discovery through `/kimi/v1/models`, with a
-   bounded offline fallback model.
+6. Expose only `kimi-k3` through `/kimi/v1/models`, translate request dispatch
+   to upstream `k3`, and retain only canonical K3 metadata in the bounded
+   runtime fallback.
 7. Register Kimi on the Responses and Anthropic surfaces.
-8. Route provider-qualified Anthropic model ids without maintaining a stale
-   hard-coded Kimi catalog.
+8. Route only the provider-qualified Anthropic model id `kimi/kimi-k3`.
 9. Add Kimi to the capability matrix using the existing translated
    OpenAI-compatible ceiling until richer behavior is explicitly proven.
 10. Prove that Headroom compression still runs before Kimi adapter dispatch on
@@ -73,6 +73,8 @@ without removing implementation work.
 11. When a request has neither a usable CLI-owned artifact nor a bearer
     fallback, supervise one shared official `kimi login` process, reload the
     artifact after success, and resume the waiting request.
+12. Generate the Kimi Codex profile and catalog with only `kimi-k3`, context
+    window `1048576`, and live discovery as a mandatory synchronization input.
 
 ### Out of scope
 
@@ -86,7 +88,7 @@ without removing implementation work.
   upstream API.
 - Persisting prompts, responses, Headroom content, or provider secrets.
 - Broad refactoring of the DeepSeek or generic chat adapter paths.
-- Codex picker/profile synchronization unless separately scoped and tested.
+- Codex picker/profile synchronization for providers other than Kimi.
 
 ## Functional requirements
 
@@ -141,22 +143,30 @@ Kimi must be a member of the Anthropic surface backend set and the real adapter
 factory. The surface must accept both:
 
 - Path-pinned requests under `/kimi/v1/messages`.
-- Provider-qualified model routing such as `kimi/<upstream-model>` on
+- Provider-qualified model routing with `kimi/kimi-k3` on
   `/v1/messages`.
 
 The provider qualifier is a routing hint and must be stripped before the model
-id reaches Kimi.
+id reaches Kimi. The public id `kimi-k3` must be translated to upstream `k3`
+when the adapter dispatches the request.
 
 ### FR-6: Model discovery
 
 `KimiAdapter.list_models` must query the subscription endpoint's `/models`
 resource with the resolved bearer token. A `401` may force one refresh and one
-retry. Network, auth, or payload failure must return a deterministic offline
-fallback instead of making model discovery crash the gateway.
+retry. Successful discovery must expose exactly one public model, `kimi-k3`.
+Network, auth, or payload failure must return deterministic canonical K3
+fallback metadata instead of making runtime model discovery crash the gateway.
 
-Kimi is rowless in the Anthropic registry: an explicit `kimi/<model>` qualifier
-is authoritative, while discovery aliases may use a small curated seed for
-clients that require an Anthropic-prefixed picker id.
+Kimi is rowless in the Anthropic registry. The explicit `kimi/kimi-k3`
+qualifier and its `anthropic-kimi-kimi-k3` discovery alias are the only
+Kimi model ids authorized on that surface.
+
+Runtime fallback metadata is not valid evidence for Codex synchronization.
+`reverso-codex-sync` must accept Kimi discovery only when the payload declares
+`model_discovery_source: "live"` and contains exactly `kimi-k3`; stale,
+fallback, mixed, empty, or otherwise noncanonical discovery must fail closed
+without replacing the existing profile or catalog.
 
 ### FR-7: Capability gating
 
@@ -172,6 +182,13 @@ No Kimi-specific Headroom implementation is allowed. The existing Responses
 and Anthropic pre-dispatch compression seams must compress the request before
 the Kimi adapter sees it, retain fail-open behavior, and keep all metrics
 prompt-free.
+
+### FR-9: Codex metadata convergence
+
+The generated Kimi profile must select `model = "kimi-k3"` and set
+`model_context_window = 1048576`. Its provider-specific catalog must contain
+exactly one model with slug `kimi-k3`, `context_window = 1048576`, and
+`max_context_window = 1048576`.
 
 ## Security and reliability requirements
 
@@ -197,6 +214,7 @@ prompt-free.
 | Responses adapter composition | `src/reverso/proxy/compose.py` |
 | Anthropic adapter composition | `src/reverso/protocols/anthropic_app.py` |
 | Anthropic model authority | `src/reverso/protocols/surface_registry.py` |
+| Codex profile and catalog sync | `src/reverso/codex_sync.py` and `src/reverso/protocols/model_exposure.py` |
 | Capability source | `.omc/research/responses-parity-surface.json` and packaged mirror |
 | Adapter regression tests | `tests/unit/test_kimi_adapter.py` |
 | Cross-surface tests | `tests/integration/test_kimi_surfaces.py` |
@@ -208,8 +226,8 @@ prompt-free.
 1. `/kimi/v1/responses` dispatches to `KimiAdapter` and never reaches the
    legacy LiteLLM app.
 2. `/kimi/v1/messages` dispatches to `KimiAdapter` through the Anthropic app.
-3. `kimi/<model>` resolves to the Kimi Anthropic backend and canonicalizes to
-   the bare upstream model id.
+3. `kimi/kimi-k3` resolves to the Kimi Anthropic backend and dispatches the bare
+   upstream model id `k3`.
 4. A fresh OAuth artifact wins over `KIMI_BEARER_TOKEN`.
 5. An expired OAuth artifact refreshes successfully and persists the rotated
    token with a future expiry.
@@ -218,7 +236,7 @@ prompt-free.
    `/coding/v1/chat/completions` and return a valid Responses envelope.
 8. Streaming calls emit canonical events and store a final response usable by
    `previous_response_id`.
-9. Model discovery uses bearer auth and returns live account models when the
+9. Model discovery uses bearer auth and exposes exactly `kimi-k3` when the
    endpoint succeeds.
 10. Every Kimi capability row is present and validated by the shared table
     tests.
@@ -230,6 +248,8 @@ prompt-free.
 14. `uv run python -m compileall -q src/reverso` and `git diff --check` pass.
 15. A credentialed local smoke verifies one Responses request and one
     Anthropic Messages request without exposing the token in logs or output.
+16. Kimi Codex synchronization accepts only canonical live discovery and writes
+    one `kimi-k3` profile/catalog entry with context window `1048576`.
 
 ## Test strategy
 
@@ -243,7 +263,8 @@ prompt-free.
 - Unary request translation, bearer header, response mapping, tool calls, usage,
   and previous-response storage.
 - SSE parsing, terminal completion, tool-call deltas, and usage.
-- Live-model response mapping and fallback behavior.
+- Live K3 response mapping and canonical runtime fallback behavior.
+- Public `kimi-k3` to upstream `k3` request translation.
 
 ### Offline integration tests
 
@@ -254,6 +275,9 @@ prompt-free.
 - Headroom compression reaches Kimi only after compression and does not mutate
   other adapters.
 - Capability matrix completeness.
+- Codex sync rejection for fallback, stale, mixed, empty, and noncanonical Kimi
+  discovery.
+- Generated Kimi profile and catalog context metadata.
 
 ### Credentialed local smoke
 
@@ -271,16 +295,16 @@ curl -sS http://127.0.0.1:64946/kimi/v1/models
 
 curl -sS http://127.0.0.1:64946/kimi/v1/responses \
   -H 'content-type: application/json' \
-  -d '{"model":"kimi-k2.5","input":"Reply with exactly: kimi-ok"}'
+  -d '{"model":"kimi-k3","input":"Reply with exactly: kimi-ok"}'
 
 curl -sS http://127.0.0.1:64946/kimi/v1/messages \
   -H 'content-type: application/json' \
   -H 'anthropic-version: 2023-06-01' \
-  -d '{"model":"kimi-k2.5","max_tokens":32,"messages":[{"role":"user","content":"Reply with exactly: kimi-ok"}]}'
+  -d '{"model":"kimi-k3","max_tokens":32,"messages":[{"role":"user","content":"Reply with exactly: kimi-ok"}]}'
 ```
 
-The live account may expose a different current model id. Use an id returned by
-the first command instead of relying on the offline fallback.
+The first command must expose only `kimi-k3`. A fallback discovery response is
+valid for bounded runtime inspection but is not valid input to Codex sync.
 
 ## Risks and mitigations
 
@@ -291,7 +315,7 @@ the first command instead of relying on the offline fallback.
 | Kimi changes subscription endpoint behavior | Keep base URLs injectable in tests and fail with bounded provider errors |
 | Capability table overstates Kimi support | Mirror the proven translator ceiling, not upstream marketing claims |
 | SDK adoption creates redundant abstractions | Keep the direct HTTP adapter until an official SDK exposes real Responses or Messages transports and supports Reverso's Python floor |
-| Default fallback model becomes stale | Prefer live `/models`; treat the fallback only as offline discovery metadata |
+| Runtime fallback obscures stale deployment | Keep fallback metadata canonical to K3 and reject every non-live discovery source during Codex sync |
 | Existing dirty provider work obscures regressions | Record baseline failures before editing and report exact failing test ids separately |
 
 ## Rollout and rollback

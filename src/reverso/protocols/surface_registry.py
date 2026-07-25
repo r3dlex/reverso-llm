@@ -158,6 +158,7 @@ _MODEL_INDEX: dict[str, str] = _build_model_index()
 # index): deepseek and claude (config rows) and codex (static seed). A qualified
 # id naming one of these MUST name a model the backend actually serves; only
 # rowless backends (copilot/auggie) trust an arbitrary bare model behind their prefix.
+# Kimi is rowless in the config but owns the converged K3-only taxonomy below.
 _BACKENDS_WITH_ROWS: frozenset[str] = frozenset(_MODEL_INDEX.values())
 
 # Claude Code's gateway model discovery (CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY)
@@ -172,6 +173,7 @@ _BACKENDS_WITH_ROWS: frozenset[str] = frozenset(_MODEL_INDEX.values())
 # rest is the bare model. The known backend names share no common prefix, so a first
 # match over the known set is unambiguous.
 _DISCOVERY_ALIAS_PREFIX = "anthropic-"
+_KIMI_MODELS = frozenset({"kimi-k3"})
 
 # Rowless backends own no _MODEL_INDEX taxonomy, so the discovery listing carries a
 # curated, known-good set for the picker. Free-text copilot/<id> (and auggie/<id>)
@@ -179,7 +181,7 @@ _DISCOVERY_ALIAS_PREFIX = "anthropic-"
 _DISCOVERY_ROWLESS_MODELS: dict[str, tuple[str, ...]] = {
     "copilot": ("gpt-5.5", "gpt-5.4", "gpt-5.4-mini"),
     "auggie": ("opus4.7", "haiku4.5"),
-    "kimi": ("kimi-k2.5",),
+    "kimi": tuple(sorted(_KIMI_MODELS)),
 }
 
 
@@ -239,6 +241,7 @@ def _resolve_qualified(provider: str, bare: str) -> str | None:
     selects GitHub Copilot's gpt-5.5, distinct from codex's bare ``gpt-5.5`` (the
     two are different upstream subscriptions that happen to share a model name).
 
+    Kimi is config-rowless but accepts only its converged ``kimi-k3`` selector id.
     A rows-owning backend (codex/deepseek/claude) must name a model indexed to
     ITSELF: a bare id indexed to a different backend (e.g. ``deepseek/gpt-5.5``) is a
     conflict that resolves to None, and a bare id unknown to the index fails closed
@@ -246,6 +249,8 @@ def _resolve_qualified(provider: str, bare: str) -> str | None:
     """
     if not bare or provider not in SURFACE_BACKENDS["anthropic"]:
         return None
+    if provider == "kimi":
+        return provider if bare in _KIMI_MODELS else None
     if provider not in _BACKENDS_WITH_ROWS:
         return provider
     indexed = _MODEL_INDEX.get(bare)
@@ -274,9 +279,8 @@ def resolve_anthropic_backend(model: str | None) -> str | None:
     normalized = _normalize_model(model)
     alias = _split_discovery_alias(normalized)
     if alias is not None:
-        # A /model-picker discovery alias (anthropic-<backend>-<bare>) routes by its
-        # explicit backend; the bare model is validated downstream by that adapter.
-        return alias[0]
+        # Validate aliases through the same provider-owned taxonomy as qualified ids.
+        return _resolve_qualified(*alias)
     provider, bare = _split_provider_qualified(normalized)
     if provider is not None:
         return _resolve_qualified(provider, bare)

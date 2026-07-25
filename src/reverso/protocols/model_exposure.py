@@ -58,6 +58,8 @@ REVERSO_HOST_ENV = "REVERSO_HOST"
 _CODEX_DIRECT_PROFILE_PREFIX = "codex-direct"
 _OPENAI_PROFILE_PREFIX = "openai-pass-through"
 DEEPSEEK_CODEX_PROFILE_DEFAULT = "deepseek-v4-pro"
+KIMI_CODEX_MODEL = "kimi-k3"
+KIMI_CODEX_CONTEXT_WINDOW = 1048576
 DIRECT_CODEX_PROFILE_SPECS: tuple[CodexProfileSpec, ...] = (
     CodexProfileSpec(
         prefix="openai",
@@ -147,6 +149,8 @@ def codex_responses_compatible_model_ids(
     Copilot serves, so we accept any model with a known route. For other
     prefixes, all upstream models are exposed unchanged.
     """
+    if prefix == "kimi":
+        return tuple(model_id for model_id in model_ids if model_id == KIMI_CODEX_MODEL)
     if prefix != "copilot":
         return model_ids
     return tuple(
@@ -163,6 +167,7 @@ def reverso_codex_profile_spec(
         model=codex_profile_default_model(prefix, models),
         model_provider=f"reverso_{prefix}",
         uses_model_catalog=True,
+        model_context_window=(KIMI_CODEX_CONTEXT_WINDOW if prefix == "kimi" else None),
     )
 
 
@@ -171,8 +176,10 @@ def provider_scoped_catalog_slug(prefix: str, model_id: str) -> str:
     return selector_model_id(prefix, model_id)
 
 
-def codex_catalog_context_window(model_id: str) -> int:
-    """Return Codex catalog context window metadata for a model id."""
+def codex_catalog_context_window(prefix: str, model_id: str) -> int:
+    """Return provider-scoped Codex catalog context metadata for a model id."""
+    if prefix == "kimi" and model_id == KIMI_CODEX_MODEL:
+        return KIMI_CODEX_CONTEXT_WINDOW
     if "500k" in model_id.lower():
         return 500000
     return 128000

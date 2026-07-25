@@ -14,10 +14,10 @@ from typing import Any
 
 import httpx
 import pytest
-
 from conftest import FixtureAdapter
-from reverso.protocols.anthropic_app import build_anthropic_app
+
 from reverso.protocols.adapter import ResponsesRequest
+from reverso.protocols.anthropic_app import build_anthropic_app
 
 ANTHROPIC_BACKENDS = ["copilot", "deepseek", "auggie", "codex", "claude", "kimi"]
 
@@ -118,6 +118,6 @@ async def test_claude_qualified_mismatch_is_404() -> None:
 async def test_kimi_qualified_routes_and_adapter_sees_bare_model() -> None:
     adapters = {b: _RecordingAdapter(b) for b in ANTHROPIC_BACKENDS}
     async with _client_with(adapters) as client:
-        resp = await client.post("/v1/messages", json=_body("kimi/kimi-k2.5"))
+        resp = await client.post("/v1/messages", json=_body("kimi/kimi-k3"))
     assert resp.status_code == 200
-    assert adapters["kimi"].seen_models == ["kimi-k2.5"]
+    assert adapters["kimi"].seen_models == ["kimi-k3"]

@@ -32,7 +32,8 @@ KIMI_API_BASE = "https://api.kimi.com/coding/v1"
 KIMI_BEARER_TOKEN_ENV = "KIMI_BEARER_TOKEN"
 KIMI_OAUTH_HOST = "https://auth.kimi.com"
 KIMI_OAUTH_CLIENT_ID = "17e5f671-d194-4dfb-9706-5516cb48c098"
-KIMI_DEFAULT_MODEL = "kimi-k2.5"
+KIMI_DEFAULT_MODEL = "kimi-k3"
+KIMI_UPSTREAM_MODEL = "k3"
 _REFRESH_MARGIN_SECONDS = 300
 _FORWARD_TIMEOUT_SECONDS = 300.0
 _KIMI_CODE_PLATFORM = "kimi_code_cli"
@@ -47,6 +48,22 @@ class KimiError(RuntimeError):
     def public_message(self) -> str:
         """Return the curated message safe for the gateway error envelope."""
         return str(self)
+
+
+class KimiModelError(KimiError):
+    """Noncanonical Kimi model selection."""
+
+    status_code = 400
+
+    def __init__(self) -> None:
+        message = "Kimi supports only kimi-k3"
+        super().__init__(message)
+        self.payload = {
+            "error": {
+                "message": message,
+                "type": "invalid_request_error",
+            }
+        }
 
 
 class _ArtifactState(Enum):
@@ -153,7 +170,9 @@ class KimiOAuthAuth:
         if not isinstance(access_token, str) or not access_token.strip():
             raise KimiError("kimi OAuth refresh returned no access token")
         expires_in_value = refreshed.get("expires_in")
-        if isinstance(expires_in_value, bool):
+        if isinstance(expires_in_value, bool) or not isinstance(
+            expires_in_value, (int, float, str)
+        ):
             raise KimiError("kimi OAuth refresh returned invalid expiry")
         try:
             expires_in = float(expires_in_value)
@@ -312,7 +331,7 @@ class KimiAdapter(DeepSeekAdapter):
         """Report whether the most recent model list came from live Kimi."""
         return self._model_discovery_source
 
-    async def _headers(self, *, force_refresh: bool = False) -> dict[str, str]:
+    async def _async_headers(self, *, force_refresh: bool = False) -> dict[str, str]:
         token = await self._auth.resolve_bearer_token(force_refresh=force_refresh)
         return {
             "Authorization": f"Bearer {token}",
@@ -322,13 +341,15 @@ class KimiAdapter(DeepSeekAdapter):
 
     def _build_body(self, request: ResponsesRequest, *, stream: bool) -> dict[str, Any]:
         body = super()._build_body(request, stream=stream)
-        body["model"] = request.model or KIMI_DEFAULT_MODEL
+        if request.model and request.model != KIMI_DEFAULT_MODEL:
+            raise KimiModelError
+        body["model"] = KIMI_UPSTREAM_MODEL
         return body
 
     async def _post(
         self, body: dict[str, Any], *, force_refresh: bool = False
     ) -> httpx.Response:
-        headers = await self._headers(force_refresh=force_refresh)
+        headers = await self._async_headers(force_refresh=force_refresh)
         try:
             async with self._client_factory() as client:
                 return await client.post(
@@ -359,7 +380,7 @@ class KimiAdapter(DeepSeekAdapter):
     ) -> AsyncIterator[dict[str, Any]]:
         try:
             for attempt in range(2):
-                headers = await self._headers(force_refresh=attempt == 1)
+                headers = await self._async_headers(force_refresh=attempt == 1)
                 async with (
                     self._client_factory() as client,
                     client.stream(
@@ -410,11 +431,11 @@ class KimiAdapter(DeepSeekAdapter):
     async def list_models(self) -> ModelList:
         self._model_discovery_source = "fallback"
         try:
-            headers = await self._headers()
+            headers = await self._async_headers()
             async with self._client_factory() as client:
                 response = await client.get(f"{self._api_base}/models", headers=headers)
             if response.status_code == 401:
-                headers = await self._headers(force_refresh=True)
+                headers = await self._async_headers(force_refresh=True)
                 async with self._client_factory() as client:
                     response = await client.get(
                         f"{self._api_base}/models", headers=headers
@@ -425,30 +446,28 @@ class KimiAdapter(DeepSeekAdapter):
                     payload.get("data"), list
                 ):
                     raise ValueError("invalid model listing")
-                data = []
-                seen: set[str] = set()
+                has_k3 = False
+                owned_by = "moonshotai"
                 for row in payload["data"]:
                     if not isinstance(row, dict):
                         continue
                     model_id = row.get("id")
-                    if (
-                        not isinstance(model_id, str)
-                        or not model_id
-                        or model_id in seen
-                    ):
-                        continue
-                    seen.add(model_id)
-                    data.append(
-                        {
-                            "id": model_id,
-                            "object": "model",
-                            "created": int(time.time()),
-                            "owned_by": row.get("owned_by", "moonshotai"),
-                        }
-                    )
-                if data:
+                    if model_id == KIMI_UPSTREAM_MODEL:
+                        has_k3 = True
+                        owned_by = row.get("owned_by", owned_by)
+                if has_k3:
                     self._model_discovery_source = "live"
-                    return ModelList(data=data, discovery_source="live")
+                    return ModelList(
+                        data=[
+                            {
+                                "id": KIMI_DEFAULT_MODEL,
+                                "object": "model",
+                                "created": int(time.time()),
+                                "owned_by": owned_by,
+                            }
+                        ],
+                        discovery_source="live",
+                    )
         except (KimiError, httpx.HTTPError, ValueError) as exc:
             logger.warning("kimi model listing unavailable (%s)", type(exc).__name__)
         return ModelList(

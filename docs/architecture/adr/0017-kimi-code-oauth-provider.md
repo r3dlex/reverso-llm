@@ -30,7 +30,7 @@ Add a first-party `KimiAdapter` at the frozen `ProviderAdapter` boundary.
 
 - Mount `/kimi/v1` on the Responses gateway.
 - Mount `kimi` on the Anthropic Messages surface and route provider-qualified
-  model ids such as `kimi/kimi-k2.5`.
+  model ids such as `kimi/kimi-k3`.
 - Prefer the OAuth access token written by `kimi login` and refresh it through
   Kimi's OAuth token endpoint when it approaches expiry.
 - When a request has no usable local credential or bearer fallback, let the
@@ -43,8 +43,14 @@ Add a first-party `KimiAdapter` at the frozen `ProviderAdapter` boundary.
   available.
 - Use Kimi's OpenAI-compatible chat endpoint through Reverso's existing chat to
   Responses translation and replay behavior rather than adding the Kimi SDK.
-- Fetch the available model catalog from Kimi's authenticated `/models`
-  endpoint, with a small offline fallback.
+- Expose only the public model id `kimi-k3` and translate it to the upstream
+  model id `k3` when dispatching requests.
+- Fetch Kimi's authenticated `/models` endpoint to establish live discovery.
+  Runtime discovery may return only canonical K3 fallback metadata on failure,
+  but Codex synchronization must reject fallback or otherwise non-live
+  discovery.
+- Generate the Kimi Codex profile and catalog with only `kimi-k3` and a context
+  window of `1048576`.
 - Keep Headroom provider-agnostic. Kimi requests pass through the same
   pre-dispatch compression seam as every Responses and Anthropic backend.
 
@@ -61,9 +67,14 @@ Kimi initially inherits the existing OpenAI-compatible translated capability
 ceiling. Features the upstream may support but Reverso does not yet translate
 remain gated consistently with the DeepSeek translation path.
 
+The public model contract is deliberately narrower than Kimi's upstream
+catalog. Reverso exposes `kimi-k3`, dispatches `k3`, and prevents stale or
+fallback discovery from regenerating Codex metadata.
+
 ## Verification
 
 Offline tests cover OAuth priority, bearer fallback, chat translation, live
 model discovery, both protocol mounts, provider-qualified Anthropic routing,
 Headroom dispatch across all registered prefixes, shared login coordination,
-post-login artifact validation, and request resume after official CLI success.
+post-login artifact validation, request resume after official CLI success,
+K3-only exposure and translation, and fail-closed Codex synchronization.
