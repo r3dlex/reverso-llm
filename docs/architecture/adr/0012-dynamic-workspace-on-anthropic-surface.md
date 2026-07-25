@@ -55,18 +55,20 @@ The Anthropic surface resolves a per-request workspace from a request header and
    adapter; it is harmless for count_tokens/models (no subprocess). The reset is correct
    on every return path.
 
-3. **The `claude-reverso` launcher passes `$PWD`.** It adds
-   `ANTHROPIC_CUSTOM_HEADERS="x-reverso-workspace: $PWD"` alongside the existing
-   `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1`. Claude Code forwards
-   `ANTHROPIC_CUSTOM_HEADERS` to the gateway base URL, so reverso receives the launch
-   directory. The builtin `claude`/`claude-code` and `claude-raw-*` launchers are not
-   touched.
+3. **Every managed `claude-*` Reverso launcher passes `$PWD`.**
+   `reverso-claude-code-sync` installs the launchers and adds
+   `x-reverso-workspace: $PWD` beside the scoped `x-reverso-model-catalog`
+   header with `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1`. Claude Code
+   forwards the custom headers to the gateway base URL, so Reverso receives the
+   launch directory. The builtin `claude` executable is resolved as the upstream
+   target and is not modified.
 
 ## Consequences
 
-- A `claude-reverso` session (or any Claude Code session) run from any directory drives
-  codex/claude tools in that directory by default, not the daemon CWD: the header sets it
-  explicitly and the system-prompt line covers the header-less case.
+- A managed Reverso `claude-*` session (or any Claude Code session) run from any
+  directory drives codex/claude tools in that directory by default, not the
+  daemon CWD: the header sets it explicitly and the system-prompt line covers
+  the header-less case.
 - Both inputs only ever set a subprocess cwd validated as an existing absolute directory,
   so there is no injection risk, and reverso remains loopback-only.
 - The contextvar import (`reverso.proxy.profile_routing`) is the same one the codex/claude

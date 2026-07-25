@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-import time
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from reverso.protocols import headroom_compression
 from reverso.protocols.adapter import ResponsesRequest
 from reverso.protocols.headroom_compression import (
     HeadroomCompressionConfig,
@@ -84,6 +85,120 @@ async def test_disabled_returns_original_without_calling_compressor() -> None:
     assert outcome.reason == "disabled"
     assert outcome.compressed is False
     assert outcome.fail_open is False
+
+
+@pytest.mark.asyncio
+async def test_whitespace_only_fields_remain_unchanged_during_reconstruction() -> None:
+    whitespace = " \t\n" * 100
+    request = ResponsesRequest(
+        model="m",
+        instructions=whitespace,
+        input="word " * 250,
+    )
+
+    def fake_compress(messages: list[dict[str, Any]], **_: Any) -> FakeHeadroomResult:
+        assert messages == [{"role": "user", "content": "word " * 250}]
+        return FakeHeadroomResult(
+            messages=[{"role": "user", "content": "compressed user"}]
+        )
+
+    outcome = await compress_responses_request(
+        request,
+        compressor=fake_compress,
+        metrics=HeadroomUsageMetrics(),
+    )
+
+    assert outcome.compressed is True
+    assert outcome.request.instructions == whitespace
+    assert outcome.request.input == "compressed user"
+    assert request.instructions == whitespace
+
+
+@pytest.mark.asyncio
+async def test_tiny_prompt_bypasses_headroom_import(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = ResponsesRequest(model="m", instructions=" " * 200_000, input="hi")
+
+    def unexpected_import() -> None:
+        raise AssertionError("Headroom should not be imported for ineligible text")
+
+    monkeypatch.setattr(
+        headroom_compression,
+        "_import_headroom_compress",
+        unexpected_import,
+    )
+
+    outcome = await compress_responses_request(
+        request,
+        metrics=HeadroomUsageMetrics(),
+    )
+
+    assert outcome.request is request
+    assert outcome.reason == "below_min_tokens"
+    assert outcome.compressed is False
+    assert outcome.fail_open is False
+
+
+@pytest.mark.asyncio
+async def test_sufficiently_large_prompt_still_imports_and_calls_headroom(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = ResponsesRequest(model="m", input="x" * 120)
+    calls = 0
+
+    def fake_compress(messages: list[dict[str, Any]], **_: Any) -> FakeHeadroomResult:
+        nonlocal calls
+        calls += 1
+        return FakeHeadroomResult(
+            messages=[{"role": "user", "content": "compressed user"}]
+        )
+
+    monkeypatch.setattr(
+        headroom_compression,
+        "_import_headroom_compress",
+        lambda: fake_compress,
+    )
+
+    outcome = await compress_responses_request(
+        request,
+        metrics=HeadroomUsageMetrics(),
+    )
+
+    assert calls == 1
+    assert outcome.compressed is True
+    assert outcome.request.input == "compressed user"
+
+
+@pytest.mark.asyncio
+async def test_custom_profile_never_uses_default_profile_bypass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = ResponsesRequest(model="m", input="hi")
+    calls = 0
+
+    def fake_compress(messages: list[dict[str, Any]], **_: Any) -> FakeHeadroomResult:
+        nonlocal calls
+        calls += 1
+        return FakeHeadroomResult(
+            messages=[{"role": "user", "content": "compressed user"}]
+        )
+
+    monkeypatch.setattr(
+        headroom_compression,
+        "_import_headroom_compress",
+        lambda: fake_compress,
+    )
+
+    outcome = await compress_responses_request(
+        request,
+        config=HeadroomCompressionConfig(profile="custom"),
+        metrics=HeadroomUsageMetrics(),
+    )
+
+    assert calls == 1
+    assert outcome.compressed is True
+    assert outcome.request.input == "compressed user"
 
 
 @pytest.mark.asyncio
@@ -372,7 +487,7 @@ async def test_real_headroom_smoke_uses_memory_only_state(
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("HEADROOM_CCR_BACKEND", raising=False)
     monkeypatch.delenv("HEADROOM_WORKSPACE_DIR", raising=False)
-    request = ResponsesRequest(model="test-model", input="hello world " * 20)
+    request = ResponsesRequest(model="test-model", input="hello world " * 250)
 
     outcome = await compress_responses_request(
         request,

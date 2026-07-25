@@ -265,7 +265,7 @@ def test_sync_fails_closed_on_noncanonical_kimi_discovery(
         codex_sync.sync(target=target)
 
     assert target.read_text(encoding="utf-8") == baseline
-    assert not (tmp_path / "kimi.config.toml").exists()
+    assert not (tmp_path / "reverso-kimi.config.toml").exists()
 
 
 @pytest.mark.parametrize(
@@ -296,7 +296,7 @@ def test_sync_rejects_injected_stale_kimi_model_ids(
         )
 
     assert target.read_text(encoding="utf-8") == baseline
-    assert not (tmp_path / "kimi.config.toml").exists()
+    assert not (tmp_path / "reverso-kimi.config.toml").exists()
 
 
 def test_sync_fails_closed_when_all_default_provider_fetches_fail(
@@ -319,6 +319,276 @@ def test_sync_fails_closed_when_all_default_provider_fetches_fail(
         codex_sync.sync(target=target)
 
     assert target.read_text(encoding="utf-8") == baseline
+
+
+def test_sync_preserves_managed_artifacts_when_required_discovery_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+    catalog_dir = tmp_path / "reverso"
+    catalog_dir.mkdir()
+    profile = tmp_path / "reverso-copilot.config.toml"
+    catalog = catalog_dir / "copilot.json"
+    profile.write_text(
+        codex_sync._render_profile_file(
+            model="gpt-5.5",
+            model_provider="reverso_copilot",
+            catalog_path=catalog,
+        ),
+        encoding="utf-8",
+    )
+    catalog.write_bytes(b'{"models":[{"slug":"last-known-good"}]}\n')
+    before = {path: path.read_bytes() for path in (target, profile, catalog)}
+
+    def _default_fetcher(_base_url: str) -> codex_sync.ModelFetcher:
+        payload = _fixture_payload()
+
+        def _fetch(prefix: str) -> list[str]:
+            if prefix == "copilot":
+                raise httpx.ConnectError("transient discovery failure")
+            return list(payload[prefix])
+
+        return _fetch
+
+    monkeypatch.setattr(codex_sync, "_default_fetcher", _default_fetcher)
+
+    with pytest.raises(
+        RuntimeError,
+        match="required reverso provider model discovery failed for: copilot",
+    ):
+        codex_sync.sync(target=target, catalog_dir=catalog_dir)
+
+    assert {path: path.read_bytes() for path in before} == before
+    assert not (tmp_path / codex_sync.PROFILE_ARCHIVE_DIR).exists()
+
+
+@pytest.mark.parametrize(
+    ("prefix", "models"),
+    [
+        ("claude", []),
+        ("copilot", ["not-a-supported-copilot-model"]),
+    ],
+)
+def test_sync_preserves_managed_artifacts_when_required_discovery_is_empty(
+    tmp_path: Path,
+    prefix: str,
+    models: list[str],
+) -> None:
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+    catalog_dir = tmp_path / "reverso"
+    catalog_dir.mkdir()
+    managed_artifacts = [target]
+    for managed_prefix in codex_sync.MANAGED_REVERSO_PROFILE_PREFIXES:
+        profile = tmp_path / f"reverso-{managed_prefix}.config.toml"
+        catalog = catalog_dir / f"{managed_prefix}.json"
+        profile.write_text(
+            codex_sync._render_profile_file(
+                model="last-known-good",
+                model_provider=f"reverso_{managed_prefix}",
+                catalog_path=catalog,
+            ),
+            encoding="utf-8",
+        )
+        catalog.write_bytes(b'{"models":[{"slug":"last-known-good"}]}\n')
+        managed_artifacts.extend((profile, catalog))
+    before = {path: path.read_bytes() for path in managed_artifacts}
+    payload = _fixture_payload()
+    payload[prefix] = models
+
+    with pytest.raises(
+        RuntimeError,
+        match="required reverso provider model discovery returned no compatible models",
+    ):
+        codex_sync.sync(
+            target=target,
+            fetcher=_make_fetcher(payload),
+            catalog_dir=catalog_dir,
+        )
+
+    assert {path: path.read_bytes() for path in before} == before
+    assert not (tmp_path / codex_sync.PROFILE_ARCHIVE_DIR).exists()
+
+
+def test_sync_preserves_optional_codex_direct_artifacts_when_unavailable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+    catalog_dir = tmp_path / "reverso"
+    catalog_dir.mkdir()
+    profile = tmp_path / "reverso-codex-direct.config.toml"
+    catalog = catalog_dir / "codex-direct.json"
+    profile.write_text(
+        codex_sync._render_profile_file(
+            model="gpt-5.5",
+            model_provider="reverso_codex-direct",
+            catalog_path=catalog,
+        ),
+        encoding="utf-8",
+    )
+    catalog.write_bytes(b'{"models":[{"slug":"last-known-good"}]}\n')
+    before = {path: path.read_bytes() for path in (profile, catalog)}
+    payload = _fixture_payload()
+
+    def _default_fetcher(_base_url: str) -> codex_sync.ModelFetcher:
+        def _fetch(prefix: str) -> list[str]:
+            if prefix == "codex-direct":
+                raise httpx.HTTPStatusError(
+                    "known compatibility failure",
+                    request=httpx.Request("GET", "http://127.0.0.1"),
+                    response=httpx.Response(502),
+                )
+            return list(payload[prefix])
+
+        return _fetch
+
+    monkeypatch.setattr(codex_sync, "_default_fetcher", _default_fetcher)
+
+    result = codex_sync.sync(target=target, catalog_dir=catalog_dir)
+
+    assert "codex-direct" not in {
+        provider.prefix for provider in result.provider_models
+    }
+    assert {path: path.read_bytes() for path in before} == before
+
+
+@pytest.mark.parametrize("fully_filtered", [False, True])
+def test_sync_preserves_optional_codex_direct_artifacts_when_listing_is_empty(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fully_filtered: bool,
+) -> None:
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+    catalog_dir = tmp_path / "reverso"
+    catalog_dir.mkdir()
+    profile = tmp_path / "reverso-codex-direct.config.toml"
+    catalog = catalog_dir / "codex-direct.json"
+    profile.write_text(
+        codex_sync._render_profile_file(
+            model="gpt-5.5",
+            model_provider="reverso_codex-direct",
+            catalog_path=catalog,
+        ),
+        encoding="utf-8",
+    )
+    catalog.write_bytes(b'{"models":[{"slug":"last-known-good"}]}\n')
+    before = {path: path.read_bytes() for path in (profile, catalog)}
+    payload = _fixture_payload()
+    payload["codex-direct"] = (
+        ["filtered-by-compatibility-policy"] if fully_filtered else []
+    )
+    if fully_filtered:
+        original_filter = codex_sync._codex_responses_compatible_models
+
+        def filter_models(prefix: str, model_ids: list[str]) -> list[str]:
+            if prefix == "codex-direct":
+                return []
+            return original_filter(prefix, model_ids)
+
+        monkeypatch.setattr(
+            codex_sync, "_codex_responses_compatible_models", filter_models
+        )
+
+    result = codex_sync.sync(
+        target=target,
+        fetcher=_make_fetcher(payload),
+        catalog_dir=catalog_dir,
+    )
+
+    assert (
+        next(
+            provider.models
+            for provider in result.provider_models
+            if provider.prefix == "codex-direct"
+        )
+        == ()
+    )
+    assert {path: path.read_bytes() for path in before} == before
+
+
+@pytest.mark.parametrize(
+    ("prefix", "env_name"),
+    [
+        ("codex-direct", "REVERSO_CODEX_DIRECT_BACKEND"),
+        ("openai-pass-through", "REVERSO_OPENAI_BACKEND"),
+    ],
+)
+def test_sync_archives_disabled_marker_owned_optional_profile_and_catalog(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    prefix: str,
+    env_name: str,
+) -> None:
+    monkeypatch.setenv(env_name, "0")
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+    catalog_dir = tmp_path / "reverso"
+    catalog_dir.mkdir()
+    profile = tmp_path / f"reverso-{prefix}.config.toml"
+    catalog = catalog_dir / f"{prefix}.json"
+    profile.write_text(
+        codex_sync._render_profile_file(
+            model="gpt-5.5",
+            model_provider=f"reverso_{prefix}",
+            catalog_path=catalog,
+        ),
+        encoding="utf-8",
+    )
+    catalog.write_bytes(b'{"models":[{"slug":"last-known-good"}]}\n')
+
+    result = codex_sync.sync(
+        target=target,
+        fetcher=_make_fetcher(),
+        catalog_dir=catalog_dir,
+    )
+
+    assert not profile.exists()
+    assert not catalog.exists()
+    archived_names = {
+        path.name.split(codex_sync.BACKUP_SUFFIX_PREFIX)[0]
+        for path in result.archived_profiles
+    }
+    assert archived_names >= {
+        f"reverso-{prefix}.config.toml",
+        f"{prefix}.json",
+    }
+
+
+def test_sync_preserves_disabled_unmarked_codex_direct_profile_and_catalog(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("REVERSO_CODEX_DIRECT_BACKEND", "0")
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+    catalog_dir = tmp_path / "reverso"
+    catalog_dir.mkdir()
+    profile = tmp_path / "reverso-codex-direct.config.toml"
+    catalog = catalog_dir / "codex-direct.json"
+    profile_bytes = (
+        b'model = "user-owned"\n'
+        b'model_provider = "reverso_codex-direct"\n'
+        + f'model_catalog_json = "{catalog}"\n'.encode()
+    )
+    catalog_bytes = b'{"models":[{"slug":"user-owned"}]}\n'
+    profile.write_bytes(profile_bytes)
+    catalog.write_bytes(catalog_bytes)
+
+    result = codex_sync.sync(
+        target=target,
+        fetcher=_make_fetcher(),
+        catalog_dir=catalog_dir,
+    )
+
+    assert profile.read_bytes() == profile_bytes
+    assert catalog.read_bytes() == catalog_bytes
+    assert profile not in result.archived_profiles
+    assert catalog not in result.archived_profiles
 
 
 def test_default_model_for_prefers_deepseek_v4_pro() -> None:
@@ -357,15 +627,15 @@ def test_profile_files_emit_one_file_per_live_prefix(
     files = codex_sync._reverso_profile_files(pm, tmp_path, catalog_dir)
 
     assert [path.name for path in files] == [
-        "claude.config.toml",
-        "copilot.config.toml",
-        "auggie.config.toml",
-        "deepseek.config.toml",
-        "kimi.config.toml",
-        "codex-direct.config.toml",
+        "reverso-claude.config.toml",
+        "reverso-copilot.config.toml",
+        "reverso-auggie.config.toml",
+        "reverso-deepseek.config.toml",
+        "reverso-kimi.config.toml",
+        "reverso-codex-direct.config.toml",
     ]
     parsed = {
-        path.stem.removesuffix(".config"): tomllib.loads(text)
+        path.stem.removesuffix(".config").removeprefix("reverso-"): tomllib.loads(text)
         for path, text in files.items()
     }
     assert parsed["claude"]["model_provider"] == "reverso_claude"
@@ -398,7 +668,7 @@ def test_reverso_profile_files_skip_prefixes_without_models(
         codex_sync.ProviderModels("deepseek", ()),
     ]
     files = codex_sync._reverso_profile_files(pm, tmp_path, tmp_path)
-    assert {path.name for path in files} == {"copilot.config.toml"}
+    assert {path.name for path in files} == {"reverso-copilot.config.toml"}
 
 
 def test_sync_writes_profiles_for_each_live_prefix(tmp_path: Path) -> None:
@@ -412,17 +682,306 @@ def test_sync_writes_profiles_for_each_live_prefix(tmp_path: Path) -> None:
 
     assert result.changed is True
     for prefix in ("claude", "copilot", "auggie", "deepseek"):
-        profile = tomllib.loads((tmp_path / f"{prefix}.config.toml").read_text())
+        profile = tomllib.loads(
+            (tmp_path / f"reverso-{prefix}.config.toml").read_text()
+        )
         assert profile["model_provider"] == f"reverso_{prefix}"
         assert profile["model_catalog_json"] == str(catalog_dir / f"{prefix}.json")
         assert profile["model"]
-    kimi = tomllib.loads((tmp_path / "kimi.config.toml").read_text())
+    kimi = tomllib.loads((tmp_path / "reverso-kimi.config.toml").read_text())
     assert kimi["model_context_window"] == 1048576
     openai = tomllib.loads((tmp_path / "openai.config.toml").read_text())
     minimax = tomllib.loads((tmp_path / "minimax.config.toml").read_text())
     assert openai == {"model": "gpt-5.5", "model_provider": "openai"}
     assert minimax["model_provider"] == "minimax"
     assert minimax["model"] == "MiniMax-M3"
+
+
+def test_sync_migrates_only_marker_owned_legacy_bare_reverso_profile(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+    legacy = tmp_path / "kimi.config.toml"
+    legacy.write_text(
+        codex_sync._render_profile_file(
+            model="kimi-k2.5",
+            model_provider="reverso_kimi",
+            catalog_path=tmp_path / "reverso" / "kimi.json",
+        ),
+        encoding="utf-8",
+    )
+    events: list[tuple[str, str]] = []
+    atomic_write = codex_sync._atomic_write
+    archive_file = codex_sync._archive_file
+
+    def recording_write(path: Path, text: str) -> None:
+        events.append(("write", path.name))
+        atomic_write(path, text)
+
+    def recording_archive(
+        path: Path,
+        archive_dir: Path,
+        *,
+        now: datetime.datetime | None = None,
+        dry_run: bool = False,
+    ) -> Path:
+        events.append(("archive", path.name))
+        return archive_file(path, archive_dir, now=now, dry_run=dry_run)
+
+    monkeypatch.setattr(codex_sync, "_atomic_write", recording_write)
+    monkeypatch.setattr(codex_sync, "_archive_file", recording_archive)
+
+    result = codex_sync.sync(
+        target=target,
+        prefixes=("kimi",),
+        fetcher=_make_fetcher({"kimi": ["kimi-k3"]}),
+        catalog_dir=tmp_path / "reverso",
+    )
+
+    canonical = tmp_path / "reverso-kimi.config.toml"
+    assert tomllib.loads(canonical.read_text())["model"] == "kimi-k3"
+    assert not legacy.exists()
+    assert events.index(("write", canonical.name)) < events.index(
+        ("archive", legacy.name)
+    )
+    assert any(
+        path.name.startswith("kimi.config.toml" + codex_sync.BACKUP_SUFFIX_PREFIX)
+        for path in result.archived_profiles
+    )
+
+
+def test_sync_preserves_unmarked_legacy_bare_reverso_profile(tmp_path: Path) -> None:
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+    legacy = tmp_path / "kimi.config.toml"
+    legacy_text = 'model = "user-kimi"\nmodel_provider = "reverso_kimi"\n'
+    legacy.write_text(legacy_text, encoding="utf-8")
+
+    result = codex_sync.sync(
+        target=target,
+        prefixes=("kimi",),
+        fetcher=_make_fetcher({"kimi": ["kimi-k3"]}),
+        catalog_dir=tmp_path / "reverso",
+    )
+
+    assert legacy.read_text(encoding="utf-8") == legacy_text
+    assert (tmp_path / "reverso-kimi.config.toml").exists()
+    assert not any(
+        path.name.startswith("kimi.config.toml") for path in result.archived_profiles
+    )
+
+
+def test_sync_fails_closed_on_unmarked_canonical_reverso_profile_conflict(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+    canonical = tmp_path / "reverso-kimi.config.toml"
+    canonical.write_text(
+        'model = "user-kimi"\nmodel_provider = "reverso_kimi"\n',
+        encoding="utf-8",
+    )
+    catalog_dir = tmp_path / "reverso"
+    catalog_dir.mkdir()
+    catalog = catalog_dir / "kimi.json"
+    catalog.write_text('{"models": ["user-owned"]}\n', encoding="utf-8")
+    before = {
+        path.relative_to(tmp_path): path.read_bytes()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
+
+    with pytest.raises(RuntimeError, match="unmanaged canonical Reverso profile"):
+        codex_sync.sync(
+            target=target,
+            prefixes=("kimi",),
+            fetcher=_make_fetcher({"kimi": ["kimi-k3"]}),
+            catalog_dir=catalog_dir,
+        )
+
+    after = {
+        path.relative_to(tmp_path): path.read_bytes()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
+    assert after == before
+
+
+def test_sync_fails_closed_on_unowned_catalog_before_any_write(tmp_path: Path) -> None:
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+    catalog_dir = tmp_path / "reverso"
+    catalog_dir.mkdir()
+
+    owned_catalog = catalog_dir / "claude.json"
+    owned_profile = tmp_path / "reverso-claude.config.toml"
+    owned_profile.write_text(
+        codex_sync._render_profile_file(
+            model="last-known-good",
+            model_provider="reverso_claude",
+            catalog_path=owned_catalog,
+        ),
+        encoding="utf-8",
+    )
+    owned_catalog.write_bytes(b'{"models":[{"slug":"owned-before"}]}\n')
+    unowned_catalog = catalog_dir / "copilot.json"
+    unowned_catalog.write_bytes(b'{"models":[{"slug":"user-owned"}]}\n')
+    before = {
+        path.relative_to(tmp_path): path.read_bytes()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
+
+    with pytest.raises(
+        RuntimeError,
+        match="unmanaged per-provider catalog conflicts",
+    ):
+        codex_sync.sync(
+            target=target,
+            fetcher=_make_fetcher(),
+            catalog_dir=catalog_dir,
+        )
+
+    after = {
+        path.relative_to(tmp_path): path.read_bytes()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
+    assert after == before
+
+
+def test_sync_rejects_byte_identical_unowned_catalog_before_any_write(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+    catalog_dir = tmp_path / "reverso"
+    catalog_dir.mkdir()
+    catalog = catalog_dir / "kimi.json"
+    catalog.write_text(
+        codex_sync._generate_catalog_json(
+            codex_sync.ProviderModels("kimi", ("kimi-k3",))
+        ),
+        encoding="utf-8",
+    )
+    before = {
+        path.relative_to(tmp_path): path.read_bytes()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
+
+    with pytest.raises(
+        RuntimeError,
+        match="unmanaged per-provider catalog conflicts",
+    ):
+        codex_sync.sync(
+            target=target,
+            prefixes=("kimi",),
+            fetcher=_make_fetcher({"kimi": ["kimi-k3"]}),
+            catalog_dir=catalog_dir,
+        )
+
+    after = {
+        path.relative_to(tmp_path): path.read_bytes()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
+    assert after == before
+
+
+@pytest.mark.parametrize(
+    "target_kind",
+    [
+        "config",
+        "canonical",
+        "direct",
+        "legacy",
+        "catalog",
+        "archive",
+        "stale-variant",
+    ],
+)
+@pytest.mark.parametrize("dangling", [False, True])
+def test_sync_rejects_symlinked_mutation_targets_without_writing(
+    tmp_path: Path,
+    target_kind: str,
+    dangling: bool,
+) -> None:
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+    catalog_dir = tmp_path / "reverso"
+    selected = {
+        "config": target,
+        "canonical": tmp_path / "reverso-kimi.config.toml",
+        "direct": tmp_path / "openai.config.toml",
+        "legacy": tmp_path / "kimi.config.toml",
+        "catalog": catalog_dir / "kimi.json",
+        "archive": tmp_path / codex_sync.PROFILE_ARCHIVE_DIR,
+        "stale-variant": tmp_path / "deepseek-gpt54.config.toml",
+    }[target_kind]
+    selected.parent.mkdir(parents=True, exist_ok=True)
+    victim = tmp_path / f"{target_kind}-victim"
+    if target_kind == "config":
+        original_config = target.read_bytes()
+        target.unlink()
+        victim.write_bytes(original_config)
+    elif not dangling:
+        if target_kind == "archive":
+            victim.mkdir()
+        else:
+            victim.write_bytes(b"victim-bytes\n")
+    selected.symlink_to(
+        tmp_path / f"{target_kind}-missing" if dangling else victim,
+        target_is_directory=target_kind == "archive",
+    )
+    victim_before = victim.read_bytes() if victim.is_file() else None
+
+    with pytest.raises(RuntimeError, match="must not be a symlink"):
+        codex_sync.sync(
+            target=target,
+            prefixes=("kimi",),
+            fetcher=_make_fetcher({"kimi": ["kimi-k3"]}),
+            catalog_dir=catalog_dir,
+        )
+
+    assert selected.is_symlink()
+    if victim_before is not None:
+        assert victim.read_bytes() == victim_before
+    assert (
+        not (tmp_path / "reverso-kimi.config.toml").exists()
+        or (tmp_path / "reverso-kimi.config.toml").is_symlink()
+    )
+
+
+def test_sync_atomically_updates_marker_owned_canonical_reverso_profile(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+    canonical = tmp_path / "reverso-kimi.config.toml"
+    canonical.write_text(
+        codex_sync._render_profile_file(
+            model="kimi-k2.5",
+            model_provider="reverso_kimi",
+            catalog_path=tmp_path / "reverso" / "kimi.json",
+        ),
+        encoding="utf-8",
+    )
+
+    result = codex_sync.sync(
+        target=target,
+        prefixes=("kimi",),
+        fetcher=_make_fetcher({"kimi": ["kimi-k3"]}),
+        catalog_dir=tmp_path / "reverso",
+    )
+
+    assert tomllib.loads(canonical.read_text())["model"] == "kimi-k3"
+    assert any(
+        path.name.startswith(canonical.name + codex_sync.BACKUP_SUFFIX_PREFIX)
+        for path in result.profile_backups
+    )
 
 
 def test_kimi_sync_rejects_mixed_injected_discovery_before_filtering(
@@ -442,7 +1001,7 @@ def test_kimi_sync_rejects_mixed_injected_discovery_before_filtering(
         codex_sync.sync(target=target, fetcher=fetch, catalog_dir=catalog_dir)
 
     assert target.read_text(encoding="utf-8") == baseline
-    assert not (tmp_path / "kimi.config.toml").exists()
+    assert not (tmp_path / "reverso-kimi.config.toml").exists()
     assert not (catalog_dir / "kimi.json").exists()
 
 
@@ -456,10 +1015,10 @@ def test_sync_disables_reasoning_summary_for_unsupported_profiles(
         target=target, fetcher=_make_fetcher(), catalog_dir=tmp_path / "reverso"
     )
 
-    claude = tomllib.loads((tmp_path / "claude.config.toml").read_text())
-    auggie = tomllib.loads((tmp_path / "auggie.config.toml").read_text())
-    copilot = tomllib.loads((tmp_path / "copilot.config.toml").read_text())
-    deepseek = tomllib.loads((tmp_path / "deepseek.config.toml").read_text())
+    claude = tomllib.loads((tmp_path / "reverso-claude.config.toml").read_text())
+    auggie = tomllib.loads((tmp_path / "reverso-auggie.config.toml").read_text())
+    copilot = tomllib.loads((tmp_path / "reverso-copilot.config.toml").read_text())
+    deepseek = tomllib.loads((tmp_path / "reverso-deepseek.config.toml").read_text())
 
     assert claude["model_reasoning_summary"] == "none"
     assert auggie["model_reasoning_summary"] == "none"
@@ -489,11 +1048,11 @@ def test_sync_uses_model_exposure_profile_prefix_interface(
 
     assert seen == ["copilot"]
     assert {path.name for path in result.profiles} == {
-        "copilot.config.toml",
+        "reverso-copilot.config.toml",
         "openai.config.toml",
         "minimax.config.toml",
     }
-    assert not (tmp_path / "claude.config.toml").exists()
+    assert not (tmp_path / "reverso-claude.config.toml").exists()
 
 
 def test_sync_honors_model_exposure_catalog_policy(
@@ -526,7 +1085,7 @@ def test_sync_honors_model_exposure_catalog_policy(
         catalog_dir=tmp_path / "rev",
     )
 
-    profile = tomllib.loads((tmp_path / "copilot.config.toml").read_text())
+    profile = tomllib.loads((tmp_path / "reverso-copilot.config.toml").read_text())
     assert "model_catalog_json" not in profile
     assert result.catalogs == []
     assert not (tmp_path / "rev" / "copilot.json").exists()
@@ -544,7 +1103,10 @@ def test_sync_archives_only_known_generated_variant_profiles(tmp_path: Path) -> 
         tmp_path / "minimax-spark.config.toml",
     ]
     for path in stale:
-        path.write_text('model = "old"\n', encoding="utf-8")
+        path.write_text(
+            codex_sync.PROFILE_MANAGED_MARKER + '\nmodel = "old"\n',
+            encoding="utf-8",
+        )
     user_owned = tmp_path / "deepseek-custom.config.toml"
     user_owned.write_text('model = "keep-me"\n', encoding="utf-8")
 
@@ -560,6 +1122,21 @@ def test_sync_archives_only_known_generated_variant_profiles(tmp_path: Path) -> 
     assert user_owned.exists()
     archive_dir = tmp_path / codex_sync.PROFILE_ARCHIVE_DIR
     assert archive_dir.is_dir()
+
+
+def test_sync_preserves_unmarked_known_variant_profile(tmp_path: Path) -> None:
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+    variant = tmp_path / "deepseek-gpt54.config.toml"
+    before = b'model = "user-owned"\n'
+    variant.write_bytes(before)
+
+    result = codex_sync.sync(
+        target=target, fetcher=_make_fetcher(), catalog_dir=tmp_path / "reverso"
+    )
+
+    assert variant.read_bytes() == before
+    assert variant not in result.archived_profiles
 
 
 def test_sync_preserves_unmarked_direct_provider_profiles(tmp_path: Path) -> None:
@@ -624,7 +1201,7 @@ def test_sync_archives_stale_managed_reverso_profile_and_catalog(
     target.write_text(_baseline_config_text(), encoding="utf-8")
     catalog_dir = tmp_path / "reverso"
     catalog_dir.mkdir()
-    stale_profile = tmp_path / "claude.config.toml"
+    stale_profile = tmp_path / "reverso-claude.config.toml"
     stale_catalog = catalog_dir / "claude.json"
     stale_profile.write_text(
         codex_sync._render_profile_file(
@@ -635,7 +1212,7 @@ def test_sync_archives_stale_managed_reverso_profile_and_catalog(
         encoding="utf-8",
     )
     stale_catalog.write_text('{"models": []}\n', encoding="utf-8")
-    user_profile = tmp_path / "auggie.config.toml"
+    user_profile = tmp_path / "reverso-auggie.config.toml"
     user_profile.write_text(
         'model = "custom-auggie"\nmodel_provider = "reverso_auggie"\n',
         encoding="utf-8",
@@ -643,6 +1220,7 @@ def test_sync_archives_stale_managed_reverso_profile_and_catalog(
 
     result = codex_sync.sync(
         target=target,
+        prefixes=("copilot", "deepseek", "kimi"),
         fetcher=_make_fetcher(
             {
                 "copilot": ["gpt-5.5"],
@@ -660,9 +1238,9 @@ def test_sync_archives_stale_managed_reverso_profile_and_catalog(
         path.name.split(codex_sync.BACKUP_SUFFIX_PREFIX)[0]
         for path in result.archived_profiles
     }
-    assert "claude.config.toml" in archived_names
+    assert "reverso-claude.config.toml" in archived_names
     assert "claude.json" in archived_names
-    assert "auggie.config.toml" not in archived_names
+    assert "reverso-auggie.config.toml" not in archived_names
 
 
 def test_sync_preserves_all_kimi_output_bytes_when_live_discovery_is_invalid(
@@ -672,9 +1250,9 @@ def test_sync_preserves_all_kimi_output_bytes_when_live_discovery_is_invalid(
     target.write_text(_baseline_config_text(), encoding="utf-8")
     catalog_dir = tmp_path / "reverso"
     catalog_dir.mkdir()
-    stale_profile = tmp_path / "kimi.config.toml"
+    stale_profile = tmp_path / "reverso-kimi.config.toml"
     stale_catalog = catalog_dir / "kimi.json"
-    other_profile = tmp_path / "claude.config.toml"
+    other_profile = tmp_path / "reverso-claude.config.toml"
     other_catalog = catalog_dir / "claude.json"
     stale_profile.write_text(
         codex_sync._render_profile_file(
@@ -724,7 +1302,7 @@ def test_sync_preserves_user_owned_kimi_output_when_live_discovery_is_missing(
     target.write_text(_baseline_config_text(), encoding="utf-8")
     catalog_dir = tmp_path / "reverso"
     catalog_dir.mkdir()
-    user_profile = tmp_path / "kimi.config.toml"
+    user_profile = tmp_path / "reverso-kimi.config.toml"
     user_catalog = catalog_dir / "user-kimi.json"
     user_profile.write_text(
         f'model = "user-kimi"\nmodel_catalog_json = "{user_catalog}"\n',
@@ -846,7 +1424,7 @@ def test_sync_strips_legacy_clutter_blocks(tmp_path: Path) -> None:
     assert "[model_providers.reverso_claude__claude-fable-5]" not in text
     parsed = tomllib.loads(text)
     assert "[profiles." not in text
-    profile = tomllib.loads((tmp_path / "copilot.config.toml").read_text())
+    profile = tomllib.loads((tmp_path / "reverso-copilot.config.toml").read_text())
     assert profile["model_provider"] == "reverso_copilot"
     # Hand-managed base provider table preserved.
     assert "[model_providers.reverso_copilot]" in text
@@ -987,10 +1565,10 @@ def test_sync_strips_legacy_block_and_creates_config_backup(tmp_path: Path) -> N
     assert codex_sync.PROFILES_BEGIN not in new_text
     assert codex_sync.PROFILES_END not in new_text
     assert "[profiles." not in new_text
-    assert (tmp_path / "claude.config.toml").exists()
-    assert (tmp_path / "copilot.config.toml").exists()
-    assert (tmp_path / "auggie.config.toml").exists()
-    assert (tmp_path / "deepseek.config.toml").exists()
+    assert (tmp_path / "reverso-claude.config.toml").exists()
+    assert (tmp_path / "reverso-copilot.config.toml").exists()
+    assert (tmp_path / "reverso-auggie.config.toml").exists()
+    assert (tmp_path / "reverso-deepseek.config.toml").exists()
 
 
 def test_sync_is_idempotent_no_diff_no_backup(tmp_path: Path) -> None:
@@ -1042,16 +1620,11 @@ def test_sync_keeps_only_five_newest_backups(tmp_path: Path) -> None:
     target = tmp_path / "config.toml"
     target.write_text(_baseline_config_text(), encoding="utf-8")
 
-    payloads: list[dict[str, list[str]]] = [
-        {
-            "claude": [f"claude-rev-{i}"],
-            "copilot": [],
-            "auggie": [],
-            "deepseek": [],
-            "kimi": ["kimi-k3"],
-        }
-        for i in range(7)
-    ]
+    payloads: list[dict[str, list[str]]] = []
+    for i in range(7):
+        payload = _fixture_payload()
+        payload["claude"] = [f"claude-rev-{i}"]
+        payloads.append(payload)
 
     base_ts = datetime.datetime(2026, 6, 10, 12, 0, 0, tzinfo=datetime.UTC)
     for i, payload in enumerate(payloads):
@@ -1066,7 +1639,9 @@ def test_sync_keeps_only_five_newest_backups(tmp_path: Path) -> None:
     backups = sorted(
         p
         for p in target.parent.iterdir()
-        if p.name.startswith("claude.config.toml" + codex_sync.BACKUP_SUFFIX_PREFIX)
+        if p.name.startswith(
+            "reverso-claude.config.toml" + codex_sync.BACKUP_SUFFIX_PREFIX
+        )
     )
     assert len(backups) == codex_sync.BACKUPS_KEPT
 
@@ -1092,7 +1667,7 @@ def test_sync_no_existing_file_creates_target_no_backup(tmp_path: Path) -> None:
     assert target.exists()
     text = target.read_text(encoding="utf-8")
     assert codex_sync.PROFILES_BEGIN not in text
-    assert (tmp_path / "fresh" / "claude.config.toml").exists()
+    assert (tmp_path / "fresh" / "reverso-claude.config.toml").exists()
 
 
 def test_sync_default_catalog_dir_is_config_parent_reverso(tmp_path: Path) -> None:
@@ -1190,6 +1765,30 @@ def test_extract_model_ids_handles_malformed_payloads() -> None:
     assert codex_sync._extract_model_ids("nope") == []
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        [],
+        {},
+        {"data": "not a list"},
+        {"data": [None]},
+        {"data": [{}]},
+        {"data": [{"id": ""}]},
+    ],
+)
+def test_default_fetcher_rejects_malformed_model_listing(
+    monkeypatch: pytest.MonkeyPatch,
+    payload: object,
+) -> None:
+    def get(url: str, *, timeout: float) -> httpx.Response:
+        return httpx.Response(200, json=payload, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(codex_sync.httpx, "get", get)
+
+    with pytest.raises(codex_sync.ModelDiscoveryError):
+        codex_sync._default_fetcher("http://127.0.0.1:64946")("copilot")
+
+
 def test_fetch_all_dedupes_model_ids_per_prefix() -> None:
     def _dup_fetcher(prefix: str) -> list[str]:
         return ["a", "b", "a", "c", "b"]
@@ -1223,6 +1822,45 @@ def test_main_dry_run_does_not_write(
     assert "claude-fable-5" in out
 
 
+def test_main_dry_run_reports_full_migration_plan_without_writing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+    legacy = tmp_path / "kimi.config.toml"
+    legacy.write_text(
+        codex_sync._render_profile_file(
+            model="kimi-k2.5",
+            model_provider="reverso_kimi",
+            catalog_path=tmp_path / "reverso" / "kimi.json",
+        ),
+        encoding="utf-8",
+    )
+    before = {path: path.read_bytes() for path in (target, legacy)}
+    monkeypatch.setenv("REVERSO_CODEX_CONFIG", str(target))
+    monkeypatch.setenv("REVERSO_CODEX_CATALOG_DIR", str(tmp_path / "reverso"))
+    monkeypatch.setattr(
+        codex_sync,
+        "_default_fetcher",
+        lambda _base_url: _make_fetcher(),
+    )
+
+    rc = codex_sync.main(["--dry-run"])
+
+    assert rc == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["changed"] is True
+    assert any(
+        Path(path).name.startswith("kimi.config.toml" + codex_sync.BACKUP_SUFFIX_PREFIX)
+        for path in report["archived_profiles"]
+    )
+    assert {path: path.read_bytes() for path in before} == before
+    assert not (tmp_path / "reverso-kimi.config.toml").exists()
+    assert not (tmp_path / codex_sync.PROFILE_ARCHIVE_DIR).exists()
+
+
 def test_main_dry_run_reports_invalid_kimi_discovery_without_writing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1231,7 +1869,7 @@ def test_main_dry_run_reports_invalid_kimi_discovery_without_writing(
     target = tmp_path / "config.toml"
     catalog_dir = tmp_path / "reverso"
     catalog_dir.mkdir()
-    profile = tmp_path / "kimi.config.toml"
+    profile = tmp_path / "reverso-kimi.config.toml"
     catalog = catalog_dir / "kimi.json"
     target.write_bytes(b"config-before\n")
     profile.write_bytes(b"profile-before\n")
@@ -1255,6 +1893,64 @@ def test_main_dry_run_reports_invalid_kimi_discovery_without_writing(
         "reverso-codex-sync: live Kimi model discovery must contain only kimi-k3\n"
     )
     assert {path: path.read_bytes() for path in before} == before
+
+
+def test_main_dry_run_fails_on_unmanaged_profile_conflict_without_writing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+    canonical = tmp_path / "reverso-kimi.config.toml"
+    canonical.write_text(
+        'model = "user-kimi"\nmodel_provider = "reverso_kimi"\n',
+        encoding="utf-8",
+    )
+    before = {path: path.read_bytes() for path in (target, canonical)}
+    monkeypatch.setenv("REVERSO_CODEX_CONFIG", str(target))
+    monkeypatch.setenv("REVERSO_CODEX_CATALOG_DIR", str(tmp_path / "reverso"))
+    monkeypatch.setattr(
+        codex_sync,
+        "_default_fetcher",
+        lambda _base_url: _make_fetcher(),
+    )
+
+    rc = codex_sync.main(["--dry-run"])
+
+    assert rc == 3
+    assert "unmanaged canonical Reverso profile" in capsys.readouterr().err
+    assert {path: path.read_bytes() for path in before} == before
+    assert not (tmp_path / "reverso").exists()
+
+
+def test_main_dry_run_fails_on_partial_required_discovery_without_writing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    target = tmp_path / "config.toml"
+    baseline = _baseline_config_text()
+    target.write_text(baseline, encoding="utf-8")
+    payload = _fixture_payload()
+
+    def fetch(prefix: str) -> list[str]:
+        if prefix == "copilot":
+            raise httpx.ConnectError("transient discovery failure")
+        return list(payload[prefix])
+
+    monkeypatch.setenv("REVERSO_CODEX_CONFIG", str(target))
+    monkeypatch.setenv("REVERSO_CODEX_CATALOG_DIR", str(tmp_path / "reverso"))
+    monkeypatch.setattr(codex_sync, "_default_fetcher", lambda _base_url: fetch)
+
+    rc = codex_sync.main(["--dry-run"])
+
+    assert rc == 3
+    assert "required reverso provider model discovery failed for: copilot" in (
+        capsys.readouterr().err
+    )
+    assert target.read_text(encoding="utf-8") == baseline
+    assert not (tmp_path / "reverso").exists()
 
 
 def test_main_writes_when_not_dry_run(
@@ -1288,14 +1984,14 @@ def test_main_writes_when_not_dry_run(
         "kimi.json",
     ]
     assert sorted(Path(p).name for p in report["profiles"]) == [
-        "auggie.config.toml",
-        "claude.config.toml",
-        "codex-direct.config.toml",
-        "copilot.config.toml",
-        "deepseek.config.toml",
-        "kimi.config.toml",
         "minimax.config.toml",
         "openai.config.toml",
+        "reverso-auggie.config.toml",
+        "reverso-claude.config.toml",
+        "reverso-codex-direct.config.toml",
+        "reverso-copilot.config.toml",
+        "reverso-deepseek.config.toml",
+        "reverso-kimi.config.toml",
     ]
 
 
@@ -1382,28 +2078,27 @@ def test_toml_table_key_replaces_invalid_characters() -> None:
     assert codex_sync._toml_table_key("") == "model"
 
 
-def test_sync_with_no_models_writes_direct_profiles_only(tmp_path: Path) -> None:
+def test_sync_with_no_required_models_fails_without_writing(tmp_path: Path) -> None:
     target = tmp_path / "config.toml"
-    target.write_text(_baseline_config_text(), encoding="utf-8")
+    baseline = _baseline_config_text()
+    target.write_text(baseline, encoding="utf-8")
     empty = _make_fetcher({"claude": [], "copilot": [], "auggie": [], "deepseek": []})
 
-    result = codex_sync.sync(
-        target=target,
-        prefixes=("claude", "copilot", "auggie", "deepseek"),
-        fetcher=empty,
-        catalog_dir=tmp_path / "reverso",
-    )
-    text = target.read_text(encoding="utf-8")
-    assert codex_sync.PROFILES_BEGIN not in text
-    assert "[profiles." not in text
-    assert codex_sync.NUX_BEGIN not in text
-    assert "[tui.model_availability_nux]" not in text
-    assert result.catalogs == []
-    assert {p.name for p in result.profiles} == {
-        "openai.config.toml",
-        "minimax.config.toml",
-    }
-    tomllib.loads(text)
+    with pytest.raises(
+        RuntimeError,
+        match="required reverso provider model discovery returned no compatible models",
+    ):
+        codex_sync.sync(
+            target=target,
+            prefixes=("claude", "copilot", "auggie", "deepseek"),
+            fetcher=empty,
+            catalog_dir=tmp_path / "reverso",
+        )
+
+    assert target.read_text(encoding="utf-8") == baseline
+    assert not (tmp_path / "openai.config.toml").exists()
+    assert not (tmp_path / "minimax.config.toml").exists()
+    assert not (tmp_path / "reverso").exists()
 
 
 def test_atomic_write_round_trip(tmp_path: Path) -> None:
@@ -1480,7 +2175,7 @@ def test_reverso_profile_files_dedupes_to_one_file_per_prefix(
 ) -> None:
     pm = [codex_sync.ProviderModels("copilot", ("gpt-5.5", "gpt-4o"))]
     files = codex_sync._reverso_profile_files(pm, tmp_path, tmp_path)
-    assert list(files) == [tmp_path / "copilot.config.toml"]
+    assert list(files) == [tmp_path / "reverso-copilot.config.toml"]
 
 
 def test_sync_handles_crlf_config(tmp_path: Path) -> None:
@@ -1497,7 +2192,7 @@ def test_sync_handles_crlf_config(tmp_path: Path) -> None:
     text = target.read_bytes().decode("utf-8")
     parsed = tomllib.loads(text)
     assert parsed["model"] == "gpt-5.5"
-    profile = tomllib.loads((tmp_path / "claude.config.toml").read_text())
+    profile = tomllib.loads((tmp_path / "reverso-claude.config.toml").read_text())
     assert profile["model_provider"] == "reverso_claude"
 
     second = codex_sync.sync(
@@ -1511,13 +2206,15 @@ def test_renderers_escape_hostile_model_ids(tmp_path: Path) -> None:
     target = tmp_path / "config.toml"
     target.write_text(_baseline_config_text(), encoding="utf-8")
     catalog_dir = tmp_path / "reverso"
+    payload = _fixture_payload()
+    payload["claude"] = [hostile]
 
     codex_sync.sync(
         target=target,
-        fetcher=_make_fetcher({"claude": [hostile], "kimi": ["kimi-k3"]}),
+        fetcher=_make_fetcher(payload),
         catalog_dir=catalog_dir,
     )
-    profile = tomllib.loads((tmp_path / "claude.config.toml").read_text())
+    profile = tomllib.loads((tmp_path / "reverso-claude.config.toml").read_text())
     assert profile["model"] == hostile
 
     claude = json.loads((catalog_dir / "claude.json").read_text(encoding="utf-8"))
@@ -1650,10 +2347,105 @@ def test_sync_unchanged_run_regenerates_deleted_catalogs(tmp_path: Path) -> None
     copilot_catalog.unlink()
     second = codex_sync.sync(target=target, fetcher=fetcher, catalog_dir=catalog_dir)
 
-    assert second.changed is False
+    assert second.changed is True
     assert second.backup is None
     assert copilot_catalog.exists(), "unchanged config must still restore catalogs"
     assert copilot_catalog.read_text(encoding="utf-8") == catalog_text
+
+
+def test_sync_catalog_write_failure_does_not_create_dependent_profile(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+    catalog_dir = tmp_path / "reverso"
+    profile = tmp_path / "reverso-kimi.config.toml"
+    catalog = catalog_dir / "kimi.json"
+    atomic_write = codex_sync._atomic_write
+
+    def fail_catalog_write(path: Path, text: str) -> None:
+        if path == catalog:
+            raise OSError("injected catalog write failure")
+        atomic_write(path, text)
+
+    monkeypatch.setattr(codex_sync, "_atomic_write", fail_catalog_write)
+
+    with pytest.raises(OSError, match="injected catalog write failure"):
+        codex_sync.sync(
+            target=target,
+            prefixes=("kimi",),
+            fetcher=_make_fetcher({"kimi": ["kimi-k3"]}),
+            catalog_dir=catalog_dir,
+        )
+
+    assert not profile.exists()
+    assert not catalog.exists()
+
+
+def test_sync_does_not_rewrite_byte_identical_catalogs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+    catalog_dir = tmp_path / "reverso"
+    fetcher = _make_fetcher()
+    codex_sync.sync(target=target, fetcher=fetcher, catalog_dir=catalog_dir)
+    writes: list[Path] = []
+    atomic_write = codex_sync._atomic_write
+
+    def recording_write(path: Path, text: str) -> None:
+        writes.append(path)
+        atomic_write(path, text)
+
+    monkeypatch.setattr(codex_sync, "_atomic_write", recording_write)
+
+    result = codex_sync.sync(
+        target=target,
+        fetcher=fetcher,
+        catalog_dir=catalog_dir,
+    )
+
+    assert result.changed is False
+    assert not any(path.parent == catalog_dir for path in writes)
+
+
+def test_sync_reports_catalog_repair_and_archive_as_changes(tmp_path: Path) -> None:
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+    catalog_dir = tmp_path / "reverso"
+    fetcher = _make_fetcher()
+    codex_sync.sync(target=target, fetcher=fetcher, catalog_dir=catalog_dir)
+    copilot_catalog = catalog_dir / "copilot.json"
+    copilot_profile = tmp_path / "reverso-copilot.config.toml"
+    assert codex_sync._is_managed_profile_text(
+        copilot_profile.read_text(encoding="utf-8")
+    )
+    assert tomllib.loads(copilot_profile.read_text(encoding="utf-8"))[
+        "model_catalog_json"
+    ] == str(copilot_catalog)
+    copilot_catalog.write_text('{"models":[]}', encoding="utf-8")
+
+    repaired = codex_sync.sync(
+        target=target,
+        fetcher=fetcher,
+        catalog_dir=catalog_dir,
+    )
+
+    assert repaired.changed is True
+
+    archived = codex_sync.sync(
+        target=target,
+        prefixes=("kimi",),
+        fetcher=_make_fetcher({"kimi": ["kimi-k3"]}),
+        catalog_dir=catalog_dir,
+    )
+
+    assert archived.changed is True
+    assert any(
+        path.name.startswith("copilot.json") for path in archived.archived_profiles
+    )
 
 
 def test_main_dry_run_reports_catalog_dir_without_writing(
@@ -1784,16 +2576,16 @@ def test_sync_opt_in_openai_pass_through_profile(
     target = tmp_path / "config.toml"
     target.write_text(_baseline_config_text(), encoding="utf-8")
     catalog_dir = tmp_path / "reverso"
+    payload = _fixture_payload()
+    payload["openai-pass-through"] = ["gpt-5.5"]
 
     result = codex_sync.sync(
         target=target,
-        fetcher=_make_fetcher(
-            {"openai-pass-through": ["gpt-5.5"], "kimi": ["kimi-k3"]}
-        ),
+        fetcher=_make_fetcher(payload),
         catalog_dir=catalog_dir,
     )
 
-    profile_path = tmp_path / "openai-pass-through.config.toml"
+    profile_path = tmp_path / "reverso-openai-pass-through.config.toml"
     parsed = tomllib.loads(profile_path.read_text())
     assert parsed["model_provider"] == "reverso_openai-pass-through"
     assert parsed["model"] == "gpt-5.5"

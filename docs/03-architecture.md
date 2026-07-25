@@ -328,8 +328,9 @@ independently:
 
 ### 11.3.1 Headroom compression seam
 
-Headroom is installed as a base runtime dependency so a normal Reverso install can use
-compression without a second setup step. Reverso owns a provider-neutral seam in
+`headroom-ai[all]==0.32.1` is installed by default as a base runtime dependency so a
+normal Reverso install can use compression without a second setup step. Reverso owns a
+provider-neutral seam in
 `src/reverso/protocols/headroom_compression.py`. The Responses gateway calls it after
 raw feature gating and normalization, then dispatches the returned request to the frozen
 `ProviderAdapter` boundary on both unary and streaming paths. The Anthropic Messages
@@ -337,7 +338,11 @@ surface calls the same seam after Anthropic capability gating and translation, b
 dispatching the translated Responses request to any resolved backend. The Anthropic
 `/v1/messages/count_tokens` endpoint remains an uncompressed sizing approximation and
 returns before the seam. The seam projects text-bearing Responses fields to Headroom
-messages, runs Headroom off the event loop with a short timeout, then
+messages, leaves whitespace-only fields byte-for-byte unchanged, and bypasses the cold
+Headroom import when a conservative upper bound proves that every message is below the
+pinned default `agent-90` profile's 120-token compression floor. Custom profiles always
+load Headroom because their threshold is not known locally. Otherwise the seam runs
+Headroom off the event loop with a short timeout, then
 reconstructs the original Responses shape. It preserves non-text content, tool
 metadata, response ids, and adapter boundaries. Unsafe output, timeout, exceptions, or
 token inflation fail open to the original request. Public `/input_items` returns the
@@ -355,9 +360,9 @@ Runtime controls:
   exposed on `GET /usage/headroom` and as the additive `headroom` block on
   `GET /usage`. Both routes read in-process state only and never invoke Headroom
   or provider subprocesses.
-- Optional Headroom extras such as `headroom-ai[ml]` or `headroom-ai[all]` are not
-  installed by default; operators can add them explicitly when local model support is
-  needed.
+- Headroom is embedded in the Reverso gateway process and does not open another
+  listener. Optional standalone Headroom proxies are separate operator-managed
+  services and do not replace the embedded seam.
 
 ### 11.4 Authentication
 

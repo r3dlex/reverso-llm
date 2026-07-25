@@ -159,7 +159,7 @@ def _write_generated_kimi(home: Path) -> None:
         ),
         encoding="utf-8",
     )
-    (codex_dir / "kimi.config.toml").write_text(
+    (codex_dir / "reverso-kimi.config.toml").write_text(
         "\n".join(
             (
                 'model = "kimi-k3"',
@@ -822,7 +822,7 @@ def test_acceptance_rejects_each_generated_metadata_mismatch(
     env, _ = _env(tmp_path)
     _bootstrap(env)
     _write_generated_kimi(env.home)
-    profile_path = env.home / ".codex" / "kimi.config.toml"
+    profile_path = env.home / ".codex" / "reverso-kimi.config.toml"
     catalog_path = env.home / ".codex" / "reverso" / "kimi.json"
     if mutation == "profile-model":
         profile_path.write_text(

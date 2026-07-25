@@ -15,10 +15,11 @@ import logging
 import os
 import re
 import threading
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
-from typing import Any, Callable
+from typing import Any
 
 from reverso.protocols.adapter import ResponsesRequest
 
@@ -26,6 +27,7 @@ _FALSE_VALUES = {"0", "false", "no", "off", "disabled"}
 _DEFAULT_PROFILE = "agent-90"
 _DEFAULT_TIMEOUT_SECONDS = 2.0
 _DEFAULT_MODEL_LIMIT = 200000
+_DEFAULT_PROFILE_MIN_TOKENS_TO_COMPRESS = 120
 
 CompressCallable = Callable[..., Any]
 
@@ -64,7 +66,7 @@ class HeadroomCompressionConfig:
     model_limit: int = _DEFAULT_MODEL_LIMIT
 
     @classmethod
-    def from_env(cls, env: dict[str, str] | None = None) -> "HeadroomCompressionConfig":
+    def from_env(cls, env: dict[str, str] | None = None) -> HeadroomCompressionConfig:
         """Build config from environment with compression enabled by default."""
         source = os.environ if env is None else env
         enabled = source.get("REVERSO_HEADROOM_ENABLED", "1").strip().lower()
@@ -231,7 +233,7 @@ def _collect_projection(request: ResponsesRequest) -> _Projection:
     targets: list[_TextTarget] = []
 
     def add(path: tuple[Any, ...], role: str, text: str) -> None:
-        if text:
+        if text.strip():
             messages.append({"role": role, "content": text})
             targets.append(_TextTarget(path=path, role=role))
 
@@ -362,6 +364,26 @@ def _read_result_float(result: Any, name: str) -> float:
     return value if isinstance(value, int | float) else 0.0
 
 
+def _may_reach_headroom_token_floor(
+    messages: list[dict[str, Any]],
+    profile: str,
+) -> bool:
+    """Return whether any message may meet Headroom's compression threshold.
+
+    The pinned default profile uses a 120-token floor. A tokenizer cannot
+    produce more tokens than the UTF-8 bytes in non-whitespace content, so this
+    upper bound can safely bypass the expensive cold import for tiny default
+    requests. Custom profiles may use a lower floor and therefore always import.
+    """
+    if profile != _DEFAULT_PROFILE:
+        return True
+    return any(
+        len(message["content"].strip().encode("utf-8"))
+        >= _DEFAULT_PROFILE_MIN_TOKENS_TO_COMPRESS
+        for message in messages
+    )
+
+
 async def compress_responses_request(
     request: ResponsesRequest,
     *,
@@ -386,6 +408,13 @@ async def compress_responses_request(
     if not projection.messages:
         return await finish(
             HeadroomCompressionOutcome(request=request, reason="no_text")
+        )
+    if compressor is None and not _may_reach_headroom_token_floor(
+        projection.messages,
+        resolved.profile,
+    ):
+        return await finish(
+            HeadroomCompressionOutcome(request=request, reason="below_min_tokens")
         )
 
     configure_headroom_environment()
@@ -433,7 +462,7 @@ async def compress_responses_request(
                 error_type="TimeoutError",
             )
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - fail open at the dependency boundary
         error_type = type(exc).__name__
         logger.warning("Headroom compression failed open: %s", error_type)
         return await finish(

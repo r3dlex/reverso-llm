@@ -34,7 +34,7 @@ A single developer running Reverso on their own workstation, using the gateway a
 ### 2.2 Use cases
 
 **UC-1. Cross-vendor CLI invocation.**
-The developer runs `codex -p anthropic "explain this diff"` and Codex CLI sends the request to Reverso, which routes it to Claude Code, which generates the response under the Claude Max subscription.
+The developer runs `codex -p reverso-claude "explain this diff"` and Codex CLI sends the request to Reverso, which routes it to Claude Code, which generates the response under the Claude Max subscription.
 
 **UC-2. Third-party agent on subscription budget.**
 The developer runs Aider configured with `OPENAI_API_BASE=http://127.0.0.1:64946/v1` and Aider's GPT-targeted calls are served by Codex CLI under the ChatGPT Pro subscription.

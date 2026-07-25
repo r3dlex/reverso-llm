@@ -68,11 +68,15 @@ filter, and route the alias back to its real backend:
    each provider's last successful snapshot across transient failures and serialize concurrent
    refreshes so an older slow request cannot overwrite newer state.
 
-4. **Launchers scope discovery with `x-reverso-model-catalog`.** The aggregate
-   `claude-reverso` launcher sends `all` and receives every provider catalog. Each
-   provider-specific launcher sends its backend name and receives only the bare and
-   discovery-alias rows owned by that backend. Request routing remains model-driven;
-   the header changes only the `GET /v1/models` listing.
+4. **`reverso-claude-code-sync` owns the managed launchers.** The aggregate
+   `claude-reverso` launcher sends `all` and receives every provider catalog. The
+   managed provider launchers `claude-claude`, `claude-codex`, `claude-copilot`,
+   `claude-auggie`, `claude-deepseek`, and `claude-kimi` send their backend name
+   and receive only the bare and discovery-alias rows owned by that backend.
+   Request routing remains model-driven; the header changes only the
+   `GET /v1/models` listing. The sync resolves the real Claude Code executable,
+   installs marker-owned wrappers atomically under `~/.local/bin`, and refuses
+   to overwrite an unmarked file.
 
 ## Consequences
 
@@ -86,7 +90,7 @@ filter, and route the alias back to its real backend:
   only static or actually listed aliases route.
 - A slow, failed, or unauthenticated provider cannot hold the complete catalog response. Kimi's
   static `kimi-k3` fallback remains selectable without triggering authentication.
-- The launcher (`claude-reverso`) sets `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1`, so every
-  reverso-backed session gets discovery; the builtin (direct-to-Anthropic) launchers do not.
+- All managed `claude-*` launchers set `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1`, so every
+  Reverso-backed session gets discovery from the gateway.
 - Provider launchers no longer show unrelated provider models in `/model`; the
   aggregate catalog remains available only through `claude-reverso`.
