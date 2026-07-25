@@ -19,11 +19,12 @@ slug: kimi-auto-login-k3-runtime-convergence
 
 ## Summary
 
-Reverso currently fails missing Kimi OAuth with retryable HTTP 502, while its
-running LaunchAgent exposes stale K2.5 authority and regenerates the Codex
-profile and catalog from that stale runtime. Add a gateway-wide supervisor for
-the official `kimi login` command, preserve Kimi CLI ownership of OAuth, and
-converge the installed gateway and all Codex-facing metadata on K3.
+At intake, Reverso failed missing Kimi OAuth with retryable HTTP 502, while its
+running LaunchAgent exposed stale K2.5 authority and regenerated the Codex
+profile and catalog from that stale runtime. The shipped outcome adds a
+gateway-wide supervisor for the official `kimi login` command, preserves Kimi
+CLI ownership of OAuth, and converges the installed gateway and all
+Codex-facing metadata on K3.
 
 ## Sliced goals
 

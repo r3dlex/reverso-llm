@@ -307,7 +307,39 @@ def test_completed_reconcile_rejects_unfinished_goals_before_mutation(
     graph_path = tmp_path / ".ai/traceability/graph.json"
     before = (manifest_path.read_bytes(), graph_path.read_bytes())
 
-    with pytest.raises(reconciler.ReconciliationError, match="unfinished sliced goals"):
+    with pytest.raises(
+        reconciler.ReconciliationError,
+        match="unfinished work item sliced goals",
+    ):
+        _run(tmp_path, completed_via="PRs #90, #91, and #92")
+
+    assert (manifest_path.read_bytes(), graph_path.read_bytes()) == before
+    assert not (tmp_path / f".ai/handoff/northstar-{SLUG}.md").exists()
+
+
+@pytest.mark.parametrize(
+    "unfinished_status", ["ready-for-agent", "in-progress", "blocked"]
+)
+def test_completed_reconcile_rejects_unfinished_spec_goals_before_mutation(
+    tmp_path: Path, unfinished_status: str
+) -> None:
+    _fixture(tmp_path)
+    _complete_goals(tmp_path)
+    spec_path = tmp_path / f"docs/specifications/ACTIVE/{SLUG}.md"
+    spec_path.write_text(
+        spec_path.read_text() + "\n## Sliced goals\n\n"
+        "| Slice | Title | Status |\n"
+        "|---|---|---|\n"
+        f"| S1 | Implement compatibility | {unfinished_status} |\n"
+    )
+    manifest_path = tmp_path / ".ai/workflows/repo-workflow.json"
+    graph_path = tmp_path / ".ai/traceability/graph.json"
+    before = (manifest_path.read_bytes(), graph_path.read_bytes())
+
+    with pytest.raises(
+        reconciler.ReconciliationError,
+        match="unfinished spec sliced goals",
+    ):
         _run(tmp_path, completed_via="PRs #90, #91, and #92")
 
     assert (manifest_path.read_bytes(), graph_path.read_bytes()) == before

@@ -116,16 +116,16 @@ credential artifact creation.
 
 | Slice | Title | Type | Status | Blocked by |
 |---|---|---|---|---|
-| S1 | Govern shared login coordinator and first resumed Responses request | AFK | ready-for-agent | none |
-| S2 | Prove cross-surface single-flight and bounded lifecycle cleanup | AFK | blocked | S1 |
-| S3 | Converge K3 model exposure, profile, catalog, and context metadata | AFK | ready-for-agent | none |
-| S4 | Govern canonical LaunchAgent provenance and deployment drift checks | AFK | blocked | S1, S3 |
-| S4A | Govern an isolated Kimi home in deployment provenance | AFK | blocked | S4 |
-| S5 | Deploy, bootstrap live OAuth, sync, and publish evidence | HITL | blocked | S2, S4A |
+| S1 | Govern shared login coordinator and first resumed Responses request | AFK | completed in PR #97 | none |
+| S2 | Prove cross-surface single-flight and bounded lifecycle cleanup | AFK | completed in PR #102 | S1 |
+| S3 | Converge K3 model exposure, profile, catalog, and context metadata | AFK | completed in PR #98 | none |
+| S4 | Govern canonical LaunchAgent provenance and deployment drift checks | AFK | completed in PR #100 | S1, S3 |
+| S4A | Govern an isolated Kimi home in deployment provenance | AFK | completed in PR #104 | S4 |
+| S5 | Deploy, bootstrap live OAuth, sync, and publish evidence | HITL | completed in PR #105 | S2, S4A |
 
-Each slice is one future PR. S1 and S3 can proceed in parallel in isolated
-worktrees. S5 is HITL only for browser-side OAuth authorization and for any
-host-policy merge authority that cannot be established automatically.
+Each slice shipped as its own governed PR. S1 and S3 proceeded in parallel in
+isolated worktrees. S5 used HITL only for browser-side OAuth authorization and
+run-specific host-policy merge authority.
 
 ## Acceptance criteria
 
