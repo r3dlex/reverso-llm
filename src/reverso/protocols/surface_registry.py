@@ -19,6 +19,7 @@ ADR 0006 D2's exclusion.
 from __future__ import annotations
 
 import os
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -259,7 +260,18 @@ def _resolve_qualified(provider: str, bare: str) -> str | None:
     return None
 
 
-def resolve_anthropic_backend(model: str | None) -> str | None:
+def _resolve_static_discovery_alias(backend: str, bare: str) -> str | None:
+    """Resolve an alias backed by the static taxonomy or curated fallback."""
+    if backend in _BACKENDS_WITH_ROWS or backend == "kimi":
+        return _resolve_qualified(backend, bare)
+    curated = _DISCOVERY_ROWLESS_MODELS.get(backend, ())
+    return backend if bare in curated else None
+
+
+def resolve_anthropic_backend(
+    model: str | None,
+    discovery_aliases: Mapping[str, str] | None = None,
+) -> str | None:
     """Resolve a requested model to an Anthropic-surface backend, or None.
 
     Returns None for an unknown model. A claude-family model resolves to the
@@ -267,6 +279,11 @@ def resolve_anthropic_backend(model: str | None) -> str | None:
     names are normalized (stripped, lowercased, custom/ prefix dropped) so
     mixed-case ids route correctly. A resolved backend is always a member of
     SURFACE_BACKENDS["anthropic"].
+
+    A discovery alias routes only when it is validated by the static taxonomy or
+    curated fallback, or when the application supplies the exact alias minted from
+    a successful live adapter catalog. A syntactically valid but never-listed alias
+    fails closed.
 
     A fully-qualified ``provider/model`` id routes by its explicit provider prefix
     (provider up front), so callers can disambiguate conflicting model names; the
@@ -279,8 +296,15 @@ def resolve_anthropic_backend(model: str | None) -> str | None:
     normalized = _normalize_model(model)
     alias = _split_discovery_alias(normalized)
     if alias is not None:
-        # Validate aliases through the same provider-owned taxonomy as qualified ids.
-        return _resolve_qualified(*alias)
+        static_backend = _resolve_static_discovery_alias(*alias)
+        if static_backend is not None:
+            return static_backend
+        if (
+            discovery_aliases is not None
+            and discovery_aliases.get(normalized) == alias[0]
+        ):
+            return alias[0]
+        return None
     provider, bare = _split_provider_qualified(normalized)
     if provider is not None:
         return _resolve_qualified(provider, bare)
@@ -383,7 +407,9 @@ def _discovery_alias_row(backend: str, model_id: str) -> dict[str, str]:
     }
 
 
-def list_anthropic_discovery_aliases() -> list[dict[str, str]]:
+def list_anthropic_discovery_aliases(
+    adapter_models: Mapping[str, Iterable[str]] | None = None,
+) -> list[dict[str, str]]:
     """List ``anthropic-<backend>-<model>`` aliases for the /model picker.
 
     Claude Code's gateway model discovery ignores any /v1/models id not beginning with
@@ -393,17 +419,40 @@ def list_anthropic_discovery_aliases() -> list[dict[str, str]]:
     routes back through resolve_anthropic_backend + canonical_model_id to its backend and
     bare model. Sorted by id for a deterministic listing. The bare surface listing
     (list_anthropic_surface_models) is unchanged; this is purely additive for discovery.
+
+    When ``adapter_models`` is provided, every model returned by every live adapter is
+    added as an alias, including claude. Dynamic claude models are aliased because they
+    may not exist in the static routing index; the explicit backend token keeps them
+    routable. The curated rows remain as bounded fallback when an adapter is unavailable.
     """
-    rows: list[dict[str, str]] = []
+    rows_by_id: dict[str, dict[str, str]] = {}
+
+    def add(backend: str, model_id: str) -> None:
+        normalized = _normalize_model(model_id)
+        if not normalized:
+            return
+        if backend == "kimi" and normalized not in _KIMI_MODELS:
+            return
+        row = _discovery_alias_row(backend, normalized)
+        rows_by_id[row["id"]] = row
+
     for model_id, backend in _MODEL_INDEX.items():
         if backend == "claude" or backend not in SURFACE_BACKENDS["anthropic"]:
             continue
-        rows.append(_discovery_alias_row(backend, model_id))
+        add(backend, model_id)
     for backend, models in _DISCOVERY_ROWLESS_MODELS.items():
         if backend not in SURFACE_BACKENDS["anthropic"]:
             continue
         for model_id in models:
-            rows.append(_discovery_alias_row(backend, model_id))
+            add(backend, model_id)
+    if adapter_models is not None:
+        for backend, models in adapter_models.items():
+            if backend not in SURFACE_BACKENDS["anthropic"]:
+                continue
+            for model_id in models:
+                if isinstance(model_id, str):
+                    add(backend, model_id)
+    rows = list(rows_by_id.values())
     rows.sort(key=lambda row: row["id"])
     return rows
 

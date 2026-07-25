@@ -305,6 +305,12 @@ class KimiOAuthAuth:
                 raise KimiError("kimi login created an unusable credential artifact")
             return await self._resolve_bearer_token_once(force_refresh=False)
 
+    async def resolve_existing_bearer_token(
+        self, *, force_refresh: bool = False
+    ) -> str:
+        """Resolve existing credentials without starting interactive login."""
+        return await self._resolve_bearer_token_once(force_refresh=force_refresh)
+
 
 class KimiAdapter(DeepSeekAdapter):
     """ProviderAdapter for Kimi's OpenAI-compatible chat API."""
@@ -333,6 +339,18 @@ class KimiAdapter(DeepSeekAdapter):
 
     async def _async_headers(self, *, force_refresh: bool = False) -> dict[str, str]:
         token = await self._auth.resolve_bearer_token(force_refresh=force_refresh)
+        return {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "X-Msh-Platform": _KIMI_CODE_PLATFORM,
+        }
+
+    async def _model_listing_headers(
+        self, *, force_refresh: bool = False
+    ) -> dict[str, str]:
+        token = await self._auth.resolve_existing_bearer_token(
+            force_refresh=force_refresh
+        )
         return {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
@@ -431,11 +449,11 @@ class KimiAdapter(DeepSeekAdapter):
     async def list_models(self) -> ModelList:
         self._model_discovery_source = "fallback"
         try:
-            headers = await self._async_headers()
+            headers = await self._model_listing_headers()
             async with self._client_factory() as client:
                 response = await client.get(f"{self._api_base}/models", headers=headers)
             if response.status_code == 401:
-                headers = await self._async_headers(force_refresh=True)
+                headers = await self._model_listing_headers(force_refresh=True)
                 async with self._client_factory() as client:
                     response = await client.get(
                         f"{self._api_base}/models", headers=headers

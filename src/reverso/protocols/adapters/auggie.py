@@ -25,8 +25,9 @@ import json
 import logging
 import os
 import time
+from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any
 
 from reverso.protocols.adapter import (
     InputItemList,
@@ -57,6 +58,7 @@ INDEXING_CAVEAT = "hard-disable unproven"
 _SESSION_PATH = Path.home() / ".augment" / "session.json"
 _SESSION_ENV = "AUGMENT_SESSION_AUTH"
 _WORKSPACE_ROOT_ENV = "REVERSO_AUGGIE_WORKSPACE_ROOT"
+_MODEL_LIST_TIMEOUT_SECONDS = 8.0
 
 _WRITE_TOOL_PERMISSIONS = (
     "save-file:allow",
@@ -110,8 +112,7 @@ def _resolve_workspace_root() -> str:
 
 def _normalize_model_for_cli(model: str) -> str:
     """Return the Auggie CLI model id for Reverso and Codex-facing aliases."""
-    if model.startswith("auggie/"):
-        model = model[len("auggie/") :]
+    model = model.removeprefix("auggie/")
     return _MODEL_ALIASES.get(model, model)
 
 
@@ -308,6 +309,7 @@ class AuggieAdapter:
             error=AuggieError,
             cli_label="auggie CLI",
             failure_message="auggie model list failed",
+            timeout=_MODEL_LIST_TIMEOUT_SECONDS,
         )
         try:
             return json.loads(stdout or "[]")
@@ -349,7 +351,7 @@ class AuggieAdapter:
         Each entry carries the ``indexing`` caveat literal ``hard-disable
         unproven`` so the falsifiable indexing claim travels with the metadata.
         """
-        payload = self._models_runner()
+        payload = await asyncio.to_thread(self._models_runner)
         data = _normalize_models(payload)
         return ModelList(data=data, models=list(data))
 

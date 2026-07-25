@@ -960,6 +960,39 @@ async def test_model_listing_deduplicates_ids_and_marks_fallback_provenance(
 
 
 @pytest.mark.asyncio
+async def test_model_listing_missing_credentials_never_starts_login(
+    tmp_path: Path,
+) -> None:
+    login_calls = 0
+    network_calls = 0
+
+    async def spawn(*_args: Any, **_kwargs: Any) -> _Process:
+        nonlocal login_calls
+        login_calls += 1
+        raise AssertionError("model discovery must not start kimi login")
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal network_calls
+        network_calls += 1
+        raise AssertionError("missing credentials must use the static fallback")
+
+    adapter = KimiAdapter(
+        auth=KimiOAuthAuth(
+            credentials_path=tmp_path / "missing.json",
+            login_coordinator=KimiLoginCoordinator(process_factory=spawn),
+        ),
+        client_factory=lambda: _client(handler),
+    )
+
+    models = await adapter.list_models()
+
+    assert [row["id"] for row in models.data] == ["kimi-k3"]
+    assert models.discovery_source == "fallback"
+    assert login_calls == 0
+    assert network_calls == 0
+
+
+@pytest.mark.asyncio
 async def test_unary_401_refreshes_and_retries_only_once(tmp_path: Path) -> None:
     token_path = tmp_path / "kimi-code.json"
     _write_token(token_path, access_token="rejected", expires_at=time.time() + 3600)

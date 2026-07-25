@@ -260,6 +260,33 @@ def test_kimi_routes_only_converged_k3_alias() -> None:
     assert resolve_anthropic_backend("anthropic-kimi-kimi-k2.5") is None
 
 
+def test_dynamic_discovery_aliases_route_and_keep_kimi_k3_only() -> None:
+    rows = list_anthropic_discovery_aliases(
+        {
+            "claude": ["claude-future-live"],
+            "copilot": ["copilot-future-live"],
+            "kimi": ["kimi-k3", "kimi-future-live"],
+        }
+    )
+    ids = {row["id"] for row in rows}
+    aliases = {row["id"]: row["backend"] for row in rows}
+
+    assert "anthropic-claude-claude-future-live" in ids
+    assert "anthropic-copilot-copilot-future-live" in ids
+    assert "anthropic-kimi-kimi-k3" in ids
+    assert "anthropic-kimi-kimi-future-live" not in ids
+    assert (
+        resolve_anthropic_backend("anthropic-claude-claude-future-live", aliases)
+        == "claude"
+    )
+    assert (
+        resolve_anthropic_backend("anthropic-copilot-copilot-future-live", aliases)
+        == "copilot"
+    )
+    assert resolve_anthropic_backend("anthropic-claude-claude-future-live") is None
+    assert resolve_anthropic_backend("anthropic-codex-never-listed") is None
+
+
 def test_discovery_alias_malformed_fails_closed() -> None:
     # Unknown backend token, empty bare, or backend token with no bare must not route.
     assert resolve_anthropic_backend("anthropic-openai-gpt-5.5") is None
@@ -278,6 +305,8 @@ def test_discovery_aliases_listing_covers_non_claude_backends() -> None:
     # ids already pass the filter, so aliasing them would only duplicate picker rows).
     assert {"codex", "deepseek", "copilot", "auggie"} <= backends
     assert "claude" not in backends
+    assert "anthropic-kimi-kimi-k3" in ids
+    assert "anthropic-kimi-kimi-k2.5" not in ids
     # Each alias round-trips through the resolver to its declared backend.
     for row in rows:
         assert resolve_anthropic_backend(row["id"]) == row["backend"]
