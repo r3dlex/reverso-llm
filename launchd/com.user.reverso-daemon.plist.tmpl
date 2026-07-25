@@ -12,6 +12,7 @@
 
   Variables expanded by install-launchagents.sh (sed substitution):
     {{REVERSO_DIR}}   - absolute path to the reverso/ project root
+    {{REVERSO_DEPLOYMENT_COMMIT}} - exact installed Git revision
     {{UV_BIN}}        - absolute path to the uv binary
     {{USER_HOME}}     - $HOME of the running user
 -->
@@ -19,6 +20,9 @@
 <dict>
     <key>Label</key>
     <string>com.user.reverso-daemon</string>
+
+    <key>Program</key>
+    <string>{{UV_BIN}}</string>
 
     <key>ProgramArguments</key>
     <array>
@@ -34,6 +38,10 @@
 
     <key>EnvironmentVariables</key>
     <dict>
+        <key>REVERSO_DEPLOYMENT_COMMIT</key>
+        <string>{{REVERSO_DEPLOYMENT_COMMIT}}</string>
+        <key>REVERSO_PROJECT_DIR</key>
+        <string>{{REVERSO_DIR}}</string>
         <key>PATH</key>
         <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:{{USER_HOME}}/.local/bin</string>
     </dict>

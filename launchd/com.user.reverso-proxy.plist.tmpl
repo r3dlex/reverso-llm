@@ -9,6 +9,7 @@
 
   Variables expanded by install-launchagents.sh (sed substitution):
     {{REVERSO_DIR}}   - absolute path to the reverso/ project root
+    {{REVERSO_DEPLOYMENT_COMMIT}} - exact installed Git revision
     {{UV_BIN}}        - absolute path to the uv binary (e.g. /Users/you/.local/bin/uv)
     {{USER_HOME}}     - $HOME of the running user
 -->
@@ -16,6 +17,9 @@
 <dict>
     <key>Label</key>
     <string>com.user.reverso-proxy</string>
+
+    <key>Program</key>
+    <string>{{UV_BIN}}</string>
 
     <key>ProgramArguments</key>
     <array>
@@ -33,6 +37,10 @@
     <dict>
         <!-- Keychain secrets are loaded at process startup by reverso-proxy. -->
         <!-- Add any static env overrides here if needed. -->
+        <key>REVERSO_DEPLOYMENT_COMMIT</key>
+        <string>{{REVERSO_DEPLOYMENT_COMMIT}}</string>
+        <key>REVERSO_PROJECT_DIR</key>
+        <string>{{REVERSO_DIR}}</string>
         <key>PATH</key>
         <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:{{USER_HOME}}/.local/bin</string>
         <key>REVERSO_HOST</key>

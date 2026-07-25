@@ -36,13 +36,26 @@ codex --version
 ### Install and start
 
 ```bash
-git clone https://github.com/r3dlex/reverso-llm.git
-cd reverso-llm
+git clone git@github.com:r3dlex/reverso-llm.git \
+  /Users/andresilvaburgstahler/.local/share/reverso
+cd /Users/andresilvaburgstahler/.local/share/reverso
 uv sync --frozen
 ./scripts/install-launchagents.sh
 ```
 
-The installer writes and loads two user LaunchAgents, then stores logs under `~/Library/Logs/reverso/`. It is safe to rerun after an update.
+The installer accepts only the clean canonical checkout above. It records the
+exact Git revision and installer-selected `uv` launcher in
+`~/Library/Application Support/reverso/deployment-provenance.json`, renders the
+same checkout, revision, and launcher into both user LaunchAgents, validates the
+rendered files, reloads the services, and reads back their running checkout,
+revision, and launcher before returning. It stores logs under
+`~/Library/Logs/reverso/`.
+
+During a forward update, the pre-install gate accepts the previously deployed
+revision only when its rendered and running LaunchAgents still agree and that
+revision is a Git ancestor of the selected clean checkout. The post-restart
+gate then requires the newly loaded jobs to match the selected revision before
+the installer returns.
 
 Confirm that the loopback gateway is ready:
 
@@ -152,9 +165,18 @@ Update the checkout and refresh dependencies, services, and generated model cata
 ```bash
 git pull --ff-only
 uv sync --frozen
+uv run python scripts/check-deployment-drift.py --phase pre-install
 ./scripts/install-launchagents.sh
+uv run python scripts/check-deployment-drift.py --phase pre-sync
 uv run reverso-codex-sync
+uv run python scripts/check-deployment-drift.py --phase acceptance
 ```
+
+The drift command fails closed when the source checkout, recorded provenance,
+rendered or running LaunchAgents, live Kimi discovery, generated profile, or
+generated catalog disagree. `pre-sync` requires live discovery to expose only
+`kimi-k3`; `acceptance` additionally requires the generated Kimi profile and
+catalog to use context window `1048576`.
 
 Restart without changing files:
 
