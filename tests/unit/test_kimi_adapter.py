@@ -757,7 +757,7 @@ async def test_adapter_translates_responses_to_kimi_chat_with_bearer(
             200,
             json={
                 "id": "chatcmpl-kimi",
-                "model": "kimi-k2.5",
+                "model": "k3",
                 "choices": [
                     {
                         "index": 0,
@@ -780,7 +780,7 @@ async def test_adapter_translates_responses_to_kimi_chat_with_bearer(
         ),
     )
     response = await adapter.create_response(
-        ResponsesRequest(model="kimi-k2.5", input="hi")
+        ResponsesRequest(model="kimi-k3", input="hi")
     )
 
     assert seen == {
@@ -788,12 +788,96 @@ async def test_adapter_translates_responses_to_kimi_chat_with_bearer(
         "platform": "kimi_code_cli",
         "path": "/coding/v1/chat/completions",
         "body": {
-            "model": "kimi-k2.5",
+            "model": "k3",
             "messages": [{"role": "user", "content": "hi"}],
             "stream": False,
         },
     }
     assert response.output[0]["content"][0]["text"] == "hello"
+
+
+@pytest.mark.asyncio
+async def test_adapter_defaults_empty_model_to_upstream_k3(tmp_path: Path) -> None:
+    token_path = tmp_path / "kimi-code.json"
+    _write_token(token_path, access_token=OAUTH_SENTINEL, expires_at=time.time() + 3600)
+    bodies: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "model": "k3",
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "ok"},
+                        "finish_reason": "stop",
+                    }
+                ],
+            },
+        )
+
+    adapter = KimiAdapter(
+        auth=KimiOAuthAuth(credentials_path=token_path),
+        client_factory=lambda: _client(handler),
+    )
+
+    await adapter.create_response(ResponsesRequest(model="", input="hi"))
+
+    assert bodies[0]["model"] == "k3"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model", ["kimi-k2.5", "k3", "other"])
+async def test_unary_rejects_noncanonical_model_before_upstream(
+    tmp_path: Path, model: str
+) -> None:
+    token_path = tmp_path / "kimi-code.json"
+    _write_token(token_path, access_token=OAUTH_SENTINEL, expires_at=time.time() + 3600)
+    upstream_calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal upstream_calls
+        upstream_calls += 1
+        return httpx.Response(200, json={})
+
+    adapter = KimiAdapter(
+        auth=KimiOAuthAuth(credentials_path=token_path),
+        client_factory=lambda: _client(handler),
+    )
+
+    with pytest.raises(KimiError, match="supports only kimi-k3"):
+        await adapter.create_response(ResponsesRequest(model=model, input="hi"))
+
+    assert upstream_calls == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model", ["kimi-k2.5", "k3", "other"])
+async def test_streaming_rejects_noncanonical_model_before_upstream(
+    tmp_path: Path, model: str
+) -> None:
+    token_path = tmp_path / "kimi-code.json"
+    _write_token(token_path, access_token=OAUTH_SENTINEL, expires_at=time.time() + 3600)
+    upstream_calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal upstream_calls
+        upstream_calls += 1
+        return httpx.Response(200)
+
+    adapter = KimiAdapter(
+        auth=KimiOAuthAuth(credentials_path=token_path),
+        client_factory=lambda: _client(handler),
+    )
+
+    with pytest.raises(KimiError, match="supports only kimi-k3"):
+        async for _event in adapter.stream_response(
+            ResponsesRequest(model=model, input="hi", stream=True)
+        ):
+            pass
+
+    assert upstream_calls == 0
 
 
 @pytest.mark.asyncio
@@ -808,10 +892,12 @@ async def test_live_model_listing_uses_kimi_bearer(tmp_path: Path) -> None:
             json={
                 "data": [
                     {
-                        "id": "kimi-k2.5",
+                        "id": "k3",
                         "object": "model",
                         "owned_by": "moonshotai",
-                    }
+                    },
+                    {"id": "kimi-k2.5", "object": "model"},
+                    {"id": "k3", "object": "model"},
                 ]
             },
         )
@@ -825,7 +911,7 @@ async def test_live_model_listing_uses_kimi_bearer(tmp_path: Path) -> None:
 
     models = await adapter.list_models()
 
-    assert [row["id"] for row in models.data] == ["kimi-k2.5"]
+    assert [row["id"] for row in models.data] == ["kimi-k3"]
     assert models.discovery_source == "live"
     assert _models_to_payload(models)["model_discovery_source"] == "live"
     assert adapter.model_discovery_source == "live"
@@ -842,7 +928,8 @@ async def test_model_listing_deduplicates_ids_and_marks_fallback_provenance(
             200,
             json={
                 "data": [
-                    {"id": "kimi-k2.5"},
+                    {"id": "k3"},
+                    {"id": "k3"},
                     {"id": "kimi-k2.5"},
                     {"id": ""},
                     {"id": 42},
@@ -864,8 +951,8 @@ async def test_model_listing_deduplicates_ids_and_marks_fallback_provenance(
     live = await adapter.list_models()
     fallback = await adapter.list_models()
 
-    assert [row["id"] for row in live.data] == ["kimi-k2.5"]
-    assert [row["id"] for row in fallback.data] == ["kimi-k2.5"]
+    assert [row["id"] for row in live.data] == ["kimi-k3"]
+    assert [row["id"] for row in fallback.data] == ["kimi-k3"]
     assert live.discovery_source == "live"
     assert fallback.discovery_source == "fallback"
     assert _models_to_payload(fallback)["model_discovery_source"] == "fallback"
@@ -907,7 +994,7 @@ async def test_unary_401_refreshes_and_retries_only_once(tmp_path: Path) -> None
     )
 
     with pytest.raises(KimiError) as caught:
-        await adapter.create_response(ResponsesRequest(model="kimi-k2.5", input="hi"))
+        await adapter.create_response(ResponsesRequest(model="kimi-k3", input="hi"))
     assert chat_calls == 2
     assert OAUTH_SENTINEL not in str(caught.value)
     assert login_calls == 0
@@ -936,7 +1023,7 @@ async def test_upstream_failure_never_starts_login(tmp_path: Path) -> None:
     )
 
     with pytest.raises(KimiError, match="status 503"):
-        await adapter.create_response(ResponsesRequest(model="kimi-k2.5", input="hi"))
+        await adapter.create_response(ResponsesRequest(model="kimi-k3", input="hi"))
     assert login_calls == 0
 
 
@@ -978,7 +1065,7 @@ async def test_streaming_401_retries_before_first_response_event(
     events = [
         event
         async for event in adapter.stream_response(
-            ResponsesRequest(model="kimi-k2.5", input="hi", stream=True)
+            ResponsesRequest(model="kimi-k3", input="hi", stream=True)
         )
     ]
 
@@ -998,7 +1085,7 @@ async def test_response_storage_input_items_and_continuity(tmp_path: Path) -> No
         return httpx.Response(
             200,
             json={
-                "model": "kimi-k2.5",
+                "model": "k3",
                 "choices": [
                     {
                         "message": {"role": "assistant", "content": "answer"},
@@ -1013,14 +1100,12 @@ async def test_response_storage_input_items_and_continuity(tmp_path: Path) -> No
         client_factory=lambda: _client(handler),
     )
     first = await adapter.create_response(
-        ResponsesRequest(model="kimi-k2.5", input="first")
+        ResponsesRequest(model="kimi-k3", input="first")
     )
     stored = await adapter.get_response(first.id)
     items = await adapter.list_input_items(first.id)
     second = await adapter.create_response(
-        ResponsesRequest(
-            model="kimi-k2.5", input="second", previous_response_id=first.id
-        )
+        ResponsesRequest(model="kimi-k3", input="second", previous_response_id=first.id)
     )
 
     assert stored.id == first.id

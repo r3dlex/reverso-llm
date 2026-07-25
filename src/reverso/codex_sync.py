@@ -105,6 +105,10 @@ class CatalogModelEntry:
 ModelFetcher = t.Callable[[str], list[str]]
 
 
+class KimiDiscoveryError(RuntimeError):
+    """Kimi sync input was not the canonical live K3-only listing."""
+
+
 def _default_fetcher(base_url: str) -> ModelFetcher:
     """Return a fetcher that GETs ``{base_url}/{prefix}/v1/models`` via httpx."""
 
@@ -113,12 +117,16 @@ def _default_fetcher(base_url: str) -> ModelFetcher:
         response = httpx.get(url, timeout=5.0)
         response.raise_for_status()
         payload = response.json()
+        model_ids = _extract_model_ids(payload)
         if prefix == "kimi" and (
             not isinstance(payload, dict)
             or payload.get("model_discovery_source") != "live"
+            or model_ids != ["kimi-k3"]
         ):
-            return []
-        return _extract_model_ids(payload)
+            raise KimiDiscoveryError(
+                "live Kimi model discovery must contain only kimi-k3"
+            )
+        return model_ids
 
     return _fetch
 
@@ -150,6 +158,8 @@ def fetch_all(
     for prefix in prefixes:
         try:
             fetched_ids = fetcher(prefix)
+        except KimiDiscoveryError:
+            raise
         except Exception as exc:
             if not skip_errors:
                 raise
@@ -159,6 +169,10 @@ def fetch_all(
                 type(exc).__name__,
             )
             continue
+        if prefix == "kimi" and fetched_ids != ["kimi-k3"]:
+            raise KimiDiscoveryError(
+                "live Kimi model discovery must contain only kimi-k3"
+            )
         ids = _codex_responses_compatible_models(prefix, fetched_ids)
         deduped: list[str] = []
         seen: set[str] = set()
@@ -247,6 +261,7 @@ def _reverso_profile_files(
             model=spec.model,
             model_provider=spec.model_provider,
             catalog_path=catalog_path,
+            model_context_window=spec.model_context_window,
             model_reasoning_summary=(
                 None
                 if _provider_supports_feature(entry.prefix, "reasoning.summary")
@@ -326,7 +341,9 @@ def _generate_catalog_json(provider: ProviderModels) -> str:
     )
 
     for entry in _catalog_model_entries(provider):
-        context_window = model_exposure.codex_catalog_context_window(entry.model_id)
+        context_window = model_exposure.codex_catalog_context_window(
+            entry.prefix, entry.model_id
+        )
 
         models.append(
             {
@@ -645,7 +662,7 @@ def _replace_managed_block(
 
 def _utc_timestamp(now: datetime.datetime | None = None) -> str:
     if now is None:
-        now = datetime.datetime.now(datetime.timezone.utc)
+        now = datetime.datetime.now(datetime.UTC)
     return now.strftime("%Y%m%dT%H%M%SZ")
 
 
@@ -867,31 +884,52 @@ def _archive_stale_managed_reverso_profiles(
     from the current gateway listing.
     """
     archived: list[Path] = []
-    archive_dir = config_dir / PROFILE_ARCHIVE_DIR
     for prefix in model_exposure.reverso_routed_codex_profile_prefixes():
         if prefix in live_prefixes:
             continue
-        profile_path = _profile_path_for(config_dir, prefix)
-        if not profile_path.exists():
-            continue
-        profile_text = profile_path.read_text(encoding="utf-8")
-        if not _is_managed_profile_text(profile_text):
-            continue
-        catalog_path = _catalog_path_for(catalog_dir, prefix)
-        try:
-            parsed = _parse_toml(profile_text, f"existing profile {profile_path.name}")
-        except RuntimeError:
-            parsed = {}
-        profile_catalog = (
-            parsed.get("model_catalog_json") if isinstance(parsed, dict) else None
+        archived.extend(
+            _archive_stale_managed_reverso_profile(
+                config_dir,
+                catalog_dir,
+                prefix,
+                now=now,
+            )
         )
-        if isinstance(profile_catalog, str):
-            candidate = Path(profile_catalog)
-            if candidate.parent == catalog_dir:
-                catalog_path = candidate
-        archived.append(_archive_file(profile_path, archive_dir, now=now))
-        if catalog_path.exists():
-            archived.append(_archive_file(catalog_path, archive_dir, now=now))
+    return archived
+
+
+def _archive_stale_managed_reverso_profile(
+    config_dir: Path,
+    catalog_dir: Path,
+    prefix: str,
+    *,
+    now: datetime.datetime | None = None,
+) -> list[Path]:
+    """Archive one managed Reverso profile and its in-tree catalog."""
+    profile_path = _profile_path_for(config_dir, prefix)
+    if not profile_path.exists():
+        return []
+    profile_text = profile_path.read_text(encoding="utf-8")
+    if not _is_managed_profile_text(profile_text):
+        return []
+
+    catalog_path = _catalog_path_for(catalog_dir, prefix)
+    try:
+        parsed = _parse_toml(profile_text, f"existing profile {profile_path.name}")
+    except RuntimeError:
+        parsed = {}
+    profile_catalog = (
+        parsed.get("model_catalog_json") if isinstance(parsed, dict) else None
+    )
+    if isinstance(profile_catalog, str):
+        candidate = Path(profile_catalog)
+        if candidate.parent == catalog_dir:
+            catalog_path = candidate
+
+    archive_dir = config_dir / PROFILE_ARCHIVE_DIR
+    archived = [_archive_file(profile_path, archive_dir, now=now)]
+    if catalog_path.exists():
+        archived.append(_archive_file(catalog_path, archive_dir, now=now))
     return archived
 
 
@@ -938,6 +976,9 @@ def sync(
         if prefixes is not None
         else model_exposure.reverso_routed_codex_profile_prefixes()
     )
+    resolved_catalog_dir = (
+        catalog_dir if catalog_dir is not None else _default_catalog_dir(target)
+    )
     provider_models = fetch_all(
         sync_prefixes,
         fetch,
@@ -945,10 +986,17 @@ def sync(
     )
     if not provider_models:
         raise RuntimeError("no reverso provider model listings were available")
+    if "kimi" in sync_prefixes:
+        kimi_models = next(
+            (entry.models for entry in provider_models if entry.prefix == "kimi"),
+            (),
+        )
+        if kimi_models != ("kimi-k3",):
+            raise KimiDiscoveryError(
+                "live Kimi model discovery must contain only kimi-k3"
+            )
 
-    catalog_dir = (
-        catalog_dir if catalog_dir is not None else _default_catalog_dir(target)
-    )
+    catalog_dir = resolved_catalog_dir
 
     old_text = target.read_text(encoding="utf-8") if target.exists() else ""
 
@@ -1130,11 +1178,15 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.dry_run:
         fetcher = _default_fetcher(base_url)
-        provider_models = fetch_all(
-            model_exposure.reverso_routed_codex_profile_prefixes(),
-            fetcher,
-            skip_errors=True,
-        )
+        try:
+            provider_models = fetch_all(
+                model_exposure.reverso_routed_codex_profile_prefixes(),
+                fetcher,
+                skip_errors=True,
+            )
+        except RuntimeError as exc:
+            sys.stderr.write(f"reverso-codex-sync: {exc}\n")
+            return 3
         report = {
             "target": str(target),
             "catalog_dir": str(catalog_dir),
