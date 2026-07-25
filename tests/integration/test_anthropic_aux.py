@@ -12,12 +12,15 @@ The CompositionRoot coexistence test pins the key G006 risk: the bare GET
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import httpx
 import pytest
-
 from conftest import FixtureAdapter
+
+from reverso.protocols import anthropic_app as anthropic_app_module
+from reverso.protocols.adapter import ModelList
 from reverso.protocols.anthropic_app import build_anthropic_app
 from reverso.protocols.responses_app import build_app
 from reverso.protocols.surface_registry import (
@@ -31,6 +34,26 @@ RESPONSES_PROVIDERS = ["claude", "copilot", "auggie", "deepseek"]
 
 # A real deepseek model id from litellm_config so count_tokens resolves a backend.
 KNOWN_MODEL = "deepseek-v4-pro"
+
+
+class _CatalogFixtureAdapter(FixtureAdapter):
+    def __init__(self, provider: str, model_ids: list[str]) -> None:
+        super().__init__(provider)
+        self._model_ids = model_ids
+
+    async def list_models(self) -> ModelList:
+        return ModelList(data=[{"id": model_id} for model_id in self._model_ids])
+
+
+class _FailingCatalogFixtureAdapter(FixtureAdapter):
+    async def list_models(self) -> ModelList:
+        raise RuntimeError("catalog unavailable")
+
+
+class _HangingCatalogFixtureAdapter(FixtureAdapter):
+    async def list_models(self) -> ModelList:
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
 
 
 def _anthropic_client() -> httpx.AsyncClient:
@@ -142,9 +165,9 @@ async def test_models_includes_claude() -> None:
         resp = await client.get("/v1/models")
     ids = [row["id"] for row in resp.json()["data"]]
     assert ids, "expected at least one listed model"
-    assert any(
-        "claude" in model_id.lower() for model_id in ids
-    ), f"claude models must appear on the Anthropic surface listing (ADR 0009); got {ids!r}"
+    assert any("claude" in model_id.lower() for model_id in ids), (
+        f"claude models must appear on the Anthropic surface listing (ADR 0009); got {ids!r}"
+    )
 
 
 @pytest.mark.asyncio
@@ -155,7 +178,10 @@ async def test_models_match_surface_registry_set() -> None:
     are additive so non-claude backends pass Claude Code's /model discovery filter.
     """
     expected = {row["id"] for row in list_anthropic_surface_models()} | {
-        row["id"] for row in list_anthropic_discovery_aliases()
+        row["id"]
+        for row in list_anthropic_discovery_aliases(
+            {backend: ["gpt-5.5"] for backend in ANTHROPIC_BACKENDS}
+        )
     }
     async with _anthropic_client() as client:
         resp = await client.get("/v1/models")
@@ -173,9 +199,76 @@ async def test_models_discovery_aliases_pass_claude_code_filter() -> None:
     discoverable = [m for m in ids if m.lower().startswith(("claude", "anthropic"))]
     # codex/deepseek/copilot/auggie are reachable only via their anthropic- aliases.
     for backend in ("codex", "deepseek", "copilot", "auggie"):
-        assert any(
-            m.startswith(f"anthropic-{backend}-") for m in discoverable
-        ), f"{backend} has no discovery alias in /v1/models; got {discoverable!r}"
+        assert any(m.startswith(f"anthropic-{backend}-") for m in discoverable), (
+            f"{backend} has no discovery alias in /v1/models; got {discoverable!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_models_discovery_includes_every_adapter_catalog_model() -> None:
+    """The root picker catalog includes every model exposed by every adapter."""
+    adapters = {
+        "claude": _CatalogFixtureAdapter("claude", ["claude-sonnet-live", "opus-live"]),
+        "copilot": _CatalogFixtureAdapter(
+            "copilot", ["gpt-copilot-live", "claude-copilot-live"]
+        ),
+        "auggie": _CatalogFixtureAdapter("auggie", ["auggie-live"]),
+        "deepseek": _CatalogFixtureAdapter("deepseek", ["deepseek-live"]),
+        "codex": _CatalogFixtureAdapter("codex", ["gpt-codex-live"]),
+        "kimi": _CatalogFixtureAdapter("kimi", ["kimi-k3", "kimi-live"]),
+    }
+    app = build_anthropic_app(adapters)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://127.0.0.1:64946"
+    ) as client:
+        resp = await client.get("/v1/models")
+
+    assert resp.status_code == 200
+    ids = {row["id"] for row in resp.json()["data"]}
+    assert {
+        "anthropic-claude-claude-sonnet-live",
+        "anthropic-claude-opus-live",
+        "anthropic-copilot-gpt-copilot-live",
+        "anthropic-copilot-claude-copilot-live",
+        "anthropic-auggie-auggie-live",
+        "anthropic-deepseek-deepseek-live",
+        "anthropic-codex-gpt-codex-live",
+        "anthropic-kimi-kimi-k3",
+    } <= ids
+    assert "anthropic-kimi-kimi-live" not in ids
+
+
+@pytest.mark.asyncio
+async def test_models_bounds_and_isolates_slow_and_failed_adapters(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stalled or failed provider cannot hold or erase the picker catalog."""
+    monkeypatch.setattr(
+        anthropic_app_module,
+        "_MODEL_LIST_TIMEOUT_SECONDS",
+        0.02,
+    )
+    adapters = {
+        "claude": _CatalogFixtureAdapter("claude", ["claude-fast-live"]),
+        "copilot": _FailingCatalogFixtureAdapter("copilot"),
+        "auggie": _HangingCatalogFixtureAdapter("auggie"),
+    }
+    app = build_anthropic_app(adapters)
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url="http://127.0.0.1:64946",
+        timeout=1.0,
+    ) as client:
+        resp = await client.get("/v1/models")
+
+    assert resp.status_code == 200
+    ids = {row["id"] for row in resp.json()["data"]}
+    assert "anthropic-claude-claude-fast-live" in ids
+    assert "anthropic-copilot-gpt-5.5" in ids
+    assert "anthropic-auggie-opus4.7" in ids
 
 
 # --- CompositionRoot coexistence (the key G006 risk) ------------------------

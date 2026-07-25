@@ -40,19 +40,23 @@ filter, and route the alias back to its real backend:
    model ids use single hyphens AND embed them (`gpt-5.5`, `deepseek-v4-pro`, `claude-sonnet-4.6`),
    so the alias cannot be split naively on `-`. The parser instead keys on the KNOWN backend
    token: after stripping the `anthropic-` prefix, the remainder must begin with `<backend>-`
-   where `<backend>` is in `SURFACE_BACKENDS["anthropic"]` (codex/deepseek/copilot/auggie/claude);
+   where `<backend>` is in `SURFACE_BACKENDS["anthropic"]`;
    the rest is the bare model. The known backend names share no common prefix, so a first match
    over the known set is unambiguous. `list_anthropic_discovery_aliases()` emits one row per
-   non-claude model: the rows-owning backends (codex/deepseek) from `_MODEL_INDEX`, and the
-   rowless backends (copilot/auggie) from a small curated `_DISCOVERY_ROWLESS_MODELS` set (they
-   own no taxonomy, so a known-good list seeds the picker; free-text `copilot/<id>` still reaches
-   anything else upstream serves). claude is NOT aliased: its bare ids already pass the filter,
-   so aliasing would only duplicate picker rows.
+   static non-claude model: the rows-owning backends from `_MODEL_INDEX`, and rowless backends
+   from a small curated `_DISCOVERY_ROWLESS_MODELS` fallback set.
 
-2. **`GET /v1/models` is the bare surface listing PLUS the aliases.** `list_anthropic_surface_models()`
-   is unchanged (it remains the canonical bare set used by `cross_check_anthropic_models`); the
-   handler appends the alias rows. claude ids show under their own derived names; aliases show as
-   `"<Backend>: <model>"`.
+2. **`GET /v1/models` is the bare surface listing PLUS complete adapter catalogs.**
+   `list_anthropic_surface_models()` is unchanged (it remains the canonical bare set used by
+   `cross_check_anthropic_models`). On each listing request, the handler concurrently calls
+   `list_models()` on every injected Anthropic-surface adapter and adds a provider-qualified
+   discovery alias for every returned model. This includes dynamic claude models because a
+   model absent from the static index still needs the explicit backend token to route. A failure
+   in one adapter is isolated, each adapter listing has a 10-second deadline, and the static or
+   curated rows remain available as fallback. Blocking CLI discovery runs off the shared event
+   loop. Kimi discovery uses existing credentials only, so opening the picker cannot start an
+   interactive login, and its dynamic rows remain restricted to the canonical `kimi-k3`.
+   Duplicate aliases are removed and the result is sorted deterministically.
 
 3. **The resolver and `canonical_model_id` route the alias back, in lockstep.** Both detect
    `anthropic-<backend>-<bare>` via the shared `_split_discovery_alias` BEFORE the
@@ -64,11 +68,13 @@ filter, and route the alias back to its real backend:
 
 ## Consequences
 
-- With discovery enabled, all backends (codex/deepseek/copilot/auggie via aliases, claude via
-  bare ids) are selectable in `/model`, labelled "From gateway".
+- With discovery enabled, every model returned by every available adapter is selectable in
+  `/model`, labelled "From gateway".
 - The alias is a routing hint only; it never reaches the upstream model string. The bare surface
   listing, provider-qualified routing (ADR 0008), and claude routing (ADR 0009) are unchanged.
-- The curated rowless set is a convenience seed, not an authoritative catalog; it can drift from
-  what copilot/auggie actually serve, and free-text remains the escape hatch.
+- The curated rowless set is a fallback seed, not the authoritative live catalog. It preserves
+  known-good picker entries when a provider listing is unavailable.
+- A slow, failed, or unauthenticated provider cannot hold the complete catalog response. Kimi's
+  static `kimi-k3` fallback remains selectable without triggering authentication.
 - The launcher (`claude-reverso`) sets `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1`, so every
   reverso-backed session gets discovery; the builtin (direct-to-Anthropic) launchers do not.

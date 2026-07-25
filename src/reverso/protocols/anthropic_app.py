@@ -44,12 +44,14 @@ Routing (ADR 0006 D3, ADR 0009):
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable, cast
+from typing import Any, cast
 
 from reverso.protocols.adapter import ProviderAdapter, ResponsesRequest
 from reverso.protocols.anthropic_feature_gate import AnthropicFeatureRejected
@@ -84,6 +86,7 @@ DEFAULT_ANTHROPIC_VERSION = "2023-06-01"
 # listing reports a stable ISO 8601 value (the ADR 0006 acceptance date) rather
 # than a per-request now(), keeping the listing deterministic and cache-friendly.
 _MODELS_CREATED_AT = "2026-06-20T00:00:00Z"
+_MODEL_LIST_TIMEOUT_SECONDS = 10.0
 
 # The Anthropic-surface backends with optional per-profile path prefixes. claude
 # is now part of SURFACE_BACKENDS["anthropic"] and is served first-party via the
@@ -444,8 +447,8 @@ class AnthropicMessagesApp:
         method = str(scope.get("method", "GET")).upper()
 
         # GET /v1/models is the only GET route this surface serves; it takes no
-        # body and resolves no per-request backend (it is a static listing of the
-        # Anthropic-surface model set). The Messages family (/v1/messages and
+        # body and resolves no per-request backend. It combines the static surface
+        # registry with each adapter's catalog. The Messages family (/v1/messages and
         # /v1/messages/count_tokens) is POST-only.
         if route.kind == _KIND_MODELS:
             if method != "GET":
@@ -769,20 +772,50 @@ class AnthropicMessagesApp:
     async def _handle_models(self, send: Send, *, anthropic_version: str) -> None:
         """Return the Anthropic-shaped /v1/models listing (AC8).
 
-        Derived from the single surface_registry authority's Anthropic-surface
-        model set, so the listing and the router never disagree; claude rows are
-        now present and map to the claude backend (ADR 0009). The
-        shape mirrors the Anthropic Models API: a ``data`` array of
+        Combines the surface_registry authority's static model set with every
+        adapter's own model listing. Dynamic rows use provider-qualified discovery
+        aliases, so the listing and the router remain in lockstep. The shape mirrors
+        the Anthropic Models API: a ``data`` array of
         {"type":"model","id","display_name","created_at"} rows plus first_id /
         last_id / has_more. ``created_at`` is a fixed surface epoch (the models are
         first-party CLI-backed and have no provider creation timestamp); it is a
         stable ISO 8601 value rather than a per-request now() so the listing is
         deterministic and cache-friendly.
         """
-        # Bare surface listing PLUS discovery aliases: claude ids pass Claude Code's
-        # gateway-discovery claude/anthropic filter as-is, and the anthropic-<backend>-
-        # aliases make codex/deepseek/copilot/auggie selectable in the /model picker too.
-        rows = list_anthropic_surface_models() + list_anthropic_discovery_aliases()
+        # Bare surface listing PLUS discovery aliases from both the static registry
+        # and every adapter's own catalog. Adapter failures are isolated so one
+        # unavailable provider cannot hide the curated fallback rows for the others.
+        adapter_items = list(self._adapters.items())
+
+        async def list_models(adapter: ProviderAdapter) -> Any:
+            return await asyncio.wait_for(
+                adapter.list_models(),
+                timeout=_MODEL_LIST_TIMEOUT_SECONDS,
+            )
+
+        results = await asyncio.gather(
+            *(list_models(adapter) for _, adapter in adapter_items),
+            return_exceptions=True,
+        )
+        adapter_models: dict[str, list[str]] = {}
+        for (backend, _adapter), result in zip(adapter_items, results, strict=True):
+            if isinstance(result, BaseException):
+                logger.warning(
+                    "%s model listing unavailable (%s); using discovery fallback",
+                    backend,
+                    type(result).__name__,
+                )
+                continue
+            adapter_models[backend] = [
+                model_id
+                for row in result.data
+                if isinstance(row, dict)
+                and isinstance((model_id := row.get("id")), str)
+                and model_id
+            ]
+        rows = list_anthropic_surface_models() + list_anthropic_discovery_aliases(
+            adapter_models
+        )
         data = [
             {
                 "type": "model",

@@ -9,7 +9,9 @@ after a tool result is surfaced.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 
 import pytest
 
@@ -183,6 +185,31 @@ async def test_list_models_exposes_codex_friendly_claude_aliases() -> None:
     assert "sonnet4.6" in ids
     assert "sonnet-4-6" in ids
     assert "claude-sonnet-4-6" in ids
+
+
+async def test_list_models_keeps_event_loop_responsive() -> None:
+    def slow_models_runner() -> object:
+        time.sleep(0.2)
+        return {"models": [{"shortName": "opus4.8"}]}
+
+    async def ticker() -> float:
+        started = asyncio.get_running_loop().time()
+        await asyncio.sleep(0.02)
+        return asyncio.get_running_loop().time() - started
+
+    adapter = AuggieAdapter(
+        cli_runner=lambda prompt, model: "ok",
+        models_runner=slow_models_runner,
+    )
+    models, ticker_elapsed = await asyncio.gather(adapter.list_models(), ticker())
+
+    assert [model["id"] for model in models.data] == [
+        "opus4.8",
+        "opus-4-8",
+        "claude-opus-4-8",
+        "claude-opus",
+    ]
+    assert ticker_elapsed < 0.1
 
 
 def test_completion_argv_uses_repo_root_and_write_permissions(tmp_path) -> None:
