@@ -239,6 +239,38 @@ async def test_models_match_surface_registry_set() -> None:
 
 
 @pytest.mark.asyncio
+async def test_models_provider_catalog_header_limits_listing_to_provider() -> None:
+    adapters = {
+        "claude": _CatalogFixtureAdapter("claude", ["claude-sonnet-live"]),
+        "codex": _CatalogFixtureAdapter("codex", ["gpt-codex-live"]),
+        "kimi": _CatalogFixtureAdapter("kimi", ["kimi-k3"]),
+    }
+    app = build_anthropic_app(adapters)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://127.0.0.1:64946"
+    ) as client:
+        kimi = await client.get(
+            "/v1/models",
+            headers={"x-reverso-model-catalog": "kimi"},
+        )
+        aggregate = await client.get(
+            "/v1/models",
+            headers={"x-reverso-model-catalog": "all"},
+        )
+
+    assert kimi.status_code == 200
+    assert {row["id"] for row in kimi.json()["data"]} == {
+        "kimi-k3",
+        "anthropic-kimi-kimi-k3",
+    }
+    aggregate_ids = {row["id"] for row in aggregate.json()["data"]}
+    assert "anthropic-claude-claude-sonnet-live" in aggregate_ids
+    assert "anthropic-codex-gpt-codex-live" in aggregate_ids
+    assert "anthropic-kimi-kimi-k3" in aggregate_ids
+
+
+@pytest.mark.asyncio
 async def test_models_discovery_aliases_pass_claude_code_filter() -> None:
     """Every non-claude backend is selectable in /model: each has an id beginning with
     'anthropic' (Claude Code's gateway discovery drops anything else)."""

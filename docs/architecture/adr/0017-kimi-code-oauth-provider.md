@@ -29,8 +29,8 @@ floor from 3.11.
 Add a first-party `KimiAdapter` at the frozen `ProviderAdapter` boundary.
 
 - Mount `/kimi/v1` on the Responses gateway.
-- Mount `kimi` on the Anthropic Messages surface and route provider-qualified
-  model ids such as `kimi/kimi-k3`.
+- Mount `kimi` on the Anthropic Messages surface and route both bare `kimi-k3`
+  and provider-qualified `kimi/kimi-k3`.
 - Prefer the OAuth access token written by `kimi login` and refresh it through
   Kimi's OAuth token endpoint when it approaches expiry.
 - When a request has no usable local credential or bearer fallback, let the
@@ -44,7 +44,9 @@ Add a first-party `KimiAdapter` at the frozen `ProviderAdapter` boundary.
 - Use Kimi's OpenAI-compatible chat endpoint through Reverso's existing chat to
   Responses translation and replay behavior rather than adding the Kimi SDK.
 - Expose only the public model id `kimi-k3` and translate it to the upstream
-  model id `k3` when dispatching requests.
+  model id `k3` when dispatching requests. Keep
+  `anthropic-kimi-kimi-k3` as the Claude Code discovery alias because the
+  gateway picker filters out ids that do not begin with `claude` or `anthropic`.
 - Fetch Kimi's authenticated `/models` endpoint to establish live discovery.
   Runtime discovery may return only canonical K3 fallback metadata on failure,
   but Codex synchronization must reject fallback or otherwise non-live
@@ -74,7 +76,7 @@ fallback discovery from regenerating Codex metadata.
 ## Verification
 
 Offline tests cover OAuth priority, bearer fallback, chat translation, live
-model discovery, both protocol mounts, provider-qualified Anthropic routing,
+model discovery, both protocol mounts, bare and provider-qualified Anthropic routing,
 Headroom dispatch across all registered prefixes, shared login coordination,
 post-login artifact validation, request resume after official CLI success,
 K3-only exposure and translation, and fail-closed Codex synchronization.

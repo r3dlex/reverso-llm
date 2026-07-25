@@ -355,6 +355,7 @@ async def test_kimi_responses_surface_defaults_absent_model_to_k3() -> None:
     ("path", "model"),
     [
         ("/kimi/v1/messages", "kimi-k3"),
+        ("/v1/messages", "kimi-k3"),
         ("/v1/messages", "kimi/kimi-k3"),
         ("/v1/messages", "anthropic-kimi-kimi-k3"),
     ],

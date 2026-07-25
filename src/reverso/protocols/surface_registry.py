@@ -59,17 +59,12 @@ _CLAUDE_MARKER = "claude"
 _DEEPSEEK_PREFIX = "deepseek"
 _AUGGIE_PREFIX = "auggie"
 
-# The five gpt model ids served first-party by the codex backend on the Anthropic
-# surface (Milestone 2, ADR 0007). These are NOT derivable from a config name
-# prefix the way deepseek/auggie are: codex has its own first-party model taxonomy
-# and (after G005) its rows are removed from litellm_config entirely. The mapping
-# is therefore held as STATIC data here, seeded into the model index inside
-# _build_model_index so BOTH the module-level _MODEL_INDEX and the fresh index
-# cross_check_anthropic_models rebuilds carry these ids identically (C3). Routing
-# stays config-independent yet lint-covered: the backend-membership assertion in
-# cross_check still applies, while the config-existence assertion exempts these
-# ids so import does not raise once the gpt config rows are gone.
+# The first-party model ids served by config-independent Anthropic backends.
+# Codex and Kimi own their model taxonomies outside litellm_config, so both are
+# seeded into _build_model_index. This keeps bare routing, surface listing, and
+# cross_check_anthropic_models on the same authority.
 _CODEX_MODELS: dict[str, str] = codex_builtin_model_backends()
+_KIMI_MODELS = frozenset({"kimi-k3"})
 
 
 def _resolve_config_path() -> Path:
@@ -149,6 +144,8 @@ def _build_model_index(path: Path | None = None) -> dict[str, str]:
     # the build-time lint consistent (C3).
     for model_id, backend in _CODEX_MODELS.items():
         index[_normalize_model(model_id)] = backend
+    for model_id in _KIMI_MODELS:
+        index[_normalize_model(model_id)] = "kimi"
     return index
 
 
@@ -156,10 +153,9 @@ def _build_model_index(path: Path | None = None) -> dict[str, str]:
 _MODEL_INDEX: dict[str, str] = _build_model_index()
 
 # Backends that own a concrete model taxonomy (they appear as a value in the
-# index): deepseek and claude (config rows) and codex (static seed). A qualified
+# index): deepseek and claude (config rows), plus codex and Kimi (static seeds). A qualified
 # id naming one of these MUST name a model the backend actually serves; only
 # rowless backends (copilot/auggie) trust an arbitrary bare model behind their prefix.
-# Kimi is rowless in the config but owns the converged K3-only taxonomy below.
 _BACKENDS_WITH_ROWS: frozenset[str] = frozenset(_MODEL_INDEX.values())
 
 # Claude Code's gateway model discovery (CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY)
@@ -174,7 +170,6 @@ _BACKENDS_WITH_ROWS: frozenset[str] = frozenset(_MODEL_INDEX.values())
 # rest is the bare model. The known backend names share no common prefix, so a first
 # match over the known set is unambiguous.
 _DISCOVERY_ALIAS_PREFIX = "anthropic-"
-_KIMI_MODELS = frozenset({"kimi-k3"})
 
 # Rowless backends own no _MODEL_INDEX taxonomy, so the discovery listing carries a
 # curated, known-good set for the picker. Free-text copilot/<id> (and auggie/<id>)
@@ -182,7 +177,6 @@ _KIMI_MODELS = frozenset({"kimi-k3"})
 _DISCOVERY_ROWLESS_MODELS: dict[str, tuple[str, ...]] = {
     "copilot": ("gpt-5.5", "gpt-5.4", "gpt-5.4-mini"),
     "auggie": ("opus4.7", "haiku4.5"),
-    "kimi": tuple(sorted(_KIMI_MODELS)),
 }
 
 
@@ -242,16 +236,15 @@ def _resolve_qualified(provider: str, bare: str) -> str | None:
     selects GitHub Copilot's gpt-5.5, distinct from codex's bare ``gpt-5.5`` (the
     two are different upstream subscriptions that happen to share a model name).
 
-    Kimi is config-rowless but accepts only its converged ``kimi-k3`` selector id.
-    A rows-owning backend (codex/deepseek/claude) must name a model indexed to
+    Kimi is config-independent but accepts only its converged ``kimi-k3`` selector
+    id through the same indexed taxonomy as bare routing. A rows-owning backend
+    (codex/deepseek/claude/kimi) must name a model indexed to
     ITSELF: a bare id indexed to a different backend (e.g. ``deepseek/gpt-5.5``) is a
     conflict that resolves to None, and a bare id unknown to the index fails closed
     exactly as the bare-id path would.
     """
     if not bare or provider not in SURFACE_BACKENDS["anthropic"]:
         return None
-    if provider == "kimi":
-        return provider if bare in _KIMI_MODELS else None
     if provider not in _BACKENDS_WITH_ROWS:
         return provider
     indexed = _MODEL_INDEX.get(bare)
@@ -262,7 +255,7 @@ def _resolve_qualified(provider: str, bare: str) -> str | None:
 
 def _resolve_static_discovery_alias(backend: str, bare: str) -> str | None:
     """Resolve an alias backed by the static taxonomy or curated fallback."""
-    if backend in _BACKENDS_WITH_ROWS or backend == "kimi":
+    if backend in _BACKENDS_WITH_ROWS:
         return _resolve_qualified(backend, bare)
     curated = _DISCOVERY_ROWLESS_MODELS.get(backend, ())
     return backend if bare in curated else None
@@ -477,15 +470,15 @@ def cross_check_anthropic_models(path: Path | None = None) -> None:
         if isinstance(row.get("model_name"), str)
     }
     anthropic_backends = SURFACE_BACKENDS["anthropic"]
-    # The static codex ids are exempt from the CONFIG-EXISTENCE assertion only:
-    # they are seeded data, not config rows, and G005 removes the gpt rows from
-    # litellm_config entirely, so requiring them in the config would make import
-    # raise. They are NOT exempt from the backend-membership assertion below, so
-    # codex routing stays lint-covered (a codex id mapping to a backend absent
-    # from the Anthropic surface still raises).
-    codex_exempt = {_normalize_model(model_id) for model_id in _CODEX_MODELS}
+    # Static Codex and Kimi ids are exempt from the CONFIG-EXISTENCE assertion
+    # only: they are seeded data, not config rows. They remain covered by the
+    # backend-membership assertion below.
+    static_exempt = {
+        *(_normalize_model(model_id) for model_id in _CODEX_MODELS),
+        *(_normalize_model(model_id) for model_id in _KIMI_MODELS),
+    }
     for model_name, backend in fresh_index.items():
-        if model_name not in config_names and model_name not in codex_exempt:
+        if model_name not in config_names and model_name not in static_exempt:
             raise RuntimeError(
                 "surface_registry drift: indexed Anthropic model "
                 f"{model_name!r} is not present in litellm_config.yaml"
