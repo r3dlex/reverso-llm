@@ -729,6 +729,7 @@ def _atomic_write(target: Path, new_text: str) -> None:
     The temp file is created in ``target.parent`` so that ``os.replace`` is an
     atomic same-filesystem rename. The temp file is unlinked on any failure.
     """
+    _reject_symlink(target, "write target")
     target.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(
         prefix=target.name + ".",
@@ -757,22 +758,31 @@ def _default_catalog_dir(target: Path) -> Path:
 def _write_per_provider_catalogs(
     provider_models: list[ProviderModels],
     catalog_dir: Path,
-) -> list[Path]:
-    """Write one catalog JSON per live provider; return the paths written.
+    *,
+    dry_run: bool = False,
+) -> tuple[list[Path], bool]:
+    """Converge live provider catalogs; return their paths and change status.
 
     Each file contains only that provider's models with Codex-visible slugs.
     Files are written for the same prefixes (and order) the profiles block
     references, so a profile never points at a missing catalog.
     """
     written: list[Path] = []
+    changed = False
     for entry in _live_provider_models(provider_models):
         spec = model_exposure.reverso_codex_profile_spec(entry.prefix, entry.models)
         if not spec.uses_model_catalog:
             continue
         path = _catalog_path_for(catalog_dir, entry.prefix)
-        _atomic_write(path, _generate_catalog_json(entry))
+        new_text = _generate_catalog_json(entry)
+        new_bytes = new_text.encode()
+        old_bytes = path.read_bytes() if path.exists() else None
+        if old_bytes != new_bytes:
+            changed = True
+            if not dry_run:
+                _atomic_write(path, new_text)
         written.append(path)
-    return written
+    return written, changed
 
 
 def _is_managed_profile_text(text: str) -> bool:
@@ -806,6 +816,7 @@ def _unique_archive_path(
         archive_path = archive_dir / (
             f"{source_name}{BACKUP_SUFFIX_PREFIX}{stamp}.{suffix}"
         )
+    _reject_symlink(archive_path, "archive target")
     return archive_path
 
 
@@ -814,11 +825,15 @@ def _archive_file(
     archive_dir: Path,
     *,
     now: datetime.datetime | None = None,
+    dry_run: bool = False,
 ) -> Path:
     """Move ``path`` into ``archive_dir`` and return its new location."""
-    archive_dir.mkdir(parents=True, exist_ok=True)
+    _reject_symlink(path, "archive source")
+    _reject_symlink(archive_dir, "archive directory")
     archive_path = _unique_archive_path(archive_dir, path.name, now=now)
-    shutil.move(str(path), archive_path)
+    if not dry_run:
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(path), archive_path)
     return archive_path
 
 
@@ -827,6 +842,7 @@ def _write_profile_files(
     *,
     now: datetime.datetime | None = None,
     keep_backups: int = BACKUPS_KEPT,
+    dry_run: bool = False,
 ) -> tuple[list[Path], list[Path], list[Path], bool]:
     """Write changed profile files and return paths, backups, rotations, changed."""
     written: list[Path] = []
@@ -848,6 +864,9 @@ def _write_profile_files(
             # overwrite an unmarked direct provider profile.
             continue
         changed = True
+        if dry_run:
+            written.append(path)
+            continue
         backup = _make_backup(path, now=now)
         if backup is not None:
             backups.append(backup)
@@ -870,11 +889,79 @@ def _validate_canonical_reverso_profile_targets(
             )
 
 
+def _reject_symlink(path: Path, context: str) -> None:
+    """Reject both live and dangling symlinks before filesystem mutation."""
+    if path.is_symlink():
+        raise RuntimeError(f"{context} must not be a symlink: {path}")
+
+
+def _validate_sync_paths(
+    *,
+    target: Path,
+    catalog_dir: Path,
+    profile_files: dict[Path, str],
+    live_prefixes: set[str],
+) -> None:
+    """Reject symlinks across every path the sync may write or archive."""
+    archive_dir = target.parent / PROFILE_ARCHIVE_DIR
+    paths = {
+        target,
+        catalog_dir,
+        archive_dir,
+        *profile_files,
+        *(_profile_path_for(target.parent, prefix) for prefix in live_prefixes),
+        *(
+            _profile_path_for(target.parent, stem)
+            for stem in model_exposure.stale_codex_variant_profile_stems()
+        ),
+        *(
+            _reverso_profile_path_for(target.parent, prefix)
+            for prefix in model_exposure.reverso_routed_codex_profile_prefixes()
+        ),
+        *(
+            _catalog_path_for(catalog_dir, prefix)
+            for prefix in model_exposure.reverso_routed_codex_profile_prefixes()
+        ),
+    }
+    for prefix in model_exposure.reverso_routed_codex_profile_prefixes():
+        profile_path = _reverso_profile_path_for(target.parent, prefix)
+        if not profile_path.exists() or profile_path.is_symlink():
+            continue
+        profile_text = profile_path.read_text(encoding="utf-8")
+        if not _is_managed_profile_text(profile_text):
+            continue
+        try:
+            parsed = _parse_toml(
+                profile_text,
+                f"existing profile {profile_path.name}",
+            )
+        except RuntimeError:
+            continue
+        profile_catalog = parsed.get("model_catalog_json")
+        if isinstance(profile_catalog, str):
+            candidate = Path(profile_catalog)
+            if candidate.parent == catalog_dir:
+                paths.add(candidate)
+    for path in paths:
+        _reject_symlink(path, "sync target")
+    if archive_dir.is_dir():
+        for path in archive_dir.iterdir():
+            _reject_symlink(path, "archive target")
+    for path in (target, *profile_files):
+        if not path.parent.is_dir():
+            continue
+        backup_prefix = path.name + BACKUP_SUFFIX_PREFIX
+        for candidate in path.parent.iterdir():
+            if candidate.name.startswith(backup_prefix):
+                _reject_symlink(candidate, "backup target")
+
+
 def _archive_legacy_managed_reverso_profiles(
     config_dir: Path,
     live_prefixes: set[str],
     *,
     now: datetime.datetime | None = None,
+    dry_run: bool = False,
 ) -> list[Path]:
     """Archive marker-owned legacy bare profiles after canonical files exist."""
     archived: list[Path] = []
@@ -886,11 +973,11 @@ def _archive_legacy_managed_reverso_profiles(
         if not _is_managed_profile_text(path.read_text(encoding="utf-8")):
             continue
         canonical = _reverso_profile_path_for(config_dir, prefix)
-        if not canonical.exists():
+        if not canonical.exists() and not dry_run:
             raise RuntimeError(
                 f"canonical Reverso profile was not written before migration: {canonical}"
             )
-        archived.append(_archive_file(path, archive_dir, now=now))
+        archived.append(_archive_file(path, archive_dir, now=now, dry_run=dry_run))
     return archived
 
 
@@ -898,6 +985,7 @@ def _archive_stale_variant_profiles(
     config_dir: Path,
     *,
     now: datetime.datetime | None = None,
+    dry_run: bool = False,
 ) -> list[Path]:
     """Archive only known generated variant profile files.
 
@@ -911,7 +999,7 @@ def _archive_stale_variant_profiles(
         path = _profile_path_for(config_dir, stem)
         if not path.exists():
             continue
-        archived.append(_archive_file(path, archive_dir, now=now))
+        archived.append(_archive_file(path, archive_dir, now=now, dry_run=dry_run))
     return archived
 
 
@@ -921,6 +1009,7 @@ def _archive_stale_managed_reverso_profiles(
     live_prefixes: set[str],
     *,
     now: datetime.datetime | None = None,
+    dry_run: bool = False,
 ) -> list[Path]:
     """Archive managed Reverso profile/catalog files for no-longer-live prefixes.
 
@@ -938,6 +1027,7 @@ def _archive_stale_managed_reverso_profiles(
                 catalog_dir,
                 prefix,
                 now=now,
+                dry_run=dry_run,
             )
         )
     return archived
@@ -949,6 +1039,7 @@ def _archive_stale_managed_reverso_profile(
     prefix: str,
     *,
     now: datetime.datetime | None = None,
+    dry_run: bool = False,
 ) -> list[Path]:
     """Archive one managed Reverso profile and its in-tree catalog."""
     profile_path = _reverso_profile_path_for(config_dir, prefix)
@@ -972,9 +1063,23 @@ def _archive_stale_managed_reverso_profile(
             catalog_path = candidate
 
     archive_dir = config_dir / PROFILE_ARCHIVE_DIR
-    archived = [_archive_file(profile_path, archive_dir, now=now)]
+    archived = [
+        _archive_file(
+            profile_path,
+            archive_dir,
+            now=now,
+            dry_run=dry_run,
+        )
+    ]
     if catalog_path.exists():
-        archived.append(_archive_file(catalog_path, archive_dir, now=now))
+        archived.append(
+            _archive_file(
+                catalog_path,
+                archive_dir,
+                now=now,
+                dry_run=dry_run,
+            )
+        )
     return archived
 
 
@@ -1003,6 +1108,7 @@ def sync(
     now: datetime.datetime | None = None,
     keep_backups: int = BACKUPS_KEPT,
     catalog_dir: Path | None = None,
+    dry_run: bool = False,
 ) -> SyncResult:
     """Synchronize ``target`` against live gateway models.
 
@@ -1041,9 +1147,19 @@ def sync(
             raise KimiDiscoveryError(
                 "live Kimi model discovery must contain only kimi-k3"
             )
+    discovered_prefixes = {entry.prefix for entry in provider_models}
+    missing_prefixes = [
+        prefix for prefix in sync_prefixes if prefix not in discovered_prefixes
+    ]
+    if missing_prefixes:
+        raise RuntimeError(
+            "required reverso provider model discovery failed for: "
+            + ", ".join(missing_prefixes)
+        )
 
     catalog_dir = resolved_catalog_dir
 
+    _reject_symlink(target, "config target")
     old_text = target.read_text(encoding="utf-8") if target.exists() else ""
 
     profile_files = _profile_files(provider_models, target.parent, catalog_dir)
@@ -1064,87 +1180,75 @@ def sync(
 
     for path, text in profile_files.items():
         _parse_toml(text, f"rendered profile {path.name}")
+    for entry in _live_provider_models(provider_models):
+        spec = model_exposure.reverso_codex_profile_spec(entry.prefix, entry.models)
+        if spec.uses_model_catalog:
+            json.loads(_generate_catalog_json(entry))
+    _validate_sync_paths(
+        target=target,
+        catalog_dir=catalog_dir,
+        profile_files=profile_files,
+        live_prefixes=live_prefixes,
+    )
     _validate_canonical_reverso_profile_targets(profile_files)
     if new_text != old_text:
         _parse_toml(new_text, "rendered config")
-
-    if new_text == old_text:
-        # The catalogs are regenerated even when the config text is unchanged:
-        # the profiles reference these paths, so deleted or stale catalog files
-        # must come back on every sync, not only on config diffs.
-        (
-            profiles,
-            profile_backups,
-            profile_rotated,
-            profiles_changed,
-        ) = _write_profile_files(
-            profile_files,
-            now=now,
-            keep_backups=keep_backups,
-        )
-        catalogs = _write_per_provider_catalogs(provider_models, catalog_dir)
-        archived_profiles = _archive_legacy_managed_reverso_profiles(
-            target.parent,
-            live_prefixes,
-            now=now,
-        )
-        archived_profiles.extend(
-            _archive_stale_variant_profiles(target.parent, now=now)
-        )
-        archived_profiles.extend(
-            _archive_stale_managed_reverso_profiles(
-                target.parent,
-                catalog_dir,
-                live_prefixes,
-                now=now,
-            )
-        )
-        changed = profiles_changed or bool(archived_profiles)
-        return SyncResult(
-            target=target,
-            changed=changed,
-            backup=None,
-            rotated=profile_rotated,
-            provider_models=provider_models,
-            catalog_dir=catalog_dir,
-            catalogs=catalogs,
-            profiles=profiles,
-            profile_backups=profile_backups,
-            archived_profiles=archived_profiles,
-        )
 
     (
         profiles,
         profile_backups,
         profile_rotated,
-        _profiles_changed,
+        profiles_changed,
     ) = _write_profile_files(
         profile_files,
         now=now,
         keep_backups=keep_backups,
+        dry_run=dry_run,
     )
-    catalogs = _write_per_provider_catalogs(provider_models, catalog_dir)
+    catalogs, catalogs_changed = _write_per_provider_catalogs(
+        provider_models,
+        catalog_dir,
+        dry_run=dry_run,
+    )
     archived_profiles = _archive_legacy_managed_reverso_profiles(
         target.parent,
         live_prefixes,
         now=now,
+        dry_run=dry_run,
     )
-    archived_profiles.extend(_archive_stale_variant_profiles(target.parent, now=now))
+    archived_profiles.extend(
+        _archive_stale_variant_profiles(
+            target.parent,
+            now=now,
+            dry_run=dry_run,
+        )
+    )
     archived_profiles.extend(
         _archive_stale_managed_reverso_profiles(
             target.parent,
             catalog_dir,
             live_prefixes,
             now=now,
+            dry_run=dry_run,
         )
     )
 
-    backup = _make_backup(target, now=now)
-    _atomic_write(target, new_text)
-    rotated = _rotate_backups(target, keep=keep_backups)
+    config_changed = new_text != old_text
+    changed = (
+        config_changed
+        or profiles_changed
+        or catalogs_changed
+        or bool(archived_profiles)
+    )
+    backup = None
+    rotated: list[Path] = []
+    if config_changed and not dry_run:
+        backup = _make_backup(target, now=now)
+        _atomic_write(target, new_text)
+        rotated = _rotate_backups(target, keep=keep_backups)
     return SyncResult(
         target=target,
-        changed=True,
+        changed=changed,
         backup=backup,
         rotated=rotated + profile_rotated,
         provider_models=provider_models,
@@ -1234,20 +1338,27 @@ def main(argv: list[str] | None = None) -> int:
     catalog_dir = _resolve_catalog_dir(args.catalog_dir, target)
 
     if args.dry_run:
-        fetcher = _default_fetcher(base_url)
         try:
-            provider_models = fetch_all(
-                model_exposure.reverso_routed_codex_profile_prefixes(),
-                fetcher,
-                skip_errors=True,
+            result = sync(
+                target=target,
+                base_url=base_url,
+                catalog_dir=catalog_dir,
+                dry_run=True,
             )
+        except httpx.HTTPError as exc:
+            sys.stderr.write(f"reverso-codex-sync: gateway error: {exc}\n")
+            return 2
         except RuntimeError as exc:
             sys.stderr.write(f"reverso-codex-sync: {exc}\n")
             return 3
         report = {
-            "target": str(target),
-            "catalog_dir": str(catalog_dir),
-            "providers": {pm.prefix: list(pm.models) for pm in provider_models},
+            "target": str(result.target),
+            "changed": result.changed,
+            "catalog_dir": str(result.catalog_dir),
+            "catalogs": [str(p) for p in result.catalogs],
+            "profiles": [str(p) for p in result.profiles],
+            "archived_profiles": [str(p) for p in result.archived_profiles],
+            "providers": {pm.prefix: list(pm.models) for pm in result.provider_models},
         }
         sys.stdout.write(json.dumps(report, indent=2) + "\n")
         return 0

@@ -68,8 +68,8 @@ project: reverso
 
 **Exit criteria.**
 
-- `codex -p anthropic "say hello"` produces a response from Claude Code.
-- `codex -p deepseek "say hello"` produces a response from DeepSeek.
+- `codex -p reverso-claude "say hello"` produces a response from Claude Code.
+- `codex -p reverso-deepseek "say hello"` produces a response from DeepSeek.
 - `claude --model gpt-5-codex "say hello"` (or similar Codex CLI model) produces a response from Codex CLI through the gateway.
 - `claude --model deepseek-reasoner "say hello"` produces a response from DeepSeek.
 - Smoke tests pass.
@@ -104,7 +104,7 @@ project: reverso
 
 **Exit criteria.**
 
-- A three-turn conversation through `codex -p anthropic` correctly maintains context across turns (asking "remember my name is X" then "what is my name" works).
+- A three-turn conversation through `codex -p reverso-claude` correctly maintains context across turns (asking "remember my name is X" then "what is my name" works).
 - Idle sessions are terminated by the sweeper after 30+ minutes.
 - Sessions with live child processes are *not* terminated (test by running a long sleep as a tool action).
 - Workspace conflict warnings appear in logs when running direct `claude` in the same workspace as a gateway session.

@@ -201,7 +201,7 @@ A1 (`.omc/research/codex-resume-probe.md`) returned NO-PERSIST: `codex exec resu
 Codex 0.139.0 has no native mechanism to feed its TUI `/model` picker from a custom `model_provider`'s `/v1/models` endpoint (`.omc/research/codex-model-picker.md`). B5 ships the SYNC-TOOL workaround:
 
 - `reverso-codex-sync` console script (`src/reverso/codex_sync.py`).
-- GETs `http://127.0.0.1:64946/<prefix>/v1/models` for each Reverso-routed prefix and writes provider-name profile files beside `~/.codex/config.toml`: `claude.config.toml`, `copilot.config.toml`, `auggie.config.toml`, `deepseek.config.toml`, and `kimi.config.toml`. It also writes `codex-direct.config.toml` when the local-loopback `codex-direct` gate is enabled. `REVERSO_CODEX_DIRECT_BACKEND=0` (or `false`, `no`, `off`) hides the direct profile.
+- GETs `http://127.0.0.1:64946/<prefix>/v1/models` for each Reverso-routed prefix and writes product-scoped profile files beside `~/.codex/config.toml`: `reverso-claude.config.toml`, `reverso-copilot.config.toml`, `reverso-auggie.config.toml`, `reverso-deepseek.config.toml`, and `reverso-kimi.config.toml`. It also writes `reverso-codex-direct.config.toml` when the local-loopback `codex-direct` gate is enabled. `REVERSO_CODEX_DIRECT_BACKEND=0` (or `false`, `no`, `off`) hides the direct profile.
 - Each generated Reverso profile pins `model`, `model_provider = "reverso_<prefix>"`, and a provider-scoped `model_catalog_json`. The per-provider catalogs live under `~/.codex/reverso/<prefix>.json` by default and use bare model slugs because collisions cannot occur inside a provider-scoped picker.
 - The base `config.toml` is kept clean: the tool strips legacy global catalog, NUX, and managed `[profiles.*]` blocks, and does not generate a root `model_catalog_json` or global model-list exposure.
 - Direct `openai.config.toml` and `minimax.config.toml` profiles are direct Codex provider profiles, not Reverso routes. MiniMax remains direct Codex-only.
@@ -250,11 +250,11 @@ Phase D removed the previously-recorded deepseek streaming carve-out: the adapte
 
 - OpenAI pass-through is opt-in local-loopback only: `/openai/v1/responses` and
   `/openai/v1/models` mount when `REVERSO_OPENAI_BACKEND=1`. Codex profile
-  generation uses `openai-pass-through.config.toml` and
+  generation uses `reverso-openai-pass-through.config.toml` and
   `~/.codex/reverso/openai-pass-through.json`; the built-in `openai.config.toml`
   remains the bare GPT/Codex default profile.
 
-`openai-pass-through.config.toml`
+`reverso-openai-pass-through.config.toml`
 `~/.codex/reverso/openai-pass-through.json` route Codex-sync traffic through
 `/openai-pass-through/v1/...`; operator HTTP remains `/openai/v1/...`. Built-in
 `openai.config.toml` GPT/Codex defaults remain bare.

@@ -155,3 +155,40 @@ def test_architecture_documents_full_headroom_extra_as_installed() -> None:
     assert "headroom-ai[all]==0.32.1" in text
     assert "is installed by default" in text
     assert "are not installed by default" not in text
+
+
+def test_active_docs_use_product_scoped_reverso_profile_names() -> None:
+    documents = [
+        Path("docs/02-prd.md").read_text(),
+        Path("docs/04-mvp.md").read_text(),
+        Path("docs/architecture/codex-responses-parity-matrix.md").read_text(),
+    ]
+    combined = "\n".join(documents)
+
+    expected = [
+        "codex -p reverso-claude",
+        "codex -p reverso-deepseek",
+        "reverso-claude.config.toml",
+        "reverso-copilot.config.toml",
+        "reverso-auggie.config.toml",
+        "reverso-deepseek.config.toml",
+        "reverso-kimi.config.toml",
+        "reverso-codex-direct.config.toml",
+        "reverso-openai-pass-through.config.toml",
+    ]
+    for needle in expected:
+        assert needle in combined
+
+    forbidden = [
+        "codex -p anthropic",
+        "codex -p deepseek",
+        "`claude.config.toml`",
+        "`copilot.config.toml`",
+        "`auggie.config.toml`",
+        "`deepseek.config.toml`",
+        "`kimi.config.toml`",
+        "`codex-direct.config.toml`",
+        "`openai-pass-through.config.toml`",
+    ]
+    for needle in forbidden:
+        assert needle not in combined
