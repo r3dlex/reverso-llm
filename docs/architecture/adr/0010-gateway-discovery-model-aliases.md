@@ -90,7 +90,7 @@ filter, and route the alias back to its real backend:
   only static or actually listed aliases route.
 - A slow, failed, or unauthenticated provider cannot hold the complete catalog response. Kimi's
   static `kimi-k3` fallback remains selectable without triggering authentication.
-- The launcher (`claude-reverso`) sets `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1`, so every
-  reverso-backed session gets discovery; the builtin (direct-to-Anthropic) launchers do not.
+- All managed `claude-*` launchers set `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1`, so every
+  Reverso-backed session gets discovery from the gateway.
 - Provider launchers no longer show unrelated provider models in `/model`; the
   aggregate catalog remains available only through `claude-reverso`.

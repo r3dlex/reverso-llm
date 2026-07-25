@@ -45,6 +45,7 @@ logger = logging.getLogger(__name__)
 GATEWAY_BASE_URL = "http://127.0.0.1:64946"
 PROFILE_ARCHIVE_DIR = Path("Archive") / "reverso-codex-sync"
 PROFILE_MANAGED_MARKER = "# Managed by reverso-codex-sync."
+OPTIONAL_DISCOVERY_PREFIXES = frozenset({"codex-direct"})
 
 
 def _codex_responses_compatible_models(prefix: str, model_ids: list[str]) -> list[str]:
@@ -110,6 +111,10 @@ class KimiDiscoveryError(RuntimeError):
     """Kimi sync input was not the canonical live K3-only listing."""
 
 
+class ModelDiscoveryError(RuntimeError):
+    """A provider returned a malformed OpenAI-shaped model listing."""
+
+
 def _default_fetcher(base_url: str) -> ModelFetcher:
     """Return a fetcher that GETs ``{base_url}/{prefix}/v1/models`` via httpx."""
 
@@ -118,7 +123,7 @@ def _default_fetcher(base_url: str) -> ModelFetcher:
         response = httpx.get(url, timeout=5.0)
         response.raise_for_status()
         payload = response.json()
-        model_ids = _extract_model_ids(payload)
+        model_ids = _require_model_ids(payload)
         if prefix == "kimi" and (
             not isinstance(payload, dict)
             or payload.get("model_discovery_source") != "live"
@@ -130,6 +135,23 @@ def _default_fetcher(base_url: str) -> ModelFetcher:
         return model_ids
 
     return _fetch
+
+
+def _require_model_ids(payload: t.Any) -> list[str]:
+    """Validate and return ids from an OpenAI-shaped model listing."""
+    if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
+        raise ModelDiscoveryError("model discovery response must contain a data list")
+    ids: list[str] = []
+    for entry in payload["data"]:
+        if not isinstance(entry, dict):
+            raise ModelDiscoveryError("model discovery data entries must be objects")
+        model_id = entry.get("id")
+        if not isinstance(model_id, str) or not model_id:
+            raise ModelDiscoveryError(
+                "model discovery data entries must contain a non-empty id"
+            )
+        ids.append(model_id)
+    return ids
 
 
 def _extract_model_ids(payload: t.Any) -> list[str]:
@@ -999,6 +1021,8 @@ def _archive_stale_variant_profiles(
         path = _profile_path_for(config_dir, stem)
         if not path.exists():
             continue
+        if not _is_managed_profile_text(path.read_text(encoding="utf-8")):
+            continue
         archived.append(_archive_file(path, archive_dir, now=now, dry_run=dry_run))
     return archived
 
@@ -1136,7 +1160,10 @@ def sync(
         fetch,
         skip_errors=fetcher is None,
     )
-    if not provider_models:
+    required_prefixes = tuple(
+        prefix for prefix in sync_prefixes if prefix not in OPTIONAL_DISCOVERY_PREFIXES
+    )
+    if not provider_models and required_prefixes:
         raise RuntimeError("no reverso provider model listings were available")
     if "kimi" in sync_prefixes:
         kimi_models = next(
@@ -1149,7 +1176,7 @@ def sync(
             )
     discovered_prefixes = {entry.prefix for entry in provider_models}
     missing_prefixes = [
-        prefix for prefix in sync_prefixes if prefix not in discovered_prefixes
+        prefix for prefix in required_prefixes if prefix not in discovered_prefixes
     ]
     if missing_prefixes:
         raise RuntimeError(
@@ -1227,7 +1254,7 @@ def sync(
         _archive_stale_managed_reverso_profiles(
             target.parent,
             catalog_dir,
-            live_prefixes,
+            set(sync_prefixes),
             now=now,
             dry_run=dry_run,
         )

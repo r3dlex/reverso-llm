@@ -364,6 +364,91 @@ def test_sync_preserves_managed_artifacts_when_required_discovery_fails(
     assert not (tmp_path / codex_sync.PROFILE_ARCHIVE_DIR).exists()
 
 
+@pytest.mark.parametrize(
+    ("prefix", "models"),
+    [
+        ("claude", []),
+        ("copilot", ["not-a-supported-copilot-model"]),
+    ],
+)
+def test_sync_preserves_managed_artifacts_when_required_discovery_is_empty(
+    tmp_path: Path,
+    prefix: str,
+    models: list[str],
+) -> None:
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+    catalog_dir = tmp_path / "reverso"
+    catalog_dir.mkdir()
+    profile = tmp_path / f"reverso-{prefix}.config.toml"
+    catalog = catalog_dir / f"{prefix}.json"
+    profile.write_text(
+        codex_sync._render_profile_file(
+            model="last-known-good",
+            model_provider=f"reverso_{prefix}",
+            catalog_path=catalog,
+        ),
+        encoding="utf-8",
+    )
+    catalog.write_bytes(b'{"models":[{"slug":"last-known-good"}]}\n')
+    before = {path: path.read_bytes() for path in (profile, catalog)}
+    payload = _fixture_payload()
+    payload[prefix] = models
+
+    codex_sync.sync(
+        target=target,
+        fetcher=_make_fetcher(payload),
+        catalog_dir=catalog_dir,
+    )
+
+    assert {path: path.read_bytes() for path in before} == before
+    assert not (tmp_path / codex_sync.PROFILE_ARCHIVE_DIR).exists()
+
+
+def test_sync_preserves_optional_codex_direct_artifacts_when_unavailable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+    catalog_dir = tmp_path / "reverso"
+    catalog_dir.mkdir()
+    profile = tmp_path / "reverso-codex-direct.config.toml"
+    catalog = catalog_dir / "codex-direct.json"
+    profile.write_text(
+        codex_sync._render_profile_file(
+            model="gpt-5.5",
+            model_provider="reverso_codex-direct",
+            catalog_path=catalog,
+        ),
+        encoding="utf-8",
+    )
+    catalog.write_bytes(b'{"models":[{"slug":"last-known-good"}]}\n')
+    before = {path: path.read_bytes() for path in (profile, catalog)}
+    payload = _fixture_payload()
+
+    def _default_fetcher(_base_url: str) -> codex_sync.ModelFetcher:
+        def _fetch(prefix: str) -> list[str]:
+            if prefix == "codex-direct":
+                raise httpx.HTTPStatusError(
+                    "known compatibility failure",
+                    request=httpx.Request("GET", "http://127.0.0.1"),
+                    response=httpx.Response(502),
+                )
+            return list(payload[prefix])
+
+        return _fetch
+
+    monkeypatch.setattr(codex_sync, "_default_fetcher", _default_fetcher)
+
+    result = codex_sync.sync(target=target, catalog_dir=catalog_dir)
+
+    assert "codex-direct" not in {
+        provider.prefix for provider in result.provider_models
+    }
+    assert {path: path.read_bytes() for path in before} == before
+
+
 def test_default_model_for_prefers_deepseek_v4_pro() -> None:
     assert (
         model_exposure.codex_profile_default_model(
@@ -794,7 +879,10 @@ def test_sync_archives_only_known_generated_variant_profiles(tmp_path: Path) -> 
         tmp_path / "minimax-spark.config.toml",
     ]
     for path in stale:
-        path.write_text('model = "old"\n', encoding="utf-8")
+        path.write_text(
+            codex_sync.PROFILE_MANAGED_MARKER + '\nmodel = "old"\n',
+            encoding="utf-8",
+        )
     user_owned = tmp_path / "deepseek-custom.config.toml"
     user_owned.write_text('model = "keep-me"\n', encoding="utf-8")
 
@@ -810,6 +898,21 @@ def test_sync_archives_only_known_generated_variant_profiles(tmp_path: Path) -> 
     assert user_owned.exists()
     archive_dir = tmp_path / codex_sync.PROFILE_ARCHIVE_DIR
     assert archive_dir.is_dir()
+
+
+def test_sync_preserves_unmarked_known_variant_profile(tmp_path: Path) -> None:
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+    variant = tmp_path / "deepseek-gpt54.config.toml"
+    before = b'model = "user-owned"\n'
+    variant.write_bytes(before)
+
+    result = codex_sync.sync(
+        target=target, fetcher=_make_fetcher(), catalog_dir=tmp_path / "reverso"
+    )
+
+    assert variant.read_bytes() == before
+    assert variant not in result.archived_profiles
 
 
 def test_sync_preserves_unmarked_direct_provider_profiles(tmp_path: Path) -> None:
@@ -893,6 +996,7 @@ def test_sync_archives_stale_managed_reverso_profile_and_catalog(
 
     result = codex_sync.sync(
         target=target,
+        prefixes=("copilot", "deepseek", "kimi"),
         fetcher=_make_fetcher(
             {
                 "copilot": ["gpt-5.5"],
@@ -1440,6 +1544,30 @@ def test_extract_model_ids_handles_malformed_payloads() -> None:
     assert codex_sync._extract_model_ids({"data": [{}]}) == []
     assert codex_sync._extract_model_ids({"data": "not a list"}) == []
     assert codex_sync._extract_model_ids("nope") == []
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        [],
+        {},
+        {"data": "not a list"},
+        {"data": [None]},
+        {"data": [{}]},
+        {"data": [{"id": ""}]},
+    ],
+)
+def test_default_fetcher_rejects_malformed_model_listing(
+    monkeypatch: pytest.MonkeyPatch,
+    payload: object,
+) -> None:
+    def get(url: str, *, timeout: float) -> httpx.Response:
+        return httpx.Response(200, json=payload, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(codex_sync.httpx, "get", get)
+
+    with pytest.raises(codex_sync.ModelDiscoveryError):
+        codex_sync._default_fetcher("http://127.0.0.1:64946")("copilot")
 
 
 def test_fetch_all_dedupes_model_ids_per_prefix() -> None:
