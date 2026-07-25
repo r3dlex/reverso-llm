@@ -211,9 +211,12 @@ async def test_models_includes_claude() -> None:
         resp = await client.get("/v1/models")
     ids = [row["id"] for row in resp.json()["data"]]
     assert ids, "expected at least one listed model"
-    assert any("claude" in model_id.lower() for model_id in ids), (
-        f"claude models must appear on the Anthropic surface listing (ADR 0009); got {ids!r}"
+    has_claude_model = any("claude" in model_id.lower() for model_id in ids)
+    failure_message = (
+        "claude models must appear on the Anthropic surface listing "
+        f"(ADR 0009); got {ids!r}"
     )
+    assert has_claude_model, failure_message
 
 
 @pytest.mark.asyncio
@@ -245,9 +248,14 @@ async def test_models_discovery_aliases_pass_claude_code_filter() -> None:
     discoverable = [m for m in ids if m.lower().startswith(("claude", "anthropic"))]
     # codex/deepseek/copilot/auggie are reachable only via their anthropic- aliases.
     for backend in ("codex", "deepseek", "copilot", "auggie"):
-        assert any(m.startswith(f"anthropic-{backend}-") for m in discoverable), (
+        alias_prefix = f"anthropic-{backend}-"
+        has_discovery_alias = any(
+            model_id.startswith(alias_prefix) for model_id in discoverable
+        )
+        failure_message = (
             f"{backend} has no discovery alias in /v1/models; got {discoverable!r}"
         )
+        assert has_discovery_alias, failure_message
 
 
 @pytest.mark.asyncio
