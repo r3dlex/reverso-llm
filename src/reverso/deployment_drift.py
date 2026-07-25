@@ -109,7 +109,7 @@ class DriftEnvironment:
 
     @property
     def kimi_profile_path(self) -> Path:
-        return self.home / ".codex" / "kimi.config.toml"
+        return self.home / ".codex" / "reverso-kimi.config.toml"
 
     @property
     def kimi_code_home(self) -> Path:

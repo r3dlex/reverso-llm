@@ -81,3 +81,77 @@ def test_readme_preserves_codex_selector_invariants() -> None:
     ]
     for needle in expected:
         assert needle in selector_rules
+
+
+def test_readme_install_and_update_refresh_all_client_catalog_surfaces() -> None:
+    text = Path("README.md").read_text()
+    install = text.split("### Install and start", 1)[1].split(
+        "## How routing works", 1
+    )[0]
+    update = text.split("## Update, stop, and uninstall", 1)[1].split(
+        "## Troubleshooting", 1
+    )[0]
+
+    expected = [
+        "uv run reverso-codex-sync --dry-run",
+        "uv run reverso-codex-sync",
+        "uv run reverso-claude-code-sync --dry-run",
+        "uv run reverso-claude-code-sync",
+    ]
+    for command in expected:
+        assert command in install
+        assert command in update
+
+
+def test_readme_documents_prefixed_codex_profiles_and_claude_aliases() -> None:
+    text = Path("README.md").read_text()
+
+    expected = [
+        "~/.codex/reverso-claude.config.toml",
+        "~/.codex/reverso-kimi.config.toml",
+        "codex exec -p reverso-claude",
+        "claude-reverso",
+        "claude-claude",
+        "claude-codex",
+        "claude-copilot",
+        "claude-auggie",
+        "claude-deepseek",
+        "claude-kimi",
+        "x-reverso-model-catalog",
+        "x-reverso-workspace",
+    ]
+    for needle in expected:
+        assert needle in text
+
+
+def test_readme_documents_headroom_runtime_topology_and_updates() -> None:
+    text = Path("README.md").read_text()
+
+    expected = [
+        'uv tool install --python 3.13 "headroom-ai[all]"',
+        "uv tool upgrade headroom-ai",
+        "headroom-ai[all]==0.32.1",
+        "127.0.0.1:64946",
+        "127.0.0.1:58787",
+        "127.0.0.1:58788",
+        "127.0.0.1:58789",
+        "127.0.0.1:8787",
+        "HEADROOM_NET_COST_POLICY=1 headroom proxy",
+        "OPENAI_TARGET_API_URL=http://127.0.0.1:64947 headroom proxy",
+        "OPENAI_TARGET_API_URL=http://127.0.0.1:64946/deepseek headroom proxy",
+        "--port 58787 --mode cache",
+        "--port 58788 --mode token",
+        "--port 58789 --mode token",
+        "embedded",
+        "standalone",
+    ]
+    for needle in expected:
+        assert needle in text
+
+
+def test_architecture_documents_full_headroom_extra_as_installed() -> None:
+    text = Path("docs/03-architecture.md").read_text()
+
+    assert "headroom-ai[all]==0.32.1" in text
+    assert "is installed by default" in text
+    assert "are not installed by default" not in text

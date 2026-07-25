@@ -2,7 +2,8 @@
 
 Synchronizes live per-provider model listings from the local reverso gateway
 into Codex's static configuration so the TUI ``/model`` picker can see them
-ONLY when the matching profile is selected with ``codex -p <prefix>``.
+ONLY when the matching profile is selected with
+``codex -p reverso-<prefix>``.
 
 Per A2 decision (.omc/research/codex-model-picker.md), Codex 0.139.0 has no
 native mechanism to feed ``/model`` from a custom provider's ``/v1/models``
@@ -206,8 +207,13 @@ def _catalog_path_for(catalog_dir: Path, prefix: str) -> Path:
 
 
 def _profile_path_for(config_dir: Path, prefix: str) -> Path:
-    """Return the Codex provider profile path for ``prefix``."""
+    """Return the bare Codex provider profile path for ``prefix``."""
     return config_dir / f"{prefix}.config.toml"
+
+
+def _reverso_profile_path_for(config_dir: Path, prefix: str) -> Path:
+    """Return the canonical Reverso-routed Codex profile path for ``prefix``."""
+    return config_dir / f"reverso-{prefix}.config.toml"
 
 
 def _provider_supports_feature(prefix: str, feature: str) -> bool:
@@ -257,16 +263,18 @@ def _reverso_profile_files(
             if spec.uses_model_catalog
             else None
         )
-        files[_profile_path_for(config_dir, entry.prefix)] = _render_profile_file(
-            model=spec.model,
-            model_provider=spec.model_provider,
-            catalog_path=catalog_path,
-            model_context_window=spec.model_context_window,
-            model_reasoning_summary=(
-                None
-                if _provider_supports_feature(entry.prefix, "reasoning.summary")
-                else "none"
-            ),
+        files[_reverso_profile_path_for(config_dir, entry.prefix)] = (
+            _render_profile_file(
+                model=spec.model,
+                model_provider=spec.model_provider,
+                catalog_path=catalog_path,
+                model_context_window=spec.model_context_window,
+                model_reasoning_summary=(
+                    None
+                    if _provider_supports_feature(entry.prefix, "reasoning.summary")
+                    else "none"
+                ),
+            )
         )
     return files
 
@@ -849,6 +857,43 @@ def _write_profile_files(
     return written, backups, rotated, changed
 
 
+def _validate_canonical_reverso_profile_targets(
+    profile_files: dict[Path, str],
+) -> None:
+    """Reject user-owned files at canonical Reverso-routed profile paths."""
+    for path in profile_files:
+        if not path.name.startswith("reverso-") or not path.exists():
+            continue
+        if not _is_managed_profile_text(path.read_text(encoding="utf-8")):
+            raise RuntimeError(
+                f"unmanaged canonical Reverso profile conflicts at {path}"
+            )
+
+
+def _archive_legacy_managed_reverso_profiles(
+    config_dir: Path,
+    live_prefixes: set[str],
+    *,
+    now: datetime.datetime | None = None,
+) -> list[Path]:
+    """Archive marker-owned legacy bare profiles after canonical files exist."""
+    archived: list[Path] = []
+    archive_dir = config_dir / PROFILE_ARCHIVE_DIR
+    for prefix in sorted(live_prefixes):
+        path = _profile_path_for(config_dir, prefix)
+        if not path.exists():
+            continue
+        if not _is_managed_profile_text(path.read_text(encoding="utf-8")):
+            continue
+        canonical = _reverso_profile_path_for(config_dir, prefix)
+        if not canonical.exists():
+            raise RuntimeError(
+                f"canonical Reverso profile was not written before migration: {canonical}"
+            )
+        archived.append(_archive_file(path, archive_dir, now=now))
+    return archived
+
+
 def _archive_stale_variant_profiles(
     config_dir: Path,
     *,
@@ -906,7 +951,7 @@ def _archive_stale_managed_reverso_profile(
     now: datetime.datetime | None = None,
 ) -> list[Path]:
     """Archive one managed Reverso profile and its in-tree catalog."""
-    profile_path = _profile_path_for(config_dir, prefix)
+    profile_path = _reverso_profile_path_for(config_dir, prefix)
     if not profile_path.exists():
         return []
     profile_text = profile_path.read_text(encoding="utf-8")
@@ -961,11 +1006,12 @@ def sync(
 ) -> SyncResult:
     """Synchronize ``target`` against live gateway models.
 
-    Writes one ``<prefix>.config.toml`` profile file per gateway prefix with
-    live models and one per-provider catalog JSON under ``catalog_dir``
+    Writes one ``reverso-<prefix>.config.toml`` profile file per gateway
+    prefix with live models and one per-provider catalog JSON under ``catalog_dir``
     (default ``<target.parent>/reverso``). The default config exposes no
-    reverso models; they are only selectable via ``codex -p <prefix>``. Any
-    legacy global catalog, NUX, or profiles managed block is stripped.
+    reverso models; they are only selectable via
+    ``codex -p reverso-<prefix>``. Any legacy global catalog, NUX, or profiles
+    managed block is stripped.
 
     The function is idempotent: a second call with the same fetcher output
     produces no diff and creates no backup.
@@ -1018,12 +1064,14 @@ def sync(
 
     for path, text in profile_files.items():
         _parse_toml(text, f"rendered profile {path.name}")
+    _validate_canonical_reverso_profile_targets(profile_files)
+    if new_text != old_text:
+        _parse_toml(new_text, "rendered config")
 
     if new_text == old_text:
         # The catalogs are regenerated even when the config text is unchanged:
         # the profiles reference these paths, so deleted or stale catalog files
         # must come back on every sync, not only on config diffs.
-        catalogs = _write_per_provider_catalogs(provider_models, catalog_dir)
         (
             profiles,
             profile_backups,
@@ -1034,7 +1082,15 @@ def sync(
             now=now,
             keep_backups=keep_backups,
         )
-        archived_profiles = _archive_stale_variant_profiles(target.parent, now=now)
+        catalogs = _write_per_provider_catalogs(provider_models, catalog_dir)
+        archived_profiles = _archive_legacy_managed_reverso_profiles(
+            target.parent,
+            live_prefixes,
+            now=now,
+        )
+        archived_profiles.extend(
+            _archive_stale_variant_profiles(target.parent, now=now)
+        )
         archived_profiles.extend(
             _archive_stale_managed_reverso_profiles(
                 target.parent,
@@ -1057,11 +1113,6 @@ def sync(
             archived_profiles=archived_profiles,
         )
 
-    # Fail-closed invariant: validation MUST precede backup and write so a
-    # render bug can never replace a valid user config with broken TOML.
-    _parse_toml(new_text, "rendered config")
-
-    catalogs = _write_per_provider_catalogs(provider_models, catalog_dir)
     (
         profiles,
         profile_backups,
@@ -1072,7 +1123,13 @@ def sync(
         now=now,
         keep_backups=keep_backups,
     )
-    archived_profiles = _archive_stale_variant_profiles(target.parent, now=now)
+    catalogs = _write_per_provider_catalogs(provider_models, catalog_dir)
+    archived_profiles = _archive_legacy_managed_reverso_profiles(
+        target.parent,
+        live_prefixes,
+        now=now,
+    )
+    archived_profiles.extend(_archive_stale_variant_profiles(target.parent, now=now))
     archived_profiles.extend(
         _archive_stale_managed_reverso_profiles(
             target.parent,

@@ -1,7 +1,7 @@
 ---
 type: readme
 project: reverso
-last_updated: 2026-07-14
+last_updated: 2026-07-25
 ---
 
 # Reverso
@@ -69,21 +69,49 @@ Expected JSON includes:
 {"status":"healthy"}
 ```
 
-### Create the managed Codex profiles
+### Create the managed Codex profiles and Claude Code launchers
 
 With the gateway running:
 
 ```bash
 uv run reverso-codex-sync --dry-run
 uv run reverso-codex-sync
+uv run reverso-claude-code-sync --dry-run
+uv run reverso-claude-code-sync
 ```
 
-The sync reads each live provider's `/v1/models`, updates `~/.codex/config.toml`, writes provider profiles such as `~/.codex/claude.config.toml`, and writes provider-scoped catalogs under `~/.codex/reverso/`.
+The Codex sync reads each live provider's `/v1/models`, updates
+`~/.codex/config.toml`, writes product-scoped profiles such as
+`~/.codex/reverso-claude.config.toml` and
+`~/.codex/reverso-kimi.config.toml`, and writes provider-scoped catalogs under
+`~/.codex/reverso/`. It validates a new managed profile before replacing a
+marker-owned file and archives marker-owned legacy bare profiles only after the
+new profile is durable. An unmarked `reverso-*` conflict fails closed instead of
+being overwritten.
+
+The Claude Code sync keeps global Claude settings free of Reverso routing and
+installs these managed launchers under `~/.local/bin`:
+
+| Launcher | Discovery catalog |
+| --- | --- |
+| `claude-reverso` | All Reverso Anthropic-surface models |
+| `claude-claude` | Claude |
+| `claude-codex` | Codex |
+| `claude-copilot` | Copilot |
+| `claude-auggie` | Auggie |
+| `claude-deepseek` | DeepSeek |
+| `claude-kimi` | Kimi |
+
+Each launcher targets `http://127.0.0.1:64946`, enables gateway model discovery,
+and sends `x-reverso-model-catalog` plus the launch directory in
+`x-reverso-workspace`. The wrappers use a non-secret loopback placeholder token,
+scrub inherited Anthropic credentials, and delegate to the real Claude Code
+executable. The sync refuses to overwrite an unmarked launcher.
 
 Now prove the complete Codex to Reverso to Claude path:
 
 ```bash
-codex exec -p claude --skip-git-repo-check \
+codex exec -p reverso-claude --skip-git-repo-check \
   "Reply with exactly: REVERSO_OK"
 ```
 
@@ -116,6 +144,53 @@ Reverso owns one loopback port and chooses a backend from the request surface an
 The OpenAI-compatible provider base URL ends at `/<provider>/v1`; clients append `/responses` or `/models`. The inbound Anthropic surface is translation-only: it accepts Messages requests but does not proxy them to `api.anthropic.com`. The Claude worker scrubs Reverso-related Anthropic environment variables before spawning the CLI so it cannot loop back into the gateway.
 
 The experimental local-only Codex Direct route and opt-in OpenAI pass-through route are documented in [ADR 0016](docs/architecture/adr/0016-experimental-codex-direct-oauth-provider.md) and the [archived implementation specification](docs/specifications/ARCHIVED/openai-pass-through-oauth-api-key.md). They are not the recommended onboarding path.
+
+### Headroom topology and optional standalone services
+
+Reverso installs `headroom-ai[all]==0.32.1` in its locked runtime. Compression is
+embedded in the Reverso process on `127.0.0.1:64946`; it does not open a separate
+Headroom port. Verify its process-local metrics through
+`http://127.0.0.1:64946/usage/headroom`.
+
+The local operator may also keep standalone Headroom services for clients that
+do not use Reverso. That separate topology uses:
+
+| Listener | Purpose |
+| --- | --- |
+| `127.0.0.1:58787` | Shared Codex and Claude cache-mode proxy |
+| `127.0.0.1:58788` | MiniMax token-mode proxy |
+| `127.0.0.1:58789` | DeepSeek token-mode proxy |
+| `127.0.0.1:8787` | Headroom's upstream default, not used by the local managed services above |
+
+Install or update the standalone Headroom CLI independently of Reverso:
+
+```bash
+uv tool install --python 3.13 "headroom-ai[all]"
+uv tool upgrade headroom-ai
+headroom doctor
+```
+
+Standalone services are optional and operator-managed. They do not replace
+Reverso's embedded Headroom seam or change Reverso's loopback-only listener.
+Run each required service under the local service manager, or in a separate
+terminal for an interactive setup:
+
+```bash
+# Shared Codex and Claude cache-mode listener.
+HEADROOM_NET_COST_POLICY=1 headroom proxy \
+  --host 127.0.0.1 --port 58787 --mode cache --no-telemetry
+
+# MiniMax token-mode listener. Requires the local Responses shim on 64947.
+OPENAI_TARGET_API_URL=http://127.0.0.1:64947 headroom proxy \
+  --host 127.0.0.1 --port 58788 --mode token --no-telemetry
+
+# DeepSeek token-mode listener. Routes through Reverso on 64946.
+OPENAI_TARGET_API_URL=http://127.0.0.1:64946/deepseek headroom proxy \
+  --host 127.0.0.1 --port 58789 --mode token --no-telemetry
+```
+
+These commands contain no provider credential. Reverso and the local MiniMax
+shim retain responsibility for their own secret injection.
 
 ## Codex model selector rules
 
@@ -168,7 +243,10 @@ uv sync --frozen
 uv run python scripts/check-deployment-drift.py --phase pre-install
 ./scripts/install-launchagents.sh
 uv run python scripts/check-deployment-drift.py --phase pre-sync
+uv run reverso-codex-sync --dry-run
 uv run reverso-codex-sync
+uv run reverso-claude-code-sync --dry-run
+uv run reverso-claude-code-sync
 uv run python scripts/check-deployment-drift.py --phase acceptance
 ```
 

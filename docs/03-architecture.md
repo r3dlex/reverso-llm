@@ -328,8 +328,9 @@ independently:
 
 ### 11.3.1 Headroom compression seam
 
-Headroom is installed as a base runtime dependency so a normal Reverso install can use
-compression without a second setup step. Reverso owns a provider-neutral seam in
+`headroom-ai[all]==0.32.1` is installed by default as a base runtime dependency so a
+normal Reverso install can use compression without a second setup step. Reverso owns a
+provider-neutral seam in
 `src/reverso/protocols/headroom_compression.py`. The Responses gateway calls it after
 raw feature gating and normalization, then dispatches the returned request to the frozen
 `ProviderAdapter` boundary on both unary and streaming paths. The Anthropic Messages
@@ -355,9 +356,9 @@ Runtime controls:
   exposed on `GET /usage/headroom` and as the additive `headroom` block on
   `GET /usage`. Both routes read in-process state only and never invoke Headroom
   or provider subprocesses.
-- Optional Headroom extras such as `headroom-ai[ml]` or `headroom-ai[all]` are not
-  installed by default; operators can add them explicitly when local model support is
-  needed.
+- Headroom is embedded in the Reverso gateway process and does not open another
+  listener. Optional standalone Headroom proxies are separate operator-managed
+  services and do not replace the embedded seam.
 
 ### 11.4 Authentication
 

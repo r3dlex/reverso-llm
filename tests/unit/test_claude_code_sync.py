@@ -3,9 +3,16 @@
 from __future__ import annotations
 
 import json
+import os
+import stat
+import subprocess
 from pathlib import Path
 
-from reverso.claude_code_sync import main, sync_claude_code_settings
+from reverso.claude_code_sync import (
+    LAUNCHER_MANAGED_MARKER,
+    main,
+    sync_claude_code_settings,
+)
 
 
 def _write_settings(path: Path, settings: dict[str, object]) -> None:
@@ -14,6 +21,19 @@ def _write_settings(path: Path, settings: dict[str, object]) -> None:
 
 def _read_settings(path: Path) -> dict[str, object]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _fake_claude(path: Path) -> None:
+    path.write_text(
+        """#!/bin/sh
+printf '%s\\n' "$0" > "$REVERSO_TEST_CAPTURE"
+env | sort >> "$REVERSO_TEST_CAPTURE"
+printf '%s\\n' -- >> "$REVERSO_TEST_CAPTURE"
+printf '%s\\n' "$@" >> "$REVERSO_TEST_CAPTURE"
+""",
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
 
 
 def test_sync_removes_reverso_global_overrides_and_preserves_stock_settings(
@@ -35,7 +55,13 @@ def test_sync_removes_reverso_global_overrides_and_preserves_stock_settings(
         },
     )
 
-    result = sync_claude_code_settings(settings_path)
+    claude = tmp_path / "claude"
+    _fake_claude(claude)
+    result = sync_claude_code_settings(
+        settings_path,
+        launcher_dir=tmp_path / "bin",
+        claude_executable=claude,
+    )
 
     assert result.changed is True
     assert result.error is None
@@ -53,12 +79,99 @@ def test_sync_removes_reverso_global_overrides_and_preserves_stock_settings(
     }
 
 
+def test_sync_preserves_user_owned_global_credentials_and_unrelated_headers(
+    tmp_path: Path,
+) -> None:
+    settings_path = tmp_path / "settings.json"
+    settings = {
+        "env": {
+            "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
+            "ANTHROPIC_AUTH_TOKEN": "user-owned-auth-token",
+            "ANTHROPIC_SMALL_FAST_MODEL": "claude-haiku-4-5",
+            "ANTHROPIC_API_KEY": "user-owned-api-key",
+            "CLAUDE_CODE_OAUTH_TOKEN": "user-owned-oauth-token",
+            "ANTHROPIC_CUSTOM_HEADERS": "x-user-header: keep",
+            "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY": "1",
+        }
+    }
+    _write_settings(settings_path, settings)
+    claude = tmp_path / "claude"
+    _fake_claude(claude)
+
+    result = sync_claude_code_settings(
+        settings_path,
+        launcher_dir=tmp_path / "bin",
+        claude_executable=claude,
+    )
+
+    assert result.error is None
+    assert result.removed_env_keys == ()
+    assert _read_settings(settings_path) == settings
+
+
+def test_sync_removes_only_demonstrably_reverso_owned_global_settings(
+    tmp_path: Path,
+) -> None:
+    settings_path = tmp_path / "settings.json"
+    _write_settings(
+        settings_path,
+        {
+            "env": {
+                "ANTHROPIC_BASE_URL": "http://127.0.0.1:64946",
+                "ANTHROPIC_AUTH_TOKEN": "reverso-local-loopback",
+                "ANTHROPIC_SMALL_FAST_MODEL": "deepseek-v4-flash",
+                "ANTHROPIC_API_KEY": "user-owned-api-key",
+                "CLAUDE_CODE_OAUTH_TOKEN": "user-owned-oauth-token",
+                "ANTHROPIC_CUSTOM_HEADERS": (
+                    "x-user-header: keep\nx-reverso-model-catalog: all"
+                ),
+                "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY": "1",
+            }
+        },
+    )
+    claude = tmp_path / "claude"
+    _fake_claude(claude)
+
+    result = sync_claude_code_settings(
+        settings_path,
+        launcher_dir=tmp_path / "bin",
+        claude_executable=claude,
+    )
+
+    assert result.error is None
+    assert result.removed_env_keys == (
+        "ANTHROPIC_BASE_URL",
+        "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_SMALL_FAST_MODEL",
+        "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY",
+    )
+    assert result.rewritten_env_keys == ("ANTHROPIC_CUSTOM_HEADERS",)
+    assert _read_settings(settings_path) == {
+        "env": {
+            "ANTHROPIC_API_KEY": "user-owned-api-key",
+            "CLAUDE_CODE_OAUTH_TOKEN": "user-owned-oauth-token",
+            "ANTHROPIC_CUSTOM_HEADERS": "x-user-header: keep",
+        }
+    }
+
+
 def test_sync_is_idempotent_when_no_reverso_keys_exist(tmp_path: Path) -> None:
     settings_path = tmp_path / "settings.json"
     settings = {"model": "sonnet", "env": {"PATH": "/usr/bin"}}
     _write_settings(settings_path, settings)
 
-    result = sync_claude_code_settings(settings_path)
+    claude = tmp_path / "claude"
+    _fake_claude(claude)
+    sync_claude_code_settings(
+        settings_path,
+        launcher_dir=tmp_path / "bin",
+        claude_executable=claude,
+    )
+    result = sync_claude_code_settings(
+        settings_path,
+        launcher_dir=tmp_path / "bin",
+        claude_executable=claude,
+    )
 
     assert result.changed is False
     assert result.backup_path is None
@@ -76,7 +189,14 @@ def test_sync_dry_run_reports_changes_without_writing_backup(tmp_path: Path) -> 
     }
     _write_settings(settings_path, settings)
 
-    result = sync_claude_code_settings(settings_path, dry_run=True)
+    claude = tmp_path / "claude"
+    _fake_claude(claude)
+    result = sync_claude_code_settings(
+        settings_path,
+        launcher_dir=tmp_path / "bin",
+        claude_executable=claude,
+        dry_run=True,
+    )
 
     assert result.changed is True
     assert result.dry_run is True
@@ -90,7 +210,13 @@ def test_sync_reports_invalid_json_without_overwriting(tmp_path: Path) -> None:
     settings_path = tmp_path / "settings.json"
     settings_path.write_text("{", encoding="utf-8")
 
-    result = sync_claude_code_settings(settings_path)
+    claude = tmp_path / "claude"
+    _fake_claude(claude)
+    result = sync_claude_code_settings(
+        settings_path,
+        launcher_dir=tmp_path / "bin",
+        claude_executable=claude,
+    )
 
     assert result.changed is False
     assert result.error is not None
@@ -102,9 +228,223 @@ def test_cli_returns_error_for_invalid_json(tmp_path: Path, capsys) -> None:
     settings_path = tmp_path / "settings.json"
     settings_path.write_text("{", encoding="utf-8")
 
-    exit_code = main(["--settings-path", str(settings_path)])
+    exit_code = main(
+        [
+            "--settings-path",
+            str(settings_path),
+            "--launcher-dir",
+            str(tmp_path / "bin"),
+            "--claude-executable",
+            str(tmp_path / "claude"),
+        ]
+    )
 
     captured = capsys.readouterr()
     payload = json.loads(captured.out)
     assert exit_code == 1
     assert payload["error"].startswith("invalid JSON:")
+
+
+def test_sync_installs_provider_scoped_managed_launchers(tmp_path: Path) -> None:
+    settings_path = tmp_path / "settings.json"
+    claude = tmp_path / "real" / "claude"
+    claude.parent.mkdir()
+    _fake_claude(claude)
+    launcher_dir = tmp_path / "bin"
+
+    result = sync_claude_code_settings(
+        settings_path,
+        launcher_dir=launcher_dir,
+        claude_executable=claude,
+    )
+
+    expected = {
+        "claude-reverso": "all",
+        "claude-claude": "claude",
+        "claude-codex": "codex",
+        "claude-copilot": "copilot",
+        "claude-auggie": "auggie",
+        "claude-deepseek": "deepseek",
+        "claude-kimi": "kimi",
+    }
+    assert result.error is None
+    assert result.changed_launchers == tuple(expected)
+    for name, catalog in expected.items():
+        launcher = launcher_dir / name
+        text = launcher.read_text(encoding="utf-8")
+        assert text.startswith(f"#!/bin/sh\n{LAUNCHER_MANAGED_MARKER}\n")
+        assert str(claude.resolve()) in text
+        assert "http://127.0.0.1:64946" in text
+        assert "reverso-local-loopback" in text
+        assert "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY" in text
+        assert f"x-reverso-model-catalog: {catalog}" in text
+        assert "x-reverso-workspace: $PWD" in text
+        assert stat.S_IMODE(launcher.stat().st_mode) == 0o755
+
+
+def test_launcher_scrubs_auth_and_uses_process_local_settings(
+    tmp_path: Path,
+) -> None:
+    claude = tmp_path / "real" / "claude"
+    claude.parent.mkdir()
+    _fake_claude(claude)
+    launcher_dir = tmp_path / "bin"
+    result = sync_claude_code_settings(
+        tmp_path / "settings.json",
+        launcher_dir=launcher_dir,
+        claude_executable=claude,
+    )
+    assert result.error is None
+    capture = tmp_path / "capture"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    env = {
+        **os.environ,
+        "REVERSO_TEST_CAPTURE": str(capture),
+        "ANTHROPIC_API_KEY": "secret-api-key",
+        "ANTHROPIC_AUTH_TOKEN": "secret-bearer",
+        "CLAUDE_CODE_OAUTH_TOKEN": "secret-oauth",
+        "ANTHROPIC_CUSTOM_HEADERS": "x-poisoned: yes",
+    }
+
+    completed = subprocess.run(
+        [launcher_dir / "claude-codex", "--model", "gpt-5.5"],
+        cwd=workspace,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0
+    captured = capture.read_text(encoding="utf-8")
+    captured_lines = captured.splitlines()
+    assert captured.splitlines()[0] == str(claude.resolve())
+    assert not any(line.startswith("ANTHROPIC_API_KEY=") for line in captured_lines)
+    assert not any(
+        line.startswith("CLAUDE_CODE_OAUTH_TOKEN=") for line in captured_lines
+    )
+    assert "ANTHROPIC_AUTH_TOKEN=secret-bearer" not in captured_lines
+    assert "ANTHROPIC_CUSTOM_HEADERS=x-reverso-model-catalog: codex" in captured
+    assert f"x-reverso-workspace: {workspace}" in captured
+    args = captured.split("\n--\n", 1)[1].splitlines()
+    assert args[0] == "--settings"
+    settings = json.loads(args[1])
+    assert settings["env"] == {
+        "ANTHROPIC_AUTH_TOKEN": "reverso-local-loopback",
+        "ANTHROPIC_BASE_URL": "http://127.0.0.1:64946",
+        "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY": "1",
+    }
+    assert args[2:] == ["--model", "gpt-5.5"]
+
+
+def test_launcher_rejects_caller_settings_flags(tmp_path: Path) -> None:
+    claude = tmp_path / "claude"
+    _fake_claude(claude)
+    launcher_dir = tmp_path / "bin"
+    sync_claude_code_settings(
+        tmp_path / "settings.json",
+        launcher_dir=launcher_dir,
+        claude_executable=claude,
+    )
+    for args in (
+        ["--settings", "{}"],
+        ["--settings={}"],
+        ["--setting-sources", "user"],
+        ["--setting-sources=user"],
+    ):
+        capture = tmp_path / "capture"
+        completed = subprocess.run(
+            [launcher_dir / "claude-reverso", *args],
+            env={**os.environ, "REVERSO_TEST_CAPTURE": str(capture)},
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert completed.returncode == 2
+        assert "managed by reverso" in completed.stderr
+        assert not capture.exists()
+
+
+def test_sync_is_idempotent_and_dry_run_does_not_create_launchers(
+    tmp_path: Path,
+) -> None:
+    claude = tmp_path / "claude"
+    _fake_claude(claude)
+    launcher_dir = tmp_path / "bin"
+
+    dry_run = sync_claude_code_settings(
+        tmp_path / "settings.json",
+        launcher_dir=launcher_dir,
+        claude_executable=claude,
+        dry_run=True,
+    )
+    assert dry_run.changed is True
+    assert dry_run.changed_launchers
+    assert not launcher_dir.exists()
+
+    first = sync_claude_code_settings(
+        tmp_path / "settings.json",
+        launcher_dir=launcher_dir,
+        claude_executable=claude,
+    )
+    second = sync_claude_code_settings(
+        tmp_path / "settings.json",
+        launcher_dir=launcher_dir,
+        claude_executable=claude,
+    )
+    assert first.changed is True
+    assert second.changed is False
+    assert second.changed_launchers == ()
+
+
+def test_sync_preserves_and_reports_unmarked_launcher_conflict(
+    tmp_path: Path,
+) -> None:
+    claude = tmp_path / "claude"
+    _fake_claude(claude)
+    launcher_dir = tmp_path / "bin"
+    launcher_dir.mkdir()
+    conflict = launcher_dir / "claude-codex"
+    conflict.write_text("#!/bin/sh\necho mine\n", encoding="utf-8")
+
+    result = sync_claude_code_settings(
+        tmp_path / "settings.json",
+        launcher_dir=launcher_dir,
+        claude_executable=claude,
+    )
+
+    assert result.changed is False
+    assert result.conflicting_launchers == ("claude-codex",)
+    assert result.error == "unmanaged launcher conflict: claude-codex"
+    assert conflict.read_text(encoding="utf-8") == "#!/bin/sh\necho mine\n"
+    assert sorted(path.name for path in launcher_dir.iterdir()) == ["claude-codex"]
+
+
+def test_sync_resolves_real_claude_outside_managed_launcher_dir(
+    tmp_path: Path, monkeypatch
+) -> None:
+    launcher_dir = tmp_path / "bin"
+    launcher_dir.mkdir()
+    recursive = launcher_dir / "claude"
+    _fake_claude(recursive)
+    recursive.write_text(
+        recursive.read_text(encoding="utf-8").replace(
+            "#!/bin/sh\n", f"#!/bin/sh\n{LAUNCHER_MANAGED_MARKER}\n"
+        ),
+        encoding="utf-8",
+    )
+    real_dir = tmp_path / "real"
+    real_dir.mkdir()
+    real = real_dir / "claude"
+    _fake_claude(real)
+    monkeypatch.setenv("PATH", f"{launcher_dir}{os.pathsep}{real_dir}")
+
+    result = sync_claude_code_settings(
+        tmp_path / "settings.json",
+        launcher_dir=launcher_dir,
+    )
+
+    assert result.error is None
+    assert result.claude_executable == str(real.resolve())
+    assert str(real.resolve()) in (launcher_dir / "claude-reverso").read_text()
