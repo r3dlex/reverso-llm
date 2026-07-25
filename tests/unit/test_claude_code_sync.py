@@ -6,8 +6,10 @@ import json
 import os
 import stat
 import subprocess
+from datetime import UTC, datetime
 from pathlib import Path
 
+from reverso import claude_code_sync
 from reverso.claude_code_sync import (
     LAUNCHER_MANAGED_MARKER,
     main,
@@ -249,6 +251,40 @@ def test_sync_rejects_symlinked_settings_without_mutation(tmp_path: Path) -> Non
     assert _read_settings(target) == settings
     assert not (tmp_path / "bin").exists()
     assert not list(tmp_path.glob("settings.json.reverso.bak.*"))
+
+
+def test_backup_skips_symlink_collision_without_touching_target(
+    tmp_path: Path,
+) -> None:
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_bytes(b'{"model":"sonnet"}\n')
+    now = datetime(2026, 7, 25, 10, 11, 12, tzinfo=UTC)
+    collision = tmp_path / "settings.json.reverso.bak.20260725T101112Z"
+    user_file = tmp_path / "user-file"
+    user_file.write_bytes(b"user-owned\n")
+    collision.symlink_to(user_file)
+
+    backup = claude_code_sync._backup_settings(settings_path, now=now)
+
+    assert backup == tmp_path / "settings.json.reverso.bak.20260725T101112Z.1"
+    assert backup.read_bytes() == settings_path.read_bytes()
+    assert collision.is_symlink()
+    assert user_file.read_bytes() == b"user-owned\n"
+
+
+def test_backup_uses_distinct_paths_within_same_second(tmp_path: Path) -> None:
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_bytes(b'{"model":"sonnet"}\n')
+    now = datetime(2026, 7, 25, 10, 11, 12, tzinfo=UTC)
+
+    first = claude_code_sync._backup_settings(settings_path, now=now)
+    second = claude_code_sync._backup_settings(settings_path, now=now)
+
+    assert first != second
+    assert first.read_bytes() == settings_path.read_bytes()
+    assert second.read_bytes() == settings_path.read_bytes()
+    assert first.exists()
+    assert second.exists()
 
 
 def test_cli_returns_error_for_invalid_json(tmp_path: Path, capsys) -> None:

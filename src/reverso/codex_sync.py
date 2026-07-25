@@ -916,6 +916,64 @@ def _validate_canonical_reverso_profile_targets(
             )
 
 
+def _managed_profile_catalog_path(profile_path: Path) -> Path | None:
+    """Return the catalog explicitly referenced by a marker-owned profile."""
+    if not profile_path.exists() or profile_path.is_symlink():
+        return None
+    profile_text = profile_path.read_text(encoding="utf-8")
+    if not _is_managed_profile_text(profile_text):
+        return None
+    try:
+        parsed = _parse_toml(profile_text, f"existing profile {profile_path.name}")
+    except RuntimeError:
+        return None
+    profile_catalog = parsed.get("model_catalog_json")
+    return Path(profile_catalog) if isinstance(profile_catalog, str) else None
+
+
+def _catalog_is_owned(
+    catalog_path: Path,
+    *,
+    config_dir: Path,
+    prefix: str,
+) -> bool:
+    """Return whether a canonical or legacy managed profile owns this catalog."""
+    return any(
+        _managed_profile_catalog_path(profile_path) == catalog_path
+        for profile_path in (
+            _reverso_profile_path_for(config_dir, prefix),
+            _profile_path_for(config_dir, prefix),
+        )
+    )
+
+
+def _validate_catalog_mutations(
+    provider_models: list[ProviderModels],
+    *,
+    config_dir: Path,
+    catalog_dir: Path,
+) -> None:
+    """Reject changes to catalogs without an exact marker-owned profile reference."""
+    for entry in _live_provider_models(provider_models):
+        spec = model_exposure.reverso_codex_profile_spec(entry.prefix, entry.models)
+        if not spec.uses_model_catalog:
+            continue
+        catalog_path = _catalog_path_for(catalog_dir, entry.prefix)
+        if not catalog_path.exists():
+            continue
+        new_bytes = _generate_catalog_json(entry).encode()
+        if catalog_path.read_bytes() == new_bytes:
+            continue
+        if not _catalog_is_owned(
+            catalog_path,
+            config_dir=config_dir,
+            prefix=entry.prefix,
+        ):
+            raise RuntimeError(
+                f"unmanaged per-provider catalog conflicts at {catalog_path}"
+            )
+
+
 def _reject_symlink(path: Path, context: str) -> None:
     """Reject both live and dangling symlinks before filesystem mutation."""
     if path.is_symlink():
@@ -1078,18 +1136,9 @@ def _archive_stale_managed_reverso_profile(
     if not _is_managed_profile_text(profile_text):
         return []
 
-    catalog_path = _catalog_path_for(catalog_dir, prefix)
-    try:
-        parsed = _parse_toml(profile_text, f"existing profile {profile_path.name}")
-    except RuntimeError:
-        parsed = {}
-    profile_catalog = (
-        parsed.get("model_catalog_json") if isinstance(parsed, dict) else None
-    )
-    if isinstance(profile_catalog, str):
-        candidate = Path(profile_catalog)
-        if candidate.parent == catalog_dir:
-            catalog_path = candidate
+    catalog_path = _managed_profile_catalog_path(profile_path)
+    if catalog_path is not None and catalog_path.parent != catalog_dir:
+        catalog_path = None
 
     archive_dir = config_dir / PROFILE_ARCHIVE_DIR
     archived = [
@@ -1100,7 +1149,7 @@ def _archive_stale_managed_reverso_profile(
             dry_run=dry_run,
         )
     ]
-    if catalog_path.exists():
+    if catalog_path is not None and catalog_path.exists():
         archived.append(
             _archive_file(
                 catalog_path,
@@ -1232,6 +1281,11 @@ def sync(
         live_prefixes=live_prefixes,
     )
     _validate_canonical_reverso_profile_targets(profile_files)
+    _validate_catalog_mutations(
+        provider_models,
+        config_dir=target.parent,
+        catalog_dir=catalog_dir,
+    )
     if new_text != old_text:
         _parse_toml(new_text, "rendered config")
 

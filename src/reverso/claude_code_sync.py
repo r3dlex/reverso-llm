@@ -7,7 +7,6 @@ import copy
 import json
 import os
 import shlex
-import shutil
 import sys
 import tempfile
 from dataclasses import asdict, dataclass
@@ -79,13 +78,48 @@ def _load_settings(settings_path: Path) -> tuple[dict[str, Any] | None, str | No
     return raw_settings, None
 
 
-def _backup_settings(settings_path: Path) -> Path:
-    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    backup_path = settings_path.with_name(
-        f"{settings_path.name}{BACKUP_SUFFIX_PREFIX}{timestamp}"
-    )
-    shutil.copy2(settings_path, backup_path)
-    return backup_path
+def _backup_settings(
+    settings_path: Path,
+    *,
+    now: datetime | None = None,
+) -> Path:
+    timestamp = (now or datetime.now(UTC)).strftime("%Y%m%dT%H%M%SZ")
+    source_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    source_fd = os.open(settings_path, source_flags)
+    try:
+        source_mode = os.fstat(source_fd).st_mode & 0o777
+        with os.fdopen(source_fd, "rb") as source:
+            source_fd = -1
+            contents = source.read()
+    finally:
+        if source_fd >= 0:
+            os.close(source_fd)
+
+    suffix = 0
+    while True:
+        suffix_text = "" if suffix == 0 else f".{suffix}"
+        backup_path = settings_path.with_name(
+            f"{settings_path.name}{BACKUP_SUFFIX_PREFIX}{timestamp}{suffix_text}"
+        )
+        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+        try:
+            backup_fd = os.open(backup_path, flags, source_mode)
+        except FileExistsError:
+            suffix += 1
+            continue
+        try:
+            with os.fdopen(backup_fd, "wb") as backup:
+                backup_fd = -1
+                backup.write(contents)
+            return backup_path
+        except BaseException:
+            if backup_fd >= 0:
+                os.close(backup_fd)
+            try:
+                backup_path.unlink()
+            except FileNotFoundError:
+                pass
+            raise
 
 
 def _atomic_write_json(

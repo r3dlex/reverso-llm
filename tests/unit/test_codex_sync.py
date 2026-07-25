@@ -809,6 +809,49 @@ def test_sync_fails_closed_on_unmarked_canonical_reverso_profile_conflict(
     assert after == before
 
 
+def test_sync_fails_closed_on_unowned_catalog_before_any_write(tmp_path: Path) -> None:
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+    catalog_dir = tmp_path / "reverso"
+    catalog_dir.mkdir()
+
+    owned_catalog = catalog_dir / "claude.json"
+    owned_profile = tmp_path / "reverso-claude.config.toml"
+    owned_profile.write_text(
+        codex_sync._render_profile_file(
+            model="last-known-good",
+            model_provider="reverso_claude",
+            catalog_path=owned_catalog,
+        ),
+        encoding="utf-8",
+    )
+    owned_catalog.write_bytes(b'{"models":[{"slug":"owned-before"}]}\n')
+    unowned_catalog = catalog_dir / "copilot.json"
+    unowned_catalog.write_bytes(b'{"models":[{"slug":"user-owned"}]}\n')
+    before = {
+        path.relative_to(tmp_path): path.read_bytes()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
+
+    with pytest.raises(
+        RuntimeError,
+        match="unmanaged per-provider catalog conflicts",
+    ):
+        codex_sync.sync(
+            target=target,
+            fetcher=_make_fetcher(),
+            catalog_dir=catalog_dir,
+        )
+
+    after = {
+        path.relative_to(tmp_path): path.read_bytes()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
+    assert after == before
+
+
 @pytest.mark.parametrize(
     "target_kind",
     [
@@ -2336,6 +2379,13 @@ def test_sync_reports_catalog_repair_and_archive_as_changes(tmp_path: Path) -> N
     fetcher = _make_fetcher()
     codex_sync.sync(target=target, fetcher=fetcher, catalog_dir=catalog_dir)
     copilot_catalog = catalog_dir / "copilot.json"
+    copilot_profile = tmp_path / "reverso-copilot.config.toml"
+    assert codex_sync._is_managed_profile_text(
+        copilot_profile.read_text(encoding="utf-8")
+    )
+    assert tomllib.loads(copilot_profile.read_text(encoding="utf-8"))[
+        "model_catalog_json"
+    ] == str(copilot_catalog)
     copilot_catalog.write_text('{"models":[]}', encoding="utf-8")
 
     repaired = codex_sync.sync(
