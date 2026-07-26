@@ -62,6 +62,14 @@ from reverso.protocols.anthropic_translate import (
     responses_envelope_to_anthropic,
 )
 from reverso.protocols.headroom_compression import compress_responses_request
+from reverso.protocols.kimi_usage import (
+    KimiUsageService,
+    with_kimi_usage_headers,
+)
+from reverso.protocols.model_exposure import (
+    KIMI_CODEX_AUTO_COMPACT_TOKEN_LIMIT,
+    KIMI_CODEX_CONTEXT_WINDOW,
+)
 from reverso.protocols.replay import build_prompt, estimate_usage, new_message_id
 from reverso.protocols.surface_registry import (
     SURFACE_BACKENDS,
@@ -435,7 +443,12 @@ class AnthropicMessagesApp:
     rejected.
     """
 
-    def __init__(self, adapters: dict[str, ProviderAdapter]) -> None:
+    def __init__(
+        self,
+        adapters: dict[str, ProviderAdapter],
+        *,
+        kimi_usage: KimiUsageService | Any | None = None,
+    ) -> None:
         unknown = set(adapters) - _ANTHROPIC_SURFACE_BACKENDS
         if unknown:
             raise ValueError(
@@ -446,6 +459,7 @@ class AnthropicMessagesApp:
         self._model_catalog_lock = asyncio.Lock()
         self._adapter_model_cache: dict[str, list[str]] = {}
         self._discovery_aliases: dict[str, str] = {}
+        self._kimi_usage = kimi_usage
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope.get("type") != "http":
@@ -560,6 +574,9 @@ class AnthropicMessagesApp:
                 anthropic_version=anthropic_version,
             )
             return
+
+        if backend == "kimi" and route.kind == _KIND_MESSAGES:
+            send = with_kimi_usage_headers(send, self._kimi_usage)
 
         # A fully-qualified provider/model id routed by its prefix above; the
         # downstream adapter expects the BARE upstream model id, so canonicalize the
@@ -879,6 +896,16 @@ class AnthropicMessagesApp:
                 "id": row["id"],
                 "display_name": row["display_name"],
                 "created_at": _MODELS_CREATED_AT,
+                **(
+                    {
+                        "context_window": KIMI_CODEX_CONTEXT_WINDOW,
+                        "auto_compact_token_limit": (
+                            KIMI_CODEX_AUTO_COMPACT_TOKEN_LIMIT
+                        ),
+                    }
+                    if row["backend"] == "kimi"
+                    else {}
+                ),
             }
             for row in rows
         ]
@@ -949,6 +976,7 @@ def build_anthropic_app(
     adapters: dict[str, ProviderAdapter] | None = None,
     *,
     kimi_auth: KimiOAuthAuth | None = None,
+    kimi_usage: KimiUsageService | Any | None = None,
 ) -> AnthropicMessagesApp:
     """Build the Anthropic Messages app from a {backend: adapter} registry.
 
@@ -956,4 +984,4 @@ def build_anthropic_app(
     """
     if adapters is None:
         adapters = build_anthropic_adapters(kimi_auth=kimi_auth)
-    return AnthropicMessagesApp(adapters)
+    return AnthropicMessagesApp(adapters, kimi_usage=kimi_usage)

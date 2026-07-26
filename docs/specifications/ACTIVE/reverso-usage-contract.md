@@ -102,10 +102,14 @@ reported by this surface after restart.
 
 ## Invariants
 
-- The route reads only in-process latest-snapshot and aggregate-metrics stores.
+- `GET /usage` and `GET /usage/headroom` read only in-process latest-snapshot
+  and aggregate-metrics stores.
+- `GET /usage/kimi` may refresh passive account telemetry from the official
+  Kimi usage endpoint using existing OAuth credentials. It is bounded, cached,
+  single-flight, and must never initiate login.
 - Empty store responses are still successful JSON responses with `rate_limits: null`.
 - `GET /usage/headroom` is successful even before any compressed request.
-- Usage routes must not spawn `codex`, Headroom, providers, or any subprocess.
+- Usage routes must not spawn `codex`, Headroom, provider CLIs, or any subprocess.
 - Token counts prefer Codex `turn.completed.usage` values when available.
 - Missing rollout quota data keeps the prior `rate_limits` value instead of clearing it.
 - `total_tokens` is `input_tokens + output_tokens + reasoning_output_tokens`.

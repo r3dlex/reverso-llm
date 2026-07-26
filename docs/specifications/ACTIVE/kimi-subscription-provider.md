@@ -186,9 +186,26 @@ prompt-free.
 ### FR-9: Codex metadata convergence
 
 The generated Kimi profile must select `model = "kimi-k3"` and set
-`model_context_window = 1048576`. Its provider-specific catalog must contain
-exactly one model with slug `kimi-k3`, `context_window = 1048576`, and
+`model_context_window = 1048576` and
+`model_auto_compact_token_limit = 419430` (40 percent). The profile-level
+compact limit is required because Codex profile layering otherwise retains any
+lower value from the base configuration. Its provider-specific catalog must
+contain exactly one model with slug `kimi-k3`, `context_window = 1048576`, and
 `max_context_window = 1048576`.
+
+### FR-10: Usage telemetry
+
+`GET /usage/kimi` must expose Kimi's five-hour and weekly subscription windows
+with context and refresh metadata. Polling must use existing OAuth credentials
+only and must never trigger interactive login. Refreshes must be asynchronous,
+single-flight, cached for 60 seconds, retried with bounded backoff after failure,
+and retain a last-known-good stale snapshot.
+
+Kimi Responses and Kimi-routed Anthropic Messages responses must map the
+five-hour window to the Codex primary rate-limit headers and the weekly window
+to the secondary headers. Percent, window-minute, and Unix reset-time headers
+must be present when the corresponding upstream window is valid. Telemetry
+failure must not fail or delay the model response beyond the bounded poll.
 
 ## Security and reliability requirements
 
@@ -250,6 +267,12 @@ exactly one model with slug `kimi-k3`, `context_window = 1048576`, and
     Anthropic Messages request without exposing the token in logs or output.
 16. Kimi Codex synchronization accepts only canonical live discovery and writes
     one `kimi-k3` profile/catalog entry with context window `1048576`.
+17. `GET /usage/kimi` returns cached five-hour and weekly quota data without
+    starting login, and malformed or unavailable telemetry returns a safe stale
+    or unavailable snapshot.
+18. Kimi Responses and Anthropic Messages responses expose the six Codex quota
+    headers while repeated requests inside the cache TTL perform one upstream
+    usage poll.
 
 ## Test strategy
 
@@ -265,6 +288,8 @@ exactly one model with slug `kimi-k3`, `context_window = 1048576`, and
 - SSE parsing, terminal completion, tool-call deltas, and usage.
 - Live K3 response mapping and canonical runtime fallback behavior.
 - Public `kimi-k3` to upstream `k3` request translation.
+- Five-hour and weekly usage parsing, malformed payload fallback, cache TTL,
+  single-flight refresh, forced credential refresh after 401, and stale fallback.
 
 ### Offline integration tests
 
@@ -278,6 +303,8 @@ exactly one model with slug `kimi-k3`, `context_window = 1048576`, and
 - Codex sync rejection for fallback, stale, mixed, empty, and noncanonical Kimi
   discovery.
 - Generated Kimi profile and catalog context metadata.
+- Codex quota response headers on Kimi Responses and Anthropic Messages with
+  one cached upstream usage poll across repeated requests.
 
 ### Credentialed local smoke
 

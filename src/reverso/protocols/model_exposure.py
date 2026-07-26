@@ -38,6 +38,7 @@ class CodexProfileSpec:
     model_provider: str
     uses_model_catalog: bool
     model_context_window: int | None = None
+    model_auto_compact_token_limit: int | None = None
 
 
 STATIC_CATALOG_SEEDS: tuple[StaticCatalogSeed, ...] = (
@@ -60,6 +61,7 @@ _OPENAI_PROFILE_PREFIX = "openai-pass-through"
 DEEPSEEK_CODEX_PROFILE_DEFAULT = "deepseek-v4-pro"
 KIMI_CODEX_MODEL = "kimi-k3"
 KIMI_CODEX_CONTEXT_WINDOW = 1048576
+KIMI_CODEX_AUTO_COMPACT_TOKEN_LIMIT = KIMI_CODEX_CONTEXT_WINDOW * 2 // 5
 DIRECT_CODEX_PROFILE_SPECS: tuple[CodexProfileSpec, ...] = (
     CodexProfileSpec(
         prefix="openai",
@@ -168,6 +170,9 @@ def reverso_codex_profile_spec(
         model_provider=f"reverso_{prefix}",
         uses_model_catalog=True,
         model_context_window=(KIMI_CODEX_CONTEXT_WINDOW if prefix == "kimi" else None),
+        model_auto_compact_token_limit=(
+            KIMI_CODEX_AUTO_COMPACT_TOKEN_LIMIT if prefix == "kimi" else None
+        ),
     )
 
 

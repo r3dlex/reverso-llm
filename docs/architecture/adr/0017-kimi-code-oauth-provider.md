@@ -51,8 +51,18 @@ Add a first-party `KimiAdapter` at the frozen `ProviderAdapter` boundary.
   Runtime discovery may return only canonical K3 fallback metadata on failure,
   but Codex synchronization must reject fallback or otherwise non-live
   discovery.
-- Generate the Kimi Codex profile and catalog with only `kimi-k3` and a context
-  window of `1048576`.
+- Generate the Kimi Codex profile and catalog with only `kimi-k3`, a context
+  window of `1048576`, and a profile-level auto compact token limit of `419430`.
+  The explicit limit prevents a lower global Codex limit from surviving profile
+  layering and applies the selected 40 percent compaction policy for the Kimi
+  window.
+- Poll Kimi's authenticated usage endpoint with existing credentials only.
+  Cache one single-flight refresh for 60 seconds, retain the last known good
+  snapshot across bounded failures, and expose it at `GET /usage/kimi`.
+- Map the 300-minute quota to Codex's primary rate-limit headers and the weekly
+  quota to its secondary headers on Kimi Responses and Anthropic Messages
+  responses. This lets Codex and OMX update both HUD windows without changing
+  the frozen adapter protocol.
 - Keep Headroom provider-agnostic. Kimi requests pass through the same
   pre-dispatch compression seam as every Responses and Anthropic backend.
 
@@ -79,4 +89,5 @@ Offline tests cover OAuth priority, bearer fallback, chat translation, live
 model discovery, both protocol mounts, bare and provider-qualified Anthropic routing,
 Headroom dispatch across all registered prefixes, shared login coordination,
 post-login artifact validation, request resume after official CLI success,
-K3-only exposure and translation, and fail-closed Codex synchronization.
+K3-only exposure and translation, passive cached usage polling, Codex rate-limit
+response headers on both protocol surfaces, and fail-closed Codex synchronization.

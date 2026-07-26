@@ -26,6 +26,7 @@ from reverso.protocols.anthropic_app import (
     build_anthropic_app,
 )
 from reverso.protocols.kimi_login import KimiLoginCoordinator, KimiLoginError
+from reverso.protocols.kimi_usage import KimiUsageService
 from reverso.protocols.responses_app import (
     ResponsesGatewayApp,
     build_app,
@@ -860,6 +861,34 @@ async def test_composition_owns_responses_kimi_auth_and_idempotent_close() -> No
     assert root._kimi_login._closed is True
 
 
+@pytest.mark.asyncio
+async def test_composition_close_gives_usage_and_login_cleanup_equal_opportunity() -> None:
+    usage_started = asyncio.Event()
+    login_started = asyncio.Event()
+    release_usage = asyncio.Event()
+
+    class UsageCleanup:
+        async def close(self) -> None:
+            usage_started.set()
+            await release_usage.wait()
+            raise RuntimeError("usage-close-failed")
+
+    class LoginCleanup:
+        async def close(self) -> None:
+            login_started.set()
+
+    root = CompositionRoot(kimi_usage=UsageCleanup())
+    root._kimi_login = cast(Any, LoginCleanup())
+    close_task = asyncio.create_task(root.close())
+
+    await asyncio.wait_for(usage_started.wait(), timeout=0.1)
+    await asyncio.wait_for(login_started.wait(), timeout=0.1)
+    release_usage.set()
+
+    with pytest.raises(RuntimeError, match="usage-close-failed"):
+        await close_task
+
+
 def test_standalone_factories_keep_independent_kimi_auth() -> None:
     responses = build_adapters({"REVERSO_CODEX_DIRECT_BACKEND": "0"})
     anthropic = build_anthropic_adapters()
@@ -1335,3 +1364,368 @@ async def test_lifespan_bounds_kimi_cleanup_before_shutdown_failure() -> None:
             "message": "Kimi login shutdown cleanup failed",
         },
     ]
+
+
+@pytest.mark.asyncio
+async def test_kimi_model_discovery_exposes_context_and_compaction_metadata() -> None:
+    class ExistingAuth:
+        async def resolve_existing_bearer_token(
+            self, *, force_refresh: bool = False
+        ) -> str:
+            return "test-token"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/coding/v1/models"
+        return httpx.Response(200, json={"data": [{"id": "k3"}]})
+
+    adapter = KimiAdapter(
+        auth=ExistingAuth(),
+        client_factory=lambda: httpx.AsyncClient(
+            transport=httpx.MockTransport(handler)
+        ),
+    )
+    root = CompositionRoot(
+        gateway=build_app({"kimi": adapter}),
+        anthropic_app=build_anthropic_app({"kimi": adapter}),
+        legacy_app=lambda scope, receive, send: pytest.fail("must not reach legacy"),
+    )
+
+    async with _asgi_client(root) as client:
+        responses_models = (await client.get("/kimi/v1/models")).json()["data"]
+        anthropic_models = (await client.get("/v1/models")).json()["data"]
+
+    responses_kimi = next(row for row in responses_models if row["id"] == "kimi-k3")
+    assert responses_kimi["context_window"] == 1048576
+    assert responses_kimi["auto_compact_token_limit"] == 419430
+    anthropic_kimi = next(
+        row for row in anthropic_models if row["id"] == "anthropic-kimi-kimi-k3"
+    )
+    assert anthropic_kimi["context_window"] == 1048576
+    assert anthropic_kimi["auto_compact_token_limit"] == 419430
+
+
+@pytest.mark.asyncio
+async def test_usage_kimi_asgi_contract_uses_injected_service() -> None:
+    class UsageService:
+        async def snapshot(self) -> dict[str, Any]:
+            return {
+                "schema_version": 1,
+                "provider": "kimi",
+                "model_id": "kimi-k3",
+                "context": {
+                    "window_tokens": 1048576,
+                    "auto_compact_token_limit": 419430,
+                },
+                "rate_limits": {
+                    "five_hour": {"used_percent": 34.0, "resets_at": "five"},
+                    "weekly": {"used_percent": 20.0, "resets_at": "week"},
+                },
+                "refreshed_at": "now",
+                "stale": False,
+            }
+
+    async def tripwire(scope, receive, send):
+        raise AssertionError("usage route must not reach another app")
+
+    root = CompositionRoot(
+        gateway=tripwire,
+        anthropic_app=tripwire,
+        legacy_app=tripwire,
+        kimi_usage=UsageService(),
+    )
+    async with _asgi_client(root) as client:
+        response = await client.get("/usage/kimi")
+
+    assert response.status_code == 200
+    assert response.json()["rate_limits"]["five_hour"]["used_percent"] == 34.0
+    assert response.json()["rate_limits"]["weekly"]["used_percent"] == 20.0
+
+
+@pytest.mark.asyncio
+async def test_kimi_surfaces_emit_cached_codex_rate_limit_headers() -> None:
+    usage_calls = 0
+
+    class ExistingUsageAuth:
+        async def resolve_existing_bearer_token(
+            self, *, force_refresh: bool = False
+        ) -> str:
+            return "test-token"
+
+    def usage_handler(request: httpx.Request) -> httpx.Response:
+        nonlocal usage_calls
+        usage_calls += 1
+        assert request.url.path == "/coding/v1/usages"
+        return httpx.Response(
+            200,
+            json={
+                "usage": {
+                    "limit": "100",
+                    "used": "20",
+                    "resetTime": "2026-08-01T22:51:48.151162Z",
+                },
+                "limits": [
+                    {
+                        "window": {
+                            "duration": 300,
+                            "timeUnit": "TIME_UNIT_MINUTE",
+                        },
+                        "detail": {
+                            "limit": "100",
+                            "used": "34",
+                            "resetTime": "2026-07-26T10:51:48.151162Z",
+                        },
+                    }
+                ],
+            },
+        )
+
+    usage = KimiUsageService(
+        auth=ExistingUsageAuth(),
+        client_factory=lambda: httpx.AsyncClient(
+            transport=httpx.MockTransport(usage_handler)
+        ),
+    )
+    adapter = _AnthropicSpy()
+    root = CompositionRoot(
+        gateway=build_app(cast(Any, {"kimi": adapter})),
+        anthropic_app=build_anthropic_app(
+            cast(Any, {"kimi": adapter}),
+            kimi_usage=usage,
+        ),
+        legacy_app=lambda scope, receive, send: pytest.fail("must not reach legacy"),
+        kimi_usage=usage,
+    )
+
+    await usage.snapshot()
+    async with _asgi_client(root) as client:
+        responses = await client.post(
+            "/kimi/v1/responses",
+            json={"model": "kimi-k3", "input": "hello"},
+        )
+        messages = await client.post(
+            "/v1/messages",
+            json={
+                "model": "kimi-k3",
+                "max_tokens": 64,
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+        )
+
+    expected = {
+        "x-codex-primary-used-percent": "34.0",
+        "x-codex-primary-window-minutes": "300",
+        "x-codex-primary-reset-at": "1785063108",
+        "x-codex-secondary-used-percent": "20.0",
+        "x-codex-secondary-window-minutes": "10080",
+        "x-codex-secondary-reset-at": "1785624708",
+    }
+    assert responses.status_code == 200
+    assert messages.status_code == 200
+    assert {name: responses.headers[name] for name in expected} == expected
+    assert {name: messages.headers[name] for name in expected} == expected
+    assert usage_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_kimi_surfaces_do_not_wait_for_slow_usage_refresh() -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    class ExistingUsageAuth:
+        async def resolve_existing_bearer_token(
+            self, *, force_refresh: bool = False
+        ) -> str:
+            return "test-token"
+
+    async def usage_handler(_request: httpx.Request) -> httpx.Response:
+        entered.set()
+        await release.wait()
+        return httpx.Response(
+            200,
+            json={
+                "usage": {
+                    "limit": "100",
+                    "used": "20",
+                    "resetTime": "2026-08-01T22:51:48.151162Z",
+                },
+                "limits": [
+                    {
+                        "window": {
+                            "duration": 300,
+                            "timeUnit": "TIME_UNIT_MINUTE",
+                        },
+                        "detail": {
+                            "limit": "100",
+                            "used": "34",
+                            "resetTime": "2026-07-26T10:51:48.151162Z",
+                        },
+                    }
+                ],
+            },
+        )
+
+    usage = KimiUsageService(
+        auth=ExistingUsageAuth(),
+        client_factory=lambda: httpx.AsyncClient(
+            transport=httpx.MockTransport(usage_handler)
+        ),
+    )
+    adapter = _AnthropicSpy()
+    root = CompositionRoot(
+        gateway=build_app(cast(Any, {"kimi": adapter})),
+        anthropic_app=build_anthropic_app(
+            cast(Any, {"kimi": adapter}),
+            kimi_usage=usage,
+        ),
+        legacy_app=lambda scope, receive, send: pytest.fail("must not reach legacy"),
+        kimi_usage=usage,
+    )
+
+    async with _asgi_client(root) as client:
+        responses = await asyncio.wait_for(
+            client.post(
+                "/kimi/v1/responses",
+                json={"model": "kimi-k3", "input": "hello"},
+            ),
+            timeout=0.5,
+        )
+        messages = await asyncio.wait_for(
+            client.post(
+                "/v1/messages",
+                json={
+                    "model": "kimi-k3",
+                    "max_tokens": 64,
+                    "messages": [{"role": "user", "content": "hello"}],
+                },
+            ),
+            timeout=0.5,
+        )
+        await entered.wait()
+
+        assert responses.status_code == 200
+        assert messages.status_code == 200
+        assert "x-codex-primary-used-percent" not in responses.headers
+        assert "x-codex-primary-used-percent" not in messages.headers
+
+        release.set()
+        await usage.snapshot()
+
+        warmed_responses = await client.post(
+            "/kimi/v1/responses",
+            json={"model": "kimi-k3", "input": "hello"},
+        )
+        warmed_messages = await client.post(
+            "/v1/messages",
+            json={
+                "model": "kimi-k3",
+                "max_tokens": 64,
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+        )
+
+    assert warmed_responses.headers["x-codex-primary-used-percent"] == "34.0"
+    assert warmed_messages.headers["x-codex-secondary-used-percent"] == "20.0"
+
+
+@pytest.mark.asyncio
+async def test_kimi_streaming_surfaces_emit_codex_rate_limit_headers() -> None:
+    class UsageService:
+        def cached_snapshot(self) -> dict[str, Any]:
+            return {
+                "rate_limits": {
+                    "five_hour": {
+                        "used_percent": 34.0,
+                        "resets_at": "2026-07-26T10:51:48.151162Z",
+                    },
+                    "weekly": {
+                        "used_percent": 20.0,
+                        "resets_at": "2026-08-01T22:51:48.151162Z",
+                    },
+                }
+            }
+
+        def refresh_in_background(self) -> None:
+            return None
+
+    class StreamingSpy(_AnthropicSpy):
+        def stream_response(self, request: ResponsesRequest) -> AsyncIterator[SSEEvent]:
+            self.requests.append(request)
+            return self._stream()
+
+        async def _stream(self) -> AsyncIterator[SSEEvent]:
+            yield SSEEvent(
+                event="response.output_item.added",
+                data={
+                    "type": "response.output_item.added",
+                    "item": {
+                        "id": "msg_stream",
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [],
+                    },
+                },
+            )
+            yield SSEEvent(
+                event="response.output_text.delta",
+                data={"type": "response.output_text.delta", "delta": "ok"},
+            )
+            yield SSEEvent(
+                event="response.output_item.done",
+                data={"type": "response.output_item.done"},
+            )
+            yield SSEEvent(
+                event="response.completed",
+                data={
+                    "type": "response.completed",
+                    "response": {
+                        "id": "resp_stream",
+                        "status": "completed",
+                        "output": [],
+                        "usage": {"output_tokens": 1},
+                    },
+                },
+            )
+
+    usage = UsageService()
+    adapter = StreamingSpy()
+    root = CompositionRoot(
+        gateway=build_app(cast(Any, {"kimi": adapter})),
+        anthropic_app=build_anthropic_app(
+            cast(Any, {"kimi": adapter}),
+            kimi_usage=usage,
+        ),
+        legacy_app=lambda scope, receive, send: pytest.fail("must not reach legacy"),
+        kimi_usage=usage,
+    )
+
+    async with _asgi_client(root) as client:
+        async with client.stream(
+            "POST",
+            "/kimi/v1/responses",
+            json={"model": "kimi-k3", "input": "hello", "stream": True},
+        ) as responses:
+            assert "text/event-stream" in responses.headers["content-type"]
+            await responses.aread()
+        async with client.stream(
+            "POST",
+            "/v1/messages",
+            json={
+                "model": "kimi-k3",
+                "max_tokens": 64,
+                "stream": True,
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+        ) as messages:
+            assert "text/event-stream" in messages.headers["content-type"]
+            await messages.aread()
+
+    expected = {
+        "x-codex-primary-used-percent": "34.0",
+        "x-codex-primary-window-minutes": "300",
+        "x-codex-primary-reset-at": "1785063108",
+        "x-codex-secondary-used-percent": "20.0",
+        "x-codex-secondary-window-minutes": "10080",
+        "x-codex-secondary-reset-at": "1785624708",
+    }
+    assert {name: responses.headers[name] for name in expected} == expected
+    assert {name: messages.headers[name] for name in expected} == expected

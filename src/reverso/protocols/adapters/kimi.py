@@ -26,6 +26,10 @@ import httpx
 from reverso.protocols.adapter import ModelList, ResponseEnvelope, ResponsesRequest
 from reverso.protocols.adapters.deepseek import DeepSeekAdapter
 from reverso.protocols.kimi_login import KimiLoginCoordinator, KimiLoginError
+from reverso.protocols.model_exposure import (
+    KIMI_CODEX_AUTO_COMPACT_TOKEN_LIMIT,
+    KIMI_CODEX_CONTEXT_WINDOW,
+)
 from reverso.protocols.openai_chat import parse_stream_event as _parse_stream_event
 
 KIMI_API_BASE = "https://api.kimi.com/coding/v1"
@@ -549,6 +553,10 @@ class KimiAdapter(DeepSeekAdapter):
                                 "object": "model",
                                 "created": int(time.time()),
                                 "owned_by": owned_by,
+                                "context_window": KIMI_CODEX_CONTEXT_WINDOW,
+                                "auto_compact_token_limit": (
+                                    KIMI_CODEX_AUTO_COMPACT_TOKEN_LIMIT
+                                ),
                             }
                         ],
                         discovery_source="live",
@@ -562,6 +570,8 @@ class KimiAdapter(DeepSeekAdapter):
                     "object": "model",
                     "created": int(time.time()),
                     "owned_by": "moonshotai",
+                    "context_window": KIMI_CODEX_CONTEXT_WINDOW,
+                    "auto_compact_token_limit": (KIMI_CODEX_AUTO_COMPACT_TOKEN_LIMIT),
                 }
             ],
             discovery_source="fallback",

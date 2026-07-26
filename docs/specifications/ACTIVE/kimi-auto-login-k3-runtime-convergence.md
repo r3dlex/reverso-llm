@@ -144,7 +144,7 @@ run-specific host-policy merge authority.
    upstream `k3`.
 8. The generated Kimi profile selects `kimi-k3`, uses provider
    `reverso_kimi`, references the Kimi catalog, and has context window
-   `1048576`.
+   `1048576` with auto compact token limit `419430` (40 percent).
 9. The generated Kimi catalog contains exactly one slug, `kimi-k3`, with
    context window `1048576`.
 10. Deployment-drift tests prove the LaunchAgent project path, installed code,

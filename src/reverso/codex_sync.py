@@ -257,6 +257,7 @@ def _render_profile_file(
     model_provider: str,
     catalog_path: Path | None = None,
     model_context_window: int | None = None,
+    model_auto_compact_token_limit: int | None = None,
     model_reasoning_summary: str | None = None,
 ) -> str:
     """Render one provider-name Codex profile file."""
@@ -273,6 +274,10 @@ def _render_profile_file(
         lines.append(f"model_catalog_json = {_toml_string(str(catalog_path))}")
     if model_context_window is not None:
         lines.append(f"model_context_window = {model_context_window}")
+    if model_auto_compact_token_limit is not None:
+        lines.append(
+            f"model_auto_compact_token_limit = {model_auto_compact_token_limit}"
+        )
     return "\n".join(lines) + "\n"
 
 
@@ -296,6 +301,7 @@ def _reverso_profile_files(
                 model_provider=spec.model_provider,
                 catalog_path=catalog_path,
                 model_context_window=spec.model_context_window,
+                model_auto_compact_token_limit=spec.model_auto_compact_token_limit,
                 model_reasoning_summary=(
                     None
                     if _provider_supports_feature(entry.prefix, "reasoning.summary")
@@ -314,6 +320,7 @@ def _direct_profile_files(config_dir: Path) -> dict[Path, str]:
             model=spec.model,
             model_provider=spec.model_provider,
             model_context_window=spec.model_context_window,
+            model_auto_compact_token_limit=spec.model_auto_compact_token_limit,
         )
     return files
 

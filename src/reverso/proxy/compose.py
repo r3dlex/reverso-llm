@@ -45,6 +45,10 @@ from reverso.protocols.headroom_compression import (
     HeadroomCompressionConfig,
 )
 from reverso.protocols.kimi_login import KimiLoginCoordinator
+from reverso.protocols.kimi_usage import (
+    KimiUsageService,
+    with_kimi_usage_headers,
+)
 from reverso.protocols.responses_app import build_app, split_provider_path
 
 Receive = Callable[[], Awaitable[dict[str, Any]]]
@@ -175,6 +179,7 @@ class CompositionRoot:
         gateway: Callable[[Scope, Receive, Send], Awaitable[None]] | None = None,
         anthropic_app: Callable[[Scope, Receive, Send], Awaitable[None]] | None = None,
         legacy_app: Callable[[Scope, Receive, Send], Awaitable[None]] | None = None,
+        kimi_usage: KimiUsageService | Any | None = None,
     ) -> None:
         self._kimi_login: KimiLoginCoordinator | None = None
         self._kimi_auth: KimiOAuthAuth | None = None
@@ -182,6 +187,8 @@ class CompositionRoot:
         if gateway is None:
             self._kimi_login = KimiLoginCoordinator()
             self._kimi_auth = KimiOAuthAuth(login_coordinator=self._kimi_login)
+        self._kimi_usage = kimi_usage or KimiUsageService(auth=self._kimi_auth)
+        self._kimi_usage_headers_enabled = kimi_usage is not None or gateway is None
         self._gateway = (
             gateway
             if gateway is not None
@@ -190,14 +197,25 @@ class CompositionRoot:
         self._anthropic_app = (
             anthropic_app
             if anthropic_app is not None
-            else build_anthropic_app(kimi_auth=self._kimi_auth)
+            else build_anthropic_app(
+                kimi_auth=self._kimi_auth,
+                kimi_usage=self._kimi_usage,
+            )
         )
         self._legacy_app = legacy_app
 
     async def close(self) -> None:
         """Close shared provider lifecycle resources before process shutdown."""
+        cleanups: list[Awaitable[None]] = []
+        usage_close = getattr(self._kimi_usage, "close", None)
+        if callable(usage_close):
+            cleanups.append(usage_close())
         if self._kimi_login is not None:
-            await self._kimi_login.close()
+            cleanups.append(self._kimi_login.close())
+        results = await asyncio.gather(*cleanups, return_exceptions=True)
+        for result in results:
+            if isinstance(result, BaseException):
+                raise result
 
     def _resolve_legacy(self) -> Callable[[Scope, Receive, Send], Awaitable[None]]:
         if self._legacy_app is None:
@@ -326,12 +344,15 @@ class CompositionRoot:
         if scope.get("type") == "http":
             path = str(scope.get("path", ""))
 
-            # GET /usage and /usage/headroom - serve local usage snapshots.
-            # Handled BEFORE the Anthropic-surface check and before legacy
-            # delegation so they are always reachable. Reads in-process stores
-            # only - never spawns codex, Headroom, or provider subprocesses.
+            # Usage routes are handled before surface routing. Codex and
+            # Headroom read local stores. Kimi performs a bounded cached HTTP
+            # refresh with existing OAuth only and never starts interactive login.
             if path == "/usage/headroom" and scope.get("method", "GET") == "GET":
                 await _send_json(send, _headroom_usage_response())
+                return
+
+            if path == "/usage/kimi" and scope.get("method", "GET") == "GET":
+                await _send_json(send, await self._kimi_usage.snapshot())
                 return
 
             if path == "/usage" and scope.get("method", "GET") == "GET":
@@ -355,7 +376,14 @@ class CompositionRoot:
                 return
             routed = split_provider_path(path)
             if routed is not None:
-                await self._gateway(scope, receive, send)
+                gateway_send = send
+                if (
+                    self._kimi_usage_headers_enabled
+                    and routed.provider == "kimi"
+                    and routed.path == "/v1/responses"
+                ):
+                    gateway_send = with_kimi_usage_headers(send, self._kimi_usage)
+                await self._gateway(scope, receive, gateway_send)
                 return
         legacy_app = self._resolve_legacy()
         await legacy_app(scope, receive, send)

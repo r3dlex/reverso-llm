@@ -139,9 +139,17 @@ Reverso owns one loopback port and chooses a backend from the request surface an
 | OpenAI Responses | `/copilot/v1` | GitHub Copilot upstream |
 | OpenAI Responses | `/auggie/v1` | Auggie CLI |
 | OpenAI Responses | `/deepseek/v1` | Direct DeepSeek HTTP API |
-| Anthropic Messages | `/v1/messages` | Model-routed to Claude, Codex, Copilot, Auggie, or DeepSeek |
+| OpenAI Responses | `/kimi/v1` | Kimi Code subscription OAuth |
+| Anthropic Messages | `/v1/messages` | Model-routed to Claude, Codex, Copilot, Auggie, DeepSeek, or Kimi |
 
 The OpenAI-compatible provider base URL ends at `/<provider>/v1`; clients append `/responses` or `/models`. The inbound Anthropic surface is translation-only: it accepts Messages requests but does not proxy them to `api.anthropic.com`. The Claude worker scrubs Reverso-related Anthropic environment variables before spawning the CLI so it cannot loop back into the gateway.
+
+Kimi usage telemetry is available at `GET /usage/kimi`. Reverso passively polls
+the authenticated Kimi usage endpoint with existing credentials only, caches the
+result for 60 seconds with single-flight refresh and last-known-good fallback,
+and never starts login from telemetry. Kimi Responses and Anthropic Messages
+responses expose the five-hour and weekly windows through the `x-codex-primary-*`
+and `x-codex-secondary-*` headers consumed by Codex and the OMX HUD.
 
 The experimental local-only Codex Direct route and opt-in OpenAI pass-through route are documented in [ADR 0016](docs/architecture/adr/0016-experimental-codex-direct-oauth-provider.md) and the [archived implementation specification](docs/specifications/ARCHIVED/openai-pass-through-oauth-api-key.md). They are not the recommended onboarding path.
 
@@ -254,7 +262,9 @@ The drift command fails closed when the source checkout, recorded provenance,
 rendered or running LaunchAgents, live Kimi discovery, generated profile, or
 generated catalog disagree. `pre-sync` requires live discovery to expose only
 `kimi-k3`; `acceptance` additionally requires the generated Kimi profile and
-catalog to use context window `1048576`.
+catalog to use context window `1048576`, with the profile auto compact token
+limit set to `419430` (40 percent) so a lower global Codex limit cannot be
+inherited.
 
 Restart without changing files:
 
