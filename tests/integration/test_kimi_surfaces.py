@@ -862,7 +862,9 @@ async def test_composition_owns_responses_kimi_auth_and_idempotent_close() -> No
 
 
 @pytest.mark.asyncio
-async def test_composition_close_gives_usage_and_login_cleanup_equal_opportunity() -> None:
+async def test_composition_close_gives_usage_and_login_cleanup_equal_opportunity() -> (
+    None
+):
     usage_started = asyncio.Event()
     login_started = asyncio.Event()
     release_usage = asyncio.Event()

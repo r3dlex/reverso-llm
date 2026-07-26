@@ -127,12 +127,14 @@ def test_parse_kimi_usage_converts_official_relative_reset_aliases(
 
     parsed = parse_kimi_usage(payload, observed_at=observed_at)
 
-    assert parsed["weekly"]["resets_at"] == (
-        observed_at + timedelta(seconds=90)
-    ).isoformat()
-    assert parsed["five_hour"]["resets_at"] == (
-        observed_at + timedelta(seconds=120)
-    ).isoformat()
+    assert (
+        parsed["weekly"]["resets_at"]
+        == (observed_at + timedelta(seconds=90)).isoformat()
+    )
+    assert (
+        parsed["five_hour"]["resets_at"]
+        == (observed_at + timedelta(seconds=120)).isoformat()
+    )
 
 
 def test_kimi_codex_rate_limit_headers_maps_both_windows() -> None:

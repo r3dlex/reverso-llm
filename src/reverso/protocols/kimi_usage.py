@@ -183,9 +183,7 @@ def with_kimi_usage_headers(send: Any, usage: Any) -> Any:
     async def wrapped(message: dict[str, Any]) -> None:
         if message.get("type") == "http.response.start":
             try:
-                usage_headers = kimi_codex_rate_limit_headers(
-                    usage.cached_snapshot()
-                )
+                usage_headers = kimi_codex_rate_limit_headers(usage.cached_snapshot())
             except Exception:  # noqa: BLE001 - optional telemetry must not break output
                 usage_headers = []
             if usage_headers:
@@ -299,9 +297,7 @@ class KimiUsageService:
         self._background_task = task
         task.add_done_callback(self._finish_background_refresh)
 
-    def _finish_background_refresh(
-        self, task: asyncio.Task[dict[str, Any]]
-    ) -> None:
+    def _finish_background_refresh(self, task: asyncio.Task[dict[str, Any]]) -> None:
         if self._background_task is task:
             self._background_task = None
         with suppress(asyncio.CancelledError):
