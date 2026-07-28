@@ -18,6 +18,8 @@ DEFAULT_SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
 DEFAULT_LAUNCHER_DIR = Path.home() / ".local" / "bin"
 GATEWAY_BASE_URL = "http://127.0.0.1:64946"
 PLACEHOLDER_BEARER = "reverso-local-loopback"
+KIMI_MODEL = "kimi-k3"
+KIMI_CONTEXT_WINDOW = "1048576"
 LAUNCHER_MANAGED_MARKER = "# Managed by reverso-claude-code-sync."
 LAUNCHER_CATALOGS: tuple[tuple[str, str], ...] = (
     ("claude-reverso", "all"),
@@ -39,6 +41,11 @@ LAUNCHER_SCRUB_ENV_KEYS: tuple[str, ...] = (
     "CLAUDE_CODE_OAUTH_TOKEN",
     "ANTHROPIC_CUSTOM_HEADERS",
     "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY",
+)
+KIMI_SCRUB_ENV_KEYS: tuple[str, ...] = (
+    "ANTHROPIC_MODEL",
+    "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+    "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
 )
 REVERSO_MARKER_KEY = "_reverso_prev_model"
 BROKEN_RESTORED_MODELS = frozenset({"haiku"})
@@ -211,18 +218,28 @@ def _resolve_claude_executable(
 
 
 def _render_launcher(claude_executable: Path, catalog: str) -> str:
-    settings = json.dumps(
-        {
-            "env": {
-                "ANTHROPIC_AUTH_TOKEN": PLACEHOLDER_BEARER,
-                "ANTHROPIC_BASE_URL": GATEWAY_BASE_URL,
-                "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY": "1",
+    settings_env = {
+        "ANTHROPIC_AUTH_TOKEN": PLACEHOLDER_BEARER,
+        "ANTHROPIC_BASE_URL": GATEWAY_BASE_URL,
+        "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY": "1",
+    }
+    if catalog == "kimi":
+        settings_env.update(
+            {
+                "ANTHROPIC_MODEL": KIMI_MODEL,
+                "CLAUDE_CODE_AUTO_COMPACT_WINDOW": KIMI_CONTEXT_WINDOW,
+                "CLAUDE_CODE_MAX_CONTEXT_TOKENS": KIMI_CONTEXT_WINDOW,
             }
-        },
+        )
+    settings = json.dumps(
+        {"env": settings_env},
         sort_keys=True,
         separators=(",", ":"),
     )
-    scrubbed = " ".join(LAUNCHER_SCRUB_ENV_KEYS)
+    scrub_env_keys = LAUNCHER_SCRUB_ENV_KEYS
+    if catalog == "kimi":
+        scrub_env_keys += KIMI_SCRUB_ENV_KEYS
+    scrubbed = " ".join(scrub_env_keys)
     return f"""#!/bin/sh
 {LAUNCHER_MANAGED_MARKER}
 

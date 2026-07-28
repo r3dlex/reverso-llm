@@ -166,6 +166,7 @@ def _write_generated_kimi(home: Path) -> None:
                 'model_provider = "reverso_kimi"',
                 f'model_catalog_json = "{catalog}"',
                 "model_context_window = 1048576",
+                "model_auto_compact_token_limit = 943718",
                 "",
             )
         ),
@@ -812,6 +813,7 @@ def test_pre_sync_rejects_each_runtime_mismatch(
     (
         ("profile-model", "profile model"),
         ("profile-provider", "profile provider"),
+        ("profile-auto-compact", "auto compact token limit"),
         ("catalog-slug", "catalog slug"),
         ("catalog-context", "catalog context"),
     ),
@@ -831,6 +833,13 @@ def test_acceptance_rejects_each_generated_metadata_mismatch(
     elif mutation == "profile-provider":
         profile_path.write_text(
             profile_path.read_text().replace("reverso_kimi", "reverso_stale")
+        )
+    elif mutation == "profile-auto-compact":
+        profile_path.write_text(
+            profile_path.read_text().replace(
+                "model_auto_compact_token_limit = 943718",
+                "model_auto_compact_token_limit = 108800",
+            )
         )
     else:
         catalog = json.loads(catalog_path.read_text())

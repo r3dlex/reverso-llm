@@ -39,6 +39,7 @@ LAUNCH_AGENT_EXECUTABLES = {
 LAUNCH_AGENT_LABELS = tuple(LAUNCH_AGENT_EXECUTABLES)
 KIMI_MODEL = "kimi-k3"
 KIMI_CONTEXT_WINDOW = 1048576
+KIMI_AUTO_COMPACT_TOKEN_LIMIT = 943718
 KIMI_MODELS_URL = "http://127.0.0.1:64946/kimi/v1/models"
 PHASES = ("pre-install", "pre-restart", "post-restart", "pre-sync", "acceptance")
 
@@ -633,6 +634,10 @@ def _validate_generated_kimi(env: DriftEnvironment) -> None:
     if profile.get("model_context_window") != KIMI_CONTEXT_WINDOW:
         raise DeploymentDriftError(
             "generated Kimi profile context window must be 1048576"
+        )
+    if profile.get("model_auto_compact_token_limit") != KIMI_AUTO_COMPACT_TOKEN_LIMIT:
+        raise DeploymentDriftError(
+            "generated Kimi profile auto compact token limit must be 943718"
         )
     catalog_value = profile.get("model_catalog_json")
     if not isinstance(catalog_value, str):

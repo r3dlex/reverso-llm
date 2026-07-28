@@ -650,6 +650,7 @@ def test_profile_files_emit_one_file_per_live_prefix(
         "model_provider": "reverso_kimi",
         "model_catalog_json": str(catalog_dir / "kimi.json"),
         "model_context_window": 1048576,
+        "model_auto_compact_token_limit": 943718,
     }
     assert parsed["codex-direct"]["model"] == "gpt-5.5"
     assert parsed["codex-direct"]["model_catalog_json"] == str(
@@ -690,6 +691,7 @@ def test_sync_writes_profiles_for_each_live_prefix(tmp_path: Path) -> None:
         assert profile["model"]
     kimi = tomllib.loads((tmp_path / "reverso-kimi.config.toml").read_text())
     assert kimi["model_context_window"] == 1048576
+    assert kimi["model_auto_compact_token_limit"] == 943718
     openai = tomllib.loads((tmp_path / "openai.config.toml").read_text())
     minimax = tomllib.loads((tmp_path / "minimax.config.toml").read_text())
     assert openai == {"model": "gpt-5.5", "model_provider": "openai"}

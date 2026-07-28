@@ -176,6 +176,7 @@ def test_model_exposure_owns_codex_profile_default_model_policy() -> None:
     assert kimi.model_provider == "reverso_kimi"
     assert kimi.uses_model_catalog is True
     assert kimi.model_context_window == 1048576
+    assert kimi.model_auto_compact_token_limit == 943718
 
 
 def test_model_exposure_owns_codex_responses_model_eligibility() -> None:

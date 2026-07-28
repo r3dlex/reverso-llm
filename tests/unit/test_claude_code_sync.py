@@ -401,6 +401,84 @@ def test_launcher_scrubs_auth_and_uses_process_local_settings(
     assert args[2:] == ["--model", "gpt-5.5"]
 
 
+def test_kimi_launcher_sets_documented_one_million_token_context(
+    tmp_path: Path,
+) -> None:
+    claude = tmp_path / "real" / "claude"
+    claude.parent.mkdir()
+    _fake_claude(claude)
+    launcher_dir = tmp_path / "bin"
+    result = sync_claude_code_settings(
+        tmp_path / "settings.json",
+        launcher_dir=launcher_dir,
+        claude_executable=claude,
+    )
+    assert result.error is None
+    capture = tmp_path / "capture"
+
+    completed = subprocess.run(
+        [launcher_dir / "claude-kimi", "--version"],
+        env={
+            **os.environ,
+            "REVERSO_TEST_CAPTURE": str(capture),
+            "ANTHROPIC_MODEL": "claude-opus-5",
+            "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "123",
+            "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "456",
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0
+    captured = capture.read_text(encoding="utf-8")
+    captured_lines = captured.splitlines()
+    assert "ANTHROPIC_MODEL=claude-opus-5" not in captured_lines
+    assert "CLAUDE_CODE_AUTO_COMPACT_WINDOW=123" not in captured_lines
+    assert "CLAUDE_CODE_MAX_CONTEXT_TOKENS=456" not in captured_lines
+    args = captured.split("\n--\n", 1)[1].splitlines()
+    settings = json.loads(args[1])
+    assert settings["env"]["ANTHROPIC_MODEL"] == "kimi-k3"
+    assert settings["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "1048576"
+    assert settings["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "1048576"
+
+
+def test_non_kimi_launcher_preserves_caller_model_and_context(
+    tmp_path: Path,
+) -> None:
+    claude = tmp_path / "real" / "claude"
+    claude.parent.mkdir()
+    _fake_claude(claude)
+    launcher_dir = tmp_path / "bin"
+    result = sync_claude_code_settings(
+        tmp_path / "settings.json",
+        launcher_dir=launcher_dir,
+        claude_executable=claude,
+    )
+    assert result.error is None
+    capture = tmp_path / "capture"
+
+    completed = subprocess.run(
+        [launcher_dir / "claude-codex", "--version"],
+        env={
+            **os.environ,
+            "REVERSO_TEST_CAPTURE": str(capture),
+            "ANTHROPIC_MODEL": "gpt-5.5",
+            "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "123",
+            "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "456",
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0
+    captured_lines = capture.read_text(encoding="utf-8").splitlines()
+    assert "ANTHROPIC_MODEL=gpt-5.5" in captured_lines
+    assert "CLAUDE_CODE_AUTO_COMPACT_WINDOW=123" in captured_lines
+    assert "CLAUDE_CODE_MAX_CONTEXT_TOKENS=456" in captured_lines
+
+
 def test_launcher_rejects_caller_settings_flags(tmp_path: Path) -> None:
     claude = tmp_path / "claude"
     _fake_claude(claude)

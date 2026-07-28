@@ -186,9 +186,21 @@ prompt-free.
 ### FR-9: Codex metadata convergence
 
 The generated Kimi profile must select `model = "kimi-k3"` and set
-`model_context_window = 1048576`. Its provider-specific catalog must contain
-exactly one model with slug `kimi-k3`, `context_window = 1048576`, and
-`max_context_window = 1048576`.
+`model_context_window = 1048576`. It must also set
+`model_auto_compact_token_limit = 943718`, Codex's normal 90 percent threshold,
+so a lower global setting cannot force premature Kimi compaction. Its
+provider-specific catalog must contain exactly one model with slug `kimi-k3`,
+`context_window = 1048576`, and `max_context_window = 1048576`.
+
+### FR-10: Claude Code context convergence
+
+The generated `claude-kimi` launcher must use process-local managed settings
+that select `ANTHROPIC_MODEL = "kimi-k3"` and set both
+`CLAUDE_CODE_AUTO_COMPACT_WINDOW = "1048576"` and
+`CLAUDE_CODE_MAX_CONTEXT_TOKENS = "1048576"`. It must scrub caller-provided
+values for all three variables before invoking Claude Code so a persisted or
+inherited 200K Claude model cannot cap Kimi's documented one-million-token
+window.
 
 ## Security and reliability requirements
 
