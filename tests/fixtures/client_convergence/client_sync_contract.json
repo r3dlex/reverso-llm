@@ -1,0 +1,210 @@
+{
+  "schema_version": 1,
+  "entrypoint": "reverso-client-sync = \"reverso.client_sync:main\"",
+  "command": "reverso-client-sync",
+  "modes": ["dry-run", "apply", "refresh", "verify"],
+  "options": [
+    "--codex-config PATH",
+    "--claude-config-dir PATH",
+    "--catalog-dir PATH",
+    "--launch-agent-dir PATH",
+    "--rtk-bin PATH",
+    "--json"
+  ],
+  "implicit_mode": false,
+  "json_stdout_objects": 1,
+  "human_diagnostics_stream": "stderr",
+  "result_fields": [
+    "schema_version",
+    "command",
+    "mode",
+    "status",
+    "exit_code",
+    "started_at",
+    "finished_at",
+    "groups",
+    "surfaces",
+    "paths",
+    "catalog_refresh",
+    "errors"
+  ],
+  "group_fields": ["id", "kind", "status", "dependencies", "paths"],
+  "surface_fields": ["id", "kind", "status", "paths"],
+  "path_fields": [
+    "path",
+    "group",
+    "owner",
+    "status",
+    "before_sha256",
+    "after_sha256"
+  ],
+  "error_fields": ["code", "group", "path", "message"],
+  "catalog_refresh_fields": [
+    "last_attempt_at",
+    "last_success_at",
+    "stored_stale",
+    "stored_stale_observed_at",
+    "stale",
+    "observed_at"
+  ],
+  "timestamp_format": "RFC3339 UTC or null",
+  "sorted_arrays": ["groups:id", "surfaces:id", "paths:path", "errors:stable_identifier"],
+  "statuses": {
+    "result": [
+      "success",
+      "no_op",
+      "planned",
+      "lock_skipped",
+      "lock_busy",
+      "drift",
+      "stale",
+      "invalid",
+      "ownership_conflict",
+      "partial_freshness",
+      "repair_required"
+    ],
+    "group_and_surface": [
+      "current",
+      "planned",
+      "changed",
+      "preserved",
+      "blocked_stale_dependency",
+      "invalid",
+      "drift",
+      "rolled_back"
+    ],
+    "path": [
+      "unchanged",
+      "planned_create",
+      "planned_update",
+      "created",
+      "updated",
+      "preserved_conflict",
+      "blocked_stale_dependency",
+      "drift",
+      "rolled_back"
+    ]
+  },
+  "exit_codes": {
+    "0": "success, no-op, dry-run plan, or benign scheduled lock skip",
+    "2": "verify drift or refresh staleness, or operator lock timeout",
+    "3": "invalid candidate or ownership conflict; no writes",
+    "4": "partial provider freshness",
+    "5": "rollback or internal inconsistency requires repair"
+  },
+  "status_exit_codes": {
+    "stale": 2,
+    "partial_freshness": 4
+  },
+  "selector_rows": [
+    {
+      "surface": "Built-in Codex GPT",
+      "selector": "bare gpt-*",
+      "ownership": "Codex-owned and user-preserving",
+      "runtime_authority": "codex"
+    },
+    {
+      "surface": "MiniMax",
+      "selector": "bare MiniMax-*",
+      "ownership": "direct Codex profile and user-preserving",
+      "runtime_authority": "codex",
+      "model_provider": "minimax",
+      "reverso_runtime_route": false
+    },
+    {
+      "surface": "Claude through Claude Code",
+      "selector": "bare provider model id",
+      "ownership": "Reverso-managed client presentation",
+      "runtime_authority": "reverso"
+    },
+    {
+      "surface": "DeepSeek through Reverso",
+      "selector": "bare provider model id",
+      "ownership": "Reverso-managed client presentation",
+      "runtime_authority": "reverso"
+    },
+    {
+      "surface": "Kimi through Reverso",
+      "selector": "bare kimi-k3",
+      "ownership": "Reverso-managed client presentation",
+      "runtime_authority": "reverso"
+    },
+    {
+      "surface": "Copilot through Reverso",
+      "selector": "copilot/<model>",
+      "ownership": "Reverso-managed client presentation",
+      "runtime_authority": "reverso"
+    },
+    {
+      "surface": "Auggie through Reverso",
+      "selector": "auggie/<model>",
+      "ownership": "Reverso-managed client presentation",
+      "runtime_authority": "reverso"
+    },
+    {
+      "surface": "AGY additive catalog",
+      "selector": "agy/<model>",
+      "ownership": "external source and user-preserving unless marker-owned by its exact sync owner",
+      "runtime_authority": "external",
+      "reverso_runtime_route": false,
+      "reverso_gateway_fetch": false
+    },
+    {
+      "surface": "Codex Direct",
+      "selector": "codex-direct/<model>",
+      "ownership": "feature-gated Reverso client presentation",
+      "runtime_authority": "reverso"
+    },
+    {
+      "surface": "OpenAI pass-through",
+      "selector": "openai-pass-through/<model>",
+      "ownership": "feature-gated Reverso client presentation",
+      "runtime_authority": "reverso"
+    }
+  ],
+  "ownership": {
+    "unique_writable_path_owner": true,
+    "validate_all_before_first_write": true,
+    "unmarked_conflicts": "preserve_and_fail_closed",
+    "provider_group": "provider-specific catalog and dependent provider-specific profiles or launchers",
+    "shared_dependency_group": "multi-provider artifacts have one separate owner and commit only when every dependency is current"
+  },
+  "rollback": {
+    "scope": "complete handled-failure group",
+    "restores": ["bytes", "existence_or_absence", "object_type", "symlink_target", "executable_mode"],
+    "crash_atomicity": false,
+    "interruption_recovery": "verify exact drifted group then idempotent rerun",
+    "shared_stale_status": "blocked_stale_dependency",
+    "shared_stale_exit_code": 4,
+    "mixed_current_and_prior_inputs": false
+  },
+  "lock": {
+    "function": "reverso.client_sync_lock.acquire_client_sync_lock",
+    "path": "~/Library/Application Support/reverso/catalog-refresh.lock",
+    "scheduled_refresh": {"acquisition": "non_blocking", "contention_status": "lock_skipped", "exit_code": 0},
+    "operator_writes": {"max_wait_seconds": 30, "contention_status": "lock_busy", "exit_code": 2, "writes": false},
+    "read_only_modes": ["dry-run", "verify"],
+    "nested_calls": "explicit held-lock token; never reacquire or release"
+  },
+  "rtk": {
+    "explicit_path_precedence": true,
+    "discovery": "exact host PATH must resolve to one distinct regular executable",
+    "multiple_distinct_candidates": "fail_closed_require_explicit_selection",
+    "link": "~/.headroom/bin/rtk",
+    "create_missing_real_parents_mode": "0700",
+    "traverse_symlink_parent": false,
+    "conflict_policy": "preserve_and_fail_closed",
+    "embedded_headroom_invokes_rtk": false
+  },
+  "defaults": {
+    "missing_headroom_profile": "coding",
+    "blank_headroom_profile": "coding",
+    "explicit_headroom_profile_override": "preserved"
+  },
+  "health": {
+    "reverso_readiness": "http://127.0.0.1:64946/health/readiness",
+    "base_port": 64946,
+    "standalone_headroom_example_port": 58787,
+    "reverso_health_port_forbidden": 8787
+  }
+}

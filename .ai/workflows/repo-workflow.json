@@ -128,6 +128,11 @@
       "enabled_when": "northstar_handoff_present",
       "status": "complete",
       "completed_via": "PRs #90, #91, and #92"
+    },
+    {
+      "id": "northstar-handoff-reverso-install-profile-catalog-headroom-convergence",
+      "enabled_when": "northstar_handoff_present",
+      "status": "available"
     }
   ],
   "handoff": ".ai/handoff/init-ai-repo-handoff.md",

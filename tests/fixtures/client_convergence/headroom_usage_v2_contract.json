@@ -1,0 +1,73 @@
+{
+  "schema_version": 2,
+  "outer_usage_headroom_schema_version": 1,
+  "outer_provider": "headroom",
+  "same_inner_snapshot_on_usage_routes": true,
+  "preserved_fields": [
+    "enabled",
+    "profile",
+    "requests_seen",
+    "requests_compressed",
+    "tokens_before",
+    "tokens_after",
+    "tokens_saved",
+    "compression_ratio",
+    "fail_open_count",
+    "failure_reasons",
+    "error_types",
+    "updated_at"
+  ],
+  "additive_fields": [
+    "process_started_at",
+    "measurement_started_at",
+    "requests_passed_through",
+    "compression_success_rate",
+    "average_tokens_saved",
+    "outcome_counts",
+    "provider_counts",
+    "surface_counts",
+    "timeout_seconds",
+    "model_limit",
+    "last_success_at",
+    "last_failure_at",
+    "reset_reason"
+  ],
+  "maps": {
+    "outcome_counts": ["compressed", "passed_through", "fail_open", "other"],
+    "failure_reasons": ["worker_busy", "timeout", "exception", "inflation_guard", "retrieval_marker", "unsafe_output", "other"],
+    "error_types": ["timeout", "worker_busy", "dependency_exception", "inflation_guard", "retrieval_marker", "unsafe_output", "other"],
+    "provider_counts": ["claude", "copilot", "auggie", "deepseek", "kimi", "codex-direct", "openai-pass-through", "other"],
+    "surface_counts": ["responses", "anthropic_messages", "other"]
+  },
+  "unknown_dimension_bucket": "other",
+  "formulas": {
+    "compression_ratio": "tokens_saved / tokens_before; zero when tokens_before is zero",
+    "compression_success_rate": "requests_compressed / requests_seen; zero when requests_seen is zero",
+    "average_tokens_saved": "tokens_saved / requests_compressed; zero when requests_compressed is zero",
+    "requests_passed_through": "max(requests_seen - requests_compressed - fail_open_count, 0)"
+  },
+  "reset_reasons": {"new_process": "process_start", "explicit_test_reset": "manual_test_reset"},
+  "persistence": false,
+  "standalone_savings_file_read": false,
+  "subprocess": false,
+  "rtk": false,
+  "explicit_attribution": {
+    "provider": true,
+    "surface": true,
+    "infer_from_raw_model": false,
+    "responses_surface": "responses",
+    "anthropic_surface": "anthropic_messages",
+    "unknown": "other"
+  },
+  "forbidden_payload_dimensions": [
+    "request_body",
+    "prompt",
+    "response",
+    "tool_content",
+    "workspace",
+    "session_id",
+    "request_id",
+    "raw_model",
+    "raw_error"
+  ]
+}
