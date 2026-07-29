@@ -144,7 +144,7 @@ async def test_tiny_prompt_bypasses_headroom_import(
 async def test_sufficiently_large_prompt_still_imports_and_calls_headroom(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    request = ResponsesRequest(model="m", input="x" * 120)
+    request = ResponsesRequest(model="m", input="x" * 10)
     calls = 0
 
     def fake_compress(messages: list[dict[str, Any]], **_: Any) -> FakeHeadroomResult:
@@ -212,7 +212,7 @@ async def test_projects_and_reconstructs_text_without_losing_structure() -> None
         nonlocal seen_messages
         seen_messages = messages
         assert kwargs["model"] == "claude-test"
-        assert kwargs["savings_profile"] == "agent-90"
+        assert kwargs["savings_profile"] == "coding"
         return FakeHeadroomResult(
             messages=[
                 {"role": "system", "content": "compressed system"},
@@ -505,7 +505,7 @@ def os_environ(name: str) -> str | None:
     return os.environ.get(name)
 
 
-def test_config_from_env_defaults_enabled_agent_90(
+def test_config_from_env_defaults_enabled_coding(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("REVERSO_HEADROOM_ENABLED", raising=False)
@@ -514,7 +514,7 @@ def test_config_from_env_defaults_enabled_agent_90(
     config = HeadroomCompressionConfig.from_env()
 
     assert config.enabled is True
-    assert config.profile == "agent-90"
+    assert config.profile == "coding"
 
 
 def test_config_from_env_supports_kill_switch(monkeypatch: pytest.MonkeyPatch) -> None:

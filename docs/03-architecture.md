@@ -340,7 +340,7 @@ dispatching the translated Responses request to any resolved backend. The Anthro
 returns before the seam. The seam projects text-bearing Responses fields to Headroom
 messages, leaves whitespace-only fields byte-for-byte unchanged, and bypasses the cold
 Headroom import when a conservative upper bound proves that every message is below the
-pinned default `agent-90` profile's 120-token compression floor. Custom profiles always
+pinned default `coding` profile's 10-token compression floor. Custom profiles always
 load Headroom because their threshold is not known locally. Otherwise the seam runs
 Headroom off the event loop with a short timeout, then
 reconstructs the original Responses shape. It preserves non-text content, tool
@@ -351,7 +351,7 @@ original client input; compressed input is internal to provider dispatch.
 Runtime controls:
 
 - Enabled by default. Set `REVERSO_HEADROOM_ENABLED=0` to disable.
-- Compression profile defaults to `agent-90` and is configurable with
+- Compression profile defaults to `coding` and is configurable with
   `REVERSO_HEADROOM_PROFILE`.
 - Headroom process settings are enforced as stateless: `HEADROOM_STATELESS=true`,
   telemetry off, update checks off, no periodic token stats, and

@@ -24,10 +24,10 @@ from typing import Any
 from reverso.protocols.adapter import ResponsesRequest
 
 _FALSE_VALUES = {"0", "false", "no", "off", "disabled"}
-_DEFAULT_PROFILE = "agent-90"
+_DEFAULT_PROFILE = "coding"
 _DEFAULT_TIMEOUT_SECONDS = 2.0
 _DEFAULT_MODEL_LIMIT = 200000
-_DEFAULT_PROFILE_MIN_TOKENS_TO_COMPRESS = 120
+_DEFAULT_PROFILE_MIN_TOKENS_TO_COMPRESS = 10
 
 CompressCallable = Callable[..., Any]
 
@@ -370,7 +370,7 @@ def _may_reach_headroom_token_floor(
 ) -> bool:
     """Return whether any message may meet Headroom's compression threshold.
 
-    The pinned default profile uses a 120-token floor. A tokenizer cannot
+    The pinned default profile uses a 10-token floor. A tokenizer cannot
     produce more tokens than the UTF-8 bytes in non-whitespace content, so this
     upper bound can safely bypass the expensive cold import for tiny default
     requests. Custom profiles may use a lower floor and therefore always import.

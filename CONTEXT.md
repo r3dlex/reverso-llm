@@ -70,7 +70,7 @@ before ProviderAdapter dispatch: after raw feature gating and normalization on
 the Responses surface, and after capability gating and translation on the
 Anthropic Messages surface.
 It is enabled by default when Reverso is installed with the base runtime
-dependency `headroom-ai`, uses Headroom `agent-90` as the default configurable
+dependency `headroom-ai`, uses Headroom `coding` as the default configurable
 profile, runs stateless by
 default, keeps a documented kill switch, preserves request structure that is not
 plain text, and fails open to the original request when compression cannot be

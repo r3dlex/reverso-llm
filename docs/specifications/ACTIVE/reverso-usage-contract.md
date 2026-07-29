@@ -36,7 +36,7 @@ The response body is JSON with `schema_version: 1`.
   "updated_at": "2026-01-01T00:00:00+00:00",
   "headroom": {
     "enabled": true,
-    "profile": "agent-90",
+    "profile": "coding",
     "requests_seen": 0,
     "requests_compressed": 0,
     "tokens_before": 0,
@@ -79,7 +79,7 @@ compression metrics. The same aggregate is available directly at
   "provider": "headroom",
   "headroom": {
     "enabled": true,
-    "profile": "agent-90",
+    "profile": "coding",
     "requests_seen": 0,
     "requests_compressed": 0,
     "tokens_before": 0,
