@@ -49,8 +49,23 @@ class FakeRunner:
             "com.user.reverso-daemon": "reverso-daemon",
         }
         self.running_extra_arguments: dict[str, list[str]] = {}
+        self.commands: list[tuple[str, ...]] = []
+        self.scheduled_label = deployment_drift.SCHEDULED_LAUNCH_AGENT_LABEL
+        self.scheduled_program = LAUNCHER
+        self.scheduled_arguments: list[str] | None = None
+        self.scheduled_project: str | None = None
+        self.scheduled_working_directory: str | None = None
+        self.scheduled_environment_commit = COMMIT
+        self.scheduled_environment_checkout: str | None = None
+        self.scheduled_properties = ""
+        self.scheduled_top_level_key: str | None = None
+        self.scheduled_intervals = [
+            {"Hour": 6, "Minute": 0},
+            {"Hour": 18, "Minute": 0},
+        ]
 
     def __call__(self, command: tuple[str, ...], cwd: Path | None) -> str:
+        self.commands.append(command)
         if command[:2] == ("git", "status"):
             return " M tracked.py\n" if self.dirty else ""
         if command[:2] == ("git", "rev-parse"):
@@ -63,6 +78,56 @@ class FakeRunner:
             raise DeploymentDriftError("commit is not an ancestor")
         if command[:2] == ("launchctl", "print"):
             label = command[-1].rsplit("/", 1)[-1]
+            if label == deployment_drift.SCHEDULED_LAUNCH_AGENT_LABEL:
+                arguments = self.scheduled_arguments or [
+                    LAUNCHER,
+                    "run",
+                    "--project",
+                    self.scheduled_project or self.running_environment_checkout,
+                    deployment_drift.SCHEDULED_LAUNCH_AGENT_EXECUTABLE,
+                ]
+                rendered_arguments = "\n".join(
+                    f"        {value}" for value in arguments
+                )
+                rendered_intervals = "\n".join(
+                    (
+                        f"        trigger-{index} => {{\n"
+                        "            keepalive = 0\n"
+                        "            stream = com.apple.launchd.calendarinterval\n"
+                        "            descriptor = {\n"
+                        f'                "Hour" => {interval["Hour"]}\n'
+                        f'                "Minute" => {interval["Minute"]}\n'
+                        "            }\n"
+                        "        }"
+                    )
+                    for index, interval in enumerate(self.scheduled_intervals)
+                )
+                top_level_key = (
+                    f"    {self.scheduled_top_level_key} = true\n"
+                    if self.scheduled_top_level_key is not None
+                    else ""
+                )
+                return (
+                    f"gui/501/{self.scheduled_label} = {{\n"
+                    f"    program = {self.scheduled_program}\n"
+                    "    arguments = {\n"
+                    f"{rendered_arguments}\n"
+                    "    }\n"
+                    "    working directory = "
+                    f"{self.scheduled_working_directory or self.running_working_directory}\n"
+                    "    environment = {\n"
+                    "        REVERSO_DEPLOYMENT_COMMIT => "
+                    f"{self.scheduled_environment_commit}\n"
+                    "        REVERSO_PROJECT_DIR => "
+                    f"{self.scheduled_environment_checkout or self.running_environment_checkout}\n"
+                    "    }\n"
+                    f"{top_level_key}"
+                    "    event triggers = {\n"
+                    f"{rendered_intervals}\n"
+                    "    }\n"
+                    f"    properties = {self.scheduled_properties}\n"
+                    "}\n"
+                )
             arguments = [
                 self.running_argument_zero,
                 "run",
@@ -277,6 +342,9 @@ def _env(tmp_path: Path) -> tuple[DriftEnvironment, FakeRunner]:
     runner.running_environment_checkout = str(checkout)
     runner.running_project = str(checkout)
     runner.running_working_directory = str(checkout)
+    runner.scheduled_environment_checkout = str(checkout)
+    runner.scheduled_project = str(checkout)
+    runner.scheduled_working_directory = str(checkout)
     env = DriftEnvironment(
         repo_root=checkout,
         home=home,
@@ -885,6 +953,92 @@ def test_post_restart_passes_without_live_discovery(tmp_path: Path) -> None:
         check_deployment_drift("post-restart", env, selected_commit=COMMIT)["status"]
         == "passed"
     )
+    assert not any(
+        command[-1].endswith(deployment_drift.SCHEDULED_LAUNCH_AGENT_LABEL)
+        for command in runner.commands
+        if command[:2] == ("launchctl", "print")
+    )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    (
+        ("label", "wrong label"),
+        ("program", "unauthorized program"),
+        ("arguments", "ProgramArguments"),
+        ("project-argument", "ProgramArguments"),
+        ("working-directory", "WorkingDirectory"),
+        ("project", "running checkout"),
+        ("commit", "running revision"),
+        ("keepalive-property", "KeepAlive"),
+        ("runatload-property", "RunAtLoad"),
+        ("listener", "Sockets"),
+        ("log-path", "StandardOutPath"),
+        ("missing-schedule", "schedule"),
+        ("extra-schedule", "schedule"),
+        ("wrong-schedule", "schedule"),
+    ),
+)
+def test_post_load_rejects_running_scheduled_launchagent_drift(
+    tmp_path: Path,
+    mutation: str,
+    message: str,
+) -> None:
+    env, runner = _env(tmp_path)
+    _bootstrap(env)
+    if mutation == "label":
+        runner.scheduled_label = "com.user.wrong"
+    elif mutation == "program":
+        runner.scheduled_program = UNAUTHORIZED_LAUNCHER
+    elif mutation == "arguments":
+        runner.scheduled_arguments = [
+            LAUNCHER,
+            "run",
+            "--project",
+            str(env.canonical_checkout),
+            "reverso-proxy",
+        ]
+    elif mutation == "project-argument":
+        runner.scheduled_project = "/stale/reverso"
+    elif mutation == "working-directory":
+        runner.scheduled_working_directory = "/stale/reverso"
+    elif mutation == "project":
+        runner.scheduled_environment_checkout = "/stale/reverso"
+    elif mutation == "commit":
+        runner.scheduled_environment_commit = OLD_COMMIT
+    elif mutation == "keepalive-property":
+        runner.scheduled_properties = "keepalive"
+    elif mutation == "runatload-property":
+        runner.scheduled_properties = "runatload"
+    elif mutation == "listener":
+        runner.scheduled_top_level_key = "sockets"
+    elif mutation == "log-path":
+        runner.scheduled_top_level_key = "stdout path"
+    elif mutation == "missing-schedule":
+        runner.scheduled_intervals.pop()
+    elif mutation == "extra-schedule":
+        runner.scheduled_intervals.append({"Hour": 23, "Minute": 0})
+    else:
+        runner.scheduled_intervals[0] = {"Hour": 7, "Minute": 0}
+
+    with pytest.raises(DeploymentDriftError, match=message):
+        check_deployment_drift("post-load", env, selected_commit=COMMIT)
+
+
+def test_post_load_accepts_running_scheduled_launchagent_readback(
+    tmp_path: Path,
+) -> None:
+    env, runner = _env(tmp_path)
+    _bootstrap(env)
+
+    report = check_deployment_drift("post-load", env, selected_commit=COMMIT)
+
+    assert report["status"] == "passed"
+    assert (
+        "launchctl",
+        "print",
+        f"gui/{env.uid}/{deployment_drift.SCHEDULED_LAUNCH_AGENT_LABEL}",
+    ) in runner.commands
 
 
 @pytest.mark.parametrize("value", (None, "/stale/kimi-home"))
@@ -1231,6 +1385,10 @@ def test_all_phases_pass_when_authorities_converge(tmp_path: Path) -> None:
         == "passed"
     )
     assert (
+        check_deployment_drift("post-load", env, selected_commit=COMMIT)["status"]
+        == "passed"
+    )
+    assert (
         check_deployment_drift("pre-sync", env, selected_commit=COMMIT)["status"]
         == "passed"
     )
@@ -1249,9 +1407,15 @@ def test_installer_orders_all_drift_gates_around_launchctl() -> None:
     pre_restart = script.index("--phase pre-restart")
     launchctl = script.index("launchctl unload")
     post_restart = script.index("--phase post-restart")
+    scheduled_load = script.index('launchctl load "${SCHEDULED_PLIST}"')
+    post_load = script.index("--phase post-load")
+    initial_refresh = script.index(
+        '"${UV_BIN}" run --project "${REVERSO_DIR}" reverso-catalog-refresh'
+    )
     done = script.index("Done. Reverso LaunchAgents installed.")
 
     assert pre_install < write < pre_restart < launchctl < post_restart < done
+    assert post_restart < scheduled_load < post_load < initial_refresh < done
     assert str(CANONICAL_CHECKOUT) in script
     assert 'CANONICAL_USER_HOME="/Users/andresilvaburgstahler"' in script
     assert '"${HOME}" != "${CANONICAL_USER_HOME}"' in script

@@ -142,7 +142,14 @@ HEADROOM_TIMESTAMP_FIELDS = {
     "last_success_at",
     "last_failure_at",
 }
-PHASES = ("pre-install", "pre-restart", "post-restart", "pre-sync", "acceptance")
+PHASES = (
+    "pre-install",
+    "pre-restart",
+    "post-restart",
+    "post-load",
+    "pre-sync",
+    "acceptance",
+)
 
 CommandRunner = Callable[[tuple[str, ...], Path | None], str]
 JsonFetcher = Callable[[str], Any]
@@ -671,6 +678,40 @@ def _launchctl_block(output: str, key: str) -> list[str] | None:
     return None
 
 
+def _launchctl_label(output: str) -> str | None:
+    match = re.search(r"^\s*gui/\d+/(.*?)\s*=\s*\{\s*$", output, re.MULTILINE)
+    return None if match is None else match.group(1)
+
+
+def _launchctl_has_top_level_key(output: str, key: str) -> bool:
+    pattern = re.compile(rf"^{re.escape(key)}\s*=", re.IGNORECASE)
+    for line in output.splitlines():
+        content = line.lstrip(" \t")
+        indentation = line[: len(line) - len(content)]
+        if indentation in {"\t", "    "} and pattern.match(content):
+            return True
+    return False
+
+
+def _launchctl_calendar_intervals(output: str) -> list[dict[str, int]]:
+    intervals: list[dict[str, int]] = []
+    descriptor_pattern = re.compile(r'^\s*"?(Hour|Minute)"?\s*=>\s*(\d+)\s*$')
+    lines = output.splitlines()
+    for index, line in enumerate(lines):
+        if line.strip() != "descriptor = {":
+            continue
+        interval: dict[str, int] = {}
+        for descriptor_line in lines[index + 1 :]:
+            if descriptor_line.strip() == "}":
+                break
+            match = descriptor_pattern.match(descriptor_line)
+            if match is not None:
+                interval[match.group(1)] = int(match.group(2))
+        if interval:
+            intervals.append(interval)
+    return intervals
+
+
 def _validate_running_agents(
     env: DriftEnvironment,
     selected_commit: str,
@@ -742,6 +783,83 @@ def _validate_running_agents(
             raise DeploymentDriftError(
                 f"running LaunchAgent {label} does not match rendered ProgramArguments"
             )
+
+
+def _validate_running_scheduled_agent(
+    env: DriftEnvironment,
+    selected_commit: str,
+    expected_launcher: str,
+) -> None:
+    label = SCHEDULED_LAUNCH_AGENT_LABEL
+    canonical = str(env.canonical_checkout)
+    rendered = _read_plist(env.launch_agents_dir / f"{label}.plist")
+    output = env.command_runner(
+        ("launchctl", "print", f"gui/{env.uid}/{label}"),
+        None,
+    )
+    if _launchctl_label(output) != label:
+        raise DeploymentDriftError(f"running LaunchAgent {label} has wrong label")
+    if _launchctl_assignment(output, "program") != expected_launcher:
+        raise DeploymentDriftError(
+            f"running LaunchAgent {label} has unauthorized program"
+        )
+    running_arguments = _launchctl_block(output, "arguments")
+    _validate_program_arguments(
+        label,
+        SCHEDULED_LAUNCH_AGENT_EXECUTABLE,
+        running_arguments,
+        canonical,
+        expected_launcher,
+        authority="running",
+    )
+    if running_arguments != rendered.get("ProgramArguments"):
+        raise DeploymentDriftError(
+            f"running LaunchAgent {label} does not match rendered ProgramArguments"
+        )
+    if _launchctl_assignment(output, "working directory") != canonical:
+        raise DeploymentDriftError(
+            f"running WorkingDirectory for LaunchAgent {label} is stale"
+        )
+    environment = _launchctl_block(output, "environment")
+    if environment is None:
+        raise DeploymentDriftError(
+            f"running LaunchAgent {label} has no deployment environment"
+        )
+    environment_output = "\n".join(environment)
+    if _launchctl_value(environment_output, "REVERSO_PROJECT_DIR") != canonical:
+        raise DeploymentDriftError(f"running checkout for LaunchAgent {label} is stale")
+    if (
+        _launchctl_value(environment_output, "REVERSO_DEPLOYMENT_COMMIT")
+        != selected_commit
+    ):
+        raise DeploymentDriftError(f"running revision for LaunchAgent {label} is stale")
+    properties = _launchctl_assignment(output, "properties") or ""
+    for running_property, plist_key in (
+        ("keepalive", "KeepAlive"),
+        ("runatload", "RunAtLoad"),
+    ):
+        if re.search(rf"\b{running_property}\b", properties, re.IGNORECASE):
+            raise DeploymentDriftError(
+                f"running LaunchAgent {label} must not set {plist_key}"
+            )
+    for running_key, plist_key in (
+        ("keepalive", "KeepAlive"),
+        ("runatload", "RunAtLoad"),
+        ("run at load", "RunAtLoad"),
+        ("sockets", "Sockets"),
+        ("machservices", "MachServices"),
+        ("mach services", "MachServices"),
+        ("stdout path", "StandardOutPath"),
+        ("stderr path", "StandardErrorPath"),
+    ):
+        if _launchctl_has_top_level_key(output, running_key):
+            raise DeploymentDriftError(
+                f"running LaunchAgent {label} must not set {plist_key}"
+            )
+    if _launchctl_calendar_intervals(output) != rendered.get("StartCalendarInterval"):
+        raise DeploymentDriftError(
+            f"running LaunchAgent {label} has unauthorized schedule"
+        )
 
 
 def _validate_kimi_code_home(env: DriftEnvironment) -> None:
@@ -1015,6 +1133,8 @@ def check_deployment_drift(
         _validate_scheduled_launch_agent(env, selected_commit, str(env.launcher))
     if phase in {"post-restart", "pre-sync", "acceptance"}:
         _validate_running_agents(env, selected_commit, str(env.launcher))
+    if phase in {"post-load", "pre-sync", "acceptance"}:
+        _validate_running_scheduled_agent(env, selected_commit, str(env.launcher))
     if phase in {"pre-sync", "acceptance"}:
         _validate_live_kimi(env)
     if phase == "acceptance":

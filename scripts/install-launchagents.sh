@@ -150,6 +150,8 @@ launchctl unload "${SCHEDULED_PLIST}" 2>/dev/null || true
 launchctl load "${SCHEDULED_PLIST}"
 echo "Loaded:  ${SCHEDULED_AGENT}"
 
+run_deployment_drift --phase post-load
+
 if ! "${UV_BIN}" run --project "${REVERSO_DIR}" reverso-catalog-refresh; then
     echo "WARNING: initial catalog refresh did not complete successfully" >&2
 fi
