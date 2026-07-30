@@ -346,6 +346,37 @@
       "repo_id": "reverso-root",
       "path": ".ai/work-intake/kimi-auto-login-k3-runtime-convergence.md",
       "backlinks": []
+    },
+    {
+      "id": "plan:reverso-root:northstar-reverso-install-profile-catalog-headroom-convergence",
+      "type": "plan",
+      "title": "northstar sliced plan: reverso-install-profile-catalog-headroom-convergence",
+      "status": "active",
+      "repo_id": "reverso-root",
+      "path": ".ai/handoff/northstar-reverso-install-profile-catalog-headroom-convergence.md",
+      "backlinks": [
+        "issue:reverso-root:reverso-install-profile-catalog-headroom-convergence"
+      ]
+    },
+    {
+      "id": "handoff:reverso-root:northstar-reverso-install-profile-catalog-headroom-convergence",
+      "type": "handoff",
+      "title": "northstar A to B handoff: reverso-install-profile-catalog-headroom-convergence",
+      "status": "active",
+      "repo_id": "reverso-root",
+      "path": ".ai/handoff/northstar-reverso-install-profile-catalog-headroom-convergence.md",
+      "backlinks": [
+        "plan:reverso-root:northstar-reverso-install-profile-catalog-headroom-convergence"
+      ]
+    },
+    {
+      "id": "issue:reverso-root:reverso-install-profile-catalog-headroom-convergence",
+      "type": "issue",
+      "title": "northstar issue: reverso-install-profile-catalog-headroom-convergence",
+      "status": "ready-for-agent",
+      "repo_id": "reverso-root",
+      "path": ".ai/work-intake/reverso-install-profile-catalog-headroom-convergence.md",
+      "backlinks": []
     }
   ],
   "edges": [
@@ -509,6 +540,20 @@
       "relation": "planned-by",
       "created_by": "northstar-reconciler",
       "evidence_path": ".ai/work-intake/kimi-auto-login-k3-runtime-convergence.md"
+    },
+    {
+      "source": "plan:reverso-root:northstar-reverso-install-profile-catalog-headroom-convergence",
+      "target": "handoff:reverso-root:northstar-reverso-install-profile-catalog-headroom-convergence",
+      "relation": "summarized-by",
+      "created_by": "northstar-reconciler",
+      "evidence_path": ".ai/handoff/northstar-reverso-install-profile-catalog-headroom-convergence.md"
+    },
+    {
+      "source": "issue:reverso-root:reverso-install-profile-catalog-headroom-convergence",
+      "target": "plan:reverso-root:northstar-reverso-install-profile-catalog-headroom-convergence",
+      "relation": "planned-by",
+      "created_by": "northstar-reconciler",
+      "evidence_path": ".ai/work-intake/reverso-install-profile-catalog-headroom-convergence.md"
     }
   ],
   "coverage": {

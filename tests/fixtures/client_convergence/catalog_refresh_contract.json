@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "launch_agent": {
+    "label": "com.user.reverso-catalog-refresh",
+    "path": "~/Library/LaunchAgents/com.user.reverso-catalog-refresh.plist",
+    "start_calendar_interval": [
+      {"Hour": 6, "Minute": 0},
+      {"Hour": 18, "Minute": 0}
+    ],
+    "keep_alive": false,
+    "listener": false,
+    "short_lived": true
+  },
+  "paths": {
+    "lock": "~/Library/Application Support/reverso/catalog-refresh.lock",
+    "status": "~/Library/Application Support/reverso/catalog-refresh-status.json",
+    "stdout": "~/Library/Logs/reverso/catalog-refresh.stdout.log",
+    "stderr": "~/Library/Logs/reverso/catalog-refresh.stderr.log"
+  },
+  "permissions": {
+    "state_directory": "0700",
+    "log_directory": "0700",
+    "created_lock": "0600",
+    "created_status": "0600",
+    "created_logs": "0600"
+  },
+  "bounds": {
+    "provider_timeout_seconds": 10,
+    "overall_timeout_seconds": 120,
+    "log_max_bytes": 1048576,
+    "log_rotations": 3,
+    "error_code_limit": 16,
+    "stale_after_hours": 14
+  },
+  "stale_formula": "last_success_at is null or more than 14 hours before observed_at",
+  "stored_stale_semantics": "as-of snapshot at stale_observed_at",
+  "verify_semantics": "recompute current stale without rewriting status",
+  "lock_skip_updates_last_success": false,
+  "status_fields": [
+    "schema_version",
+    "status",
+    "last_attempt_at",
+    "last_success_at",
+    "duration_ms",
+    "exit_code",
+    "stale",
+    "stale_observed_at",
+    "provider_results",
+    "error_codes"
+  ],
+  "status_values": ["never_run", "success", "lock_skipped", "partial_freshness", "failed"],
+  "provider_result_values": ["current", "changed", "stale", "invalid", "skipped"],
+  "error_codes": {"sorted": true, "governed": true, "max_items": 16, "raw_text": false},
+  "uninstall": {
+    "default_removes": ["plist", "bootstrapped_job"],
+    "default_preserves": ["lock", "status", "logs", "rotations"],
+    "purge_flag": "--purge-state",
+    "purge_removes": ["lock", "status", "logs", "rotations"]
+  },
+  "service_topology": {
+    "long_lived_launch_agents": ["com.user.reverso-proxy", "com.user.reverso-daemon"],
+    "scheduled_launch_agents": ["com.user.reverso-catalog-refresh"],
+    "refresh_restarts_services": false
+  }
+}
