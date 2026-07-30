@@ -682,6 +682,31 @@ async def test_get_usage_headroom_returns_aggregate_snapshot(monkeypatch) -> Non
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf"])
+async def test_get_usage_headroom_non_finite_timeout_is_strict_json(
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+) -> None:
+    """Non-finite timeout input cannot leak invalid JSON through the endpoint."""
+    from reverso.proxy.compose import CompositionRoot
+
+    monkeypatch.setenv("REVERSO_HEADROOM_TIMEOUT", value)
+
+    async def _tripwire(scope, receive, send):
+        raise AssertionError("usage route must not reach another ASGI app")
+
+    root = CompositionRoot(
+        gateway=_tripwire,
+        anthropic_app=_tripwire,
+        legacy_app=_tripwire,
+    )
+    body = await _asgi_get_usage(root, path="/usage/headroom")
+
+    assert body["headroom"]["timeout_seconds"] == 2.0
+    json.dumps(body, allow_nan=False)
+
+
+@pytest.mark.asyncio
 async def test_usage_routes_share_exact_headroom_v2_contract(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

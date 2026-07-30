@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import logging
+import math
 import os
 import re
 import threading
@@ -164,6 +165,8 @@ class HeadroomCompressionConfig:
         try:
             timeout_seconds = float(timeout_raw)
         except ValueError:
+            timeout_seconds = _DEFAULT_TIMEOUT_SECONDS
+        if not math.isfinite(timeout_seconds):
             timeout_seconds = _DEFAULT_TIMEOUT_SECONDS
         try:
             model_limit = int(model_limit_raw)

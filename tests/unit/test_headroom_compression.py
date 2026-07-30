@@ -78,6 +78,13 @@ def _usage_contract() -> dict[str, Any]:
     )
 
 
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf"])
+def test_config_rejects_non_finite_timeout_values(value: str) -> None:
+    config = HeadroomCompressionConfig.from_env({"REVERSO_HEADROOM_TIMEOUT": value})
+
+    assert config.timeout_seconds == 2.0
+
+
 def test_usage_metrics_v2_schema_and_reset_contract(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
