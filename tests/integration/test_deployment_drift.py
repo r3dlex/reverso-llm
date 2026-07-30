@@ -26,6 +26,11 @@ COMMIT = "a" * 40
 OLD_COMMIT = "b" * 40
 NON_ANCESTOR_COMMIT = "c" * 40
 UNKNOWN_COMMIT = "d" * 40
+SELECTED_TREE = "e" * 40
+SQUASH_TREE = "f" * 40
+DIFFERENT_TREE = "1" * 40
+RAW_TREE_OBJECT = "2" * 40
+TAG_OBJECT = "3" * 40
 LAUNCHER = "/opt/homebrew/bin/uv"
 PREDECESSOR_LAUNCHER = "/usr/local/bin/uv"
 UNAUTHORIZED_LAUNCHER = "/tmp/unauthorized-launcher"
@@ -36,6 +41,21 @@ class FakeRunner:
         self.dirty = False
         self.head = COMMIT
         self.remote = DEPLOYMENT_REPOSITORY
+        self.commit_trees = {
+            COMMIT: SELECTED_TREE,
+            OLD_COMMIT: SQUASH_TREE,
+            NON_ANCESTOR_COMMIT: DIFFERENT_TREE,
+            RAW_TREE_OBJECT: SQUASH_TREE,
+        }
+        self.commit_objects = {
+            COMMIT: COMMIT,
+            OLD_COMMIT: OLD_COMMIT,
+            NON_ANCESTOR_COMMIT: NON_ANCESTOR_COMMIT,
+            TAG_OBJECT: OLD_COMMIT,
+        }
+        self.ancestors = {(OLD_COMMIT, COMMIT), (TAG_OBJECT, COMMIT)}
+        self.merge_base_failures: dict[tuple[str, str], int | OSError] = {}
+        self.ancestry_trees = {COMMIT: [SELECTED_TREE]}
         self.running_environment_commit = COMMIT
         self.running_environment_checkout = str(CANONICAL_CHECKOUT)
         self.running_kimi_code_home: str | None = None
@@ -69,13 +89,41 @@ class FakeRunner:
         if command[:2] == ("git", "status"):
             return " M tracked.py\n" if self.dirty else ""
         if command[:2] == ("git", "rev-parse"):
-            return self.head + "\n"
+            revision = command[2]
+            if revision == "HEAD":
+                return self.head + "\n"
+            if revision.endswith("^{commit}"):
+                commit = revision.removesuffix("^{commit}")
+                if commit in self.commit_objects:
+                    return self.commit_objects[commit] + "\n"
+                cause = subprocess.CalledProcessError(128, command)
+                raise DeploymentDriftError("unknown commit") from cause
+            if revision.endswith("^{tree}"):
+                commit = revision.removesuffix("^{tree}")
+                try:
+                    return self.commit_trees[commit] + "\n"
+                except KeyError as exc:
+                    raise DeploymentDriftError("unknown revision") from exc
+            raise AssertionError(f"unexpected revision: {revision}")
         if command[:3] == ("git", "remote", "get-url"):
             return self.remote + "\n"
         if command[:3] == ("git", "merge-base", "--is-ancestor"):
-            if command[3:] == (OLD_COMMIT, COMMIT):
+            pair = command[3:]
+            if pair in self.merge_base_failures:
+                failure = self.merge_base_failures[pair]
+                if isinstance(failure, OSError):
+                    raise DeploymentDriftError(
+                        "unable to determine ancestry"
+                    ) from failure
+                returncode = failure
+            elif pair in self.ancestors:
                 return ""
-            raise DeploymentDriftError("commit is not an ancestor")
+            else:
+                returncode = 1
+            cause = subprocess.CalledProcessError(returncode, command)
+            raise DeploymentDriftError("unable to determine ancestry") from cause
+        if command[:3] == ("git", "log", "--format=%T"):
+            return "\n".join(self.ancestry_trees.get(command[3], ()))
         if command[:2] == ("launchctl", "print"):
             label = command[-1].rsplit("/", 1)[-1]
             if label == deployment_drift.SCHEDULED_LAUNCH_AGENT_LABEL:
@@ -460,6 +508,97 @@ def test_pre_install_allows_a_converged_known_predecessor_without_live_discovery
     assert report["provenance"] == "valid-predecessor"
 
 
+def test_pre_install_allows_squashed_predecessor_tree_in_selected_child_ancestry(
+    tmp_path: Path,
+) -> None:
+    env, runner = _env(tmp_path)
+    _prepare_predecessor(env, runner)
+    runner.ancestors.remove((OLD_COMMIT, COMMIT))
+    runner.ancestry_trees[COMMIT] = [SELECTED_TREE, SQUASH_TREE]
+
+    report = check_deployment_drift("pre-install", env, selected_commit=COMMIT)
+
+    assert report["provenance"] == "valid-squash-predecessor"
+
+
+def test_pre_install_allows_squashed_predecessor_tree_at_selected_commit(
+    tmp_path: Path,
+) -> None:
+    env, runner = _env(tmp_path)
+    _prepare_predecessor(env, runner)
+    runner.ancestors.remove((OLD_COMMIT, COMMIT))
+    runner.commit_trees[OLD_COMMIT] = SELECTED_TREE
+
+    report = check_deployment_drift("pre-install", env, selected_commit=COMMIT)
+
+    assert report["provenance"] == "valid-squash-predecessor"
+
+
+def test_pre_install_rejects_raw_tree_object_as_squashed_predecessor(
+    tmp_path: Path,
+) -> None:
+    env, runner = _env(tmp_path)
+    _prepare_predecessor(env, runner, RAW_TREE_OBJECT)
+    runner.ancestry_trees[COMMIT] = [SELECTED_TREE, SQUASH_TREE]
+
+    with pytest.raises(DeploymentDriftError, match="known ancestor"):
+        check_deployment_drift("pre-install", env, selected_commit=COMMIT)
+
+    assert (
+        "git",
+        "rev-parse",
+        f"{RAW_TREE_OBJECT}^{{commit}}",
+    ) in runner.commands
+
+
+def test_pre_install_rejects_tag_object_on_primary_ancestor_path(
+    tmp_path: Path,
+) -> None:
+    env, runner = _env(tmp_path)
+    _prepare_predecessor(env, runner, TAG_OBJECT)
+
+    with pytest.raises(DeploymentDriftError, match="known ancestor"):
+        check_deployment_drift("pre-install", env, selected_commit=COMMIT)
+
+    assert ("git", "rev-parse", f"{TAG_OBJECT}^{{commit}}") in runner.commands
+    assert (
+        "git",
+        "merge-base",
+        "--is-ancestor",
+        TAG_OBJECT,
+        COMMIT,
+    ) not in runner.commands
+
+
+@pytest.mark.parametrize("failure", (128, OSError("git is unavailable")))
+def test_pre_install_does_not_treat_fatal_merge_base_error_as_non_ancestor(
+    tmp_path: Path,
+    failure: int | OSError,
+) -> None:
+    env, runner = _env(tmp_path)
+    _prepare_predecessor(env, runner)
+    runner.ancestors.remove((OLD_COMMIT, COMMIT))
+    runner.merge_base_failures[(OLD_COMMIT, COMMIT)] = failure
+    runner.ancestry_trees[COMMIT] = [SELECTED_TREE, SQUASH_TREE]
+
+    with pytest.raises(
+        DeploymentDriftError,
+        match="determine deployment predecessor ancestry",
+    ) as exc_info:
+        check_deployment_drift("pre-install", env, selected_commit=COMMIT)
+
+    assert ("git", "rev-parse", f"{OLD_COMMIT}^{{commit}}") in runner.commands
+    assert ("git", "rev-parse", f"{OLD_COMMIT}^{{tree}}") not in runner.commands
+    runner_error = exc_info.value.__cause__
+    assert isinstance(runner_error, DeploymentDriftError)
+    if isinstance(failure, int):
+        command_error = runner_error.__cause__
+        assert isinstance(command_error, subprocess.CalledProcessError)
+        assert command_error.returncode == failure
+    else:
+        assert runner_error.__cause__ is failure
+
+
 def test_pre_install_validates_predecessor_with_its_recorded_launcher(
     tmp_path: Path,
 ) -> None:
@@ -531,6 +670,45 @@ def test_pre_install_allows_one_way_schema_one_upgrade(tmp_path: Path) -> None:
         check_deployment_drift("pre-restart", env, selected_commit=COMMIT)
 
 
+@pytest.mark.parametrize("recorded_object", (RAW_TREE_OBJECT, TAG_OBJECT))
+def test_pre_install_schema_one_rejects_non_commit_predecessor_before_merge_base(
+    tmp_path: Path,
+    recorded_object: str,
+) -> None:
+    env, runner = _env(tmp_path)
+    legacy_record = {
+        "schema_version": 1,
+        "repository": DEPLOYMENT_REPOSITORY,
+        "canonical_checkout": str(env.canonical_checkout),
+        "commit": recorded_object,
+        "installer": INSTALLER_IDENTITY,
+        "launcher": LAUNCHER,
+        "installed_at_utc": "2026-07-24T00:00:00Z",
+    }
+    env.provenance_path.parent.mkdir(parents=True)
+    env.provenance_path.write_text(json.dumps(legacy_record), encoding="utf-8")
+    _write_plists(
+        env.home,
+        checkout=env.canonical_checkout,
+        commit=recorded_object,
+        include_kimi_home=False,
+    )
+    runner.running_environment_commit = recorded_object
+    runner.running_kimi_code_home = None
+
+    with pytest.raises(DeploymentDriftError, match="known ancestor"):
+        check_deployment_drift("pre-install", env, selected_commit=COMMIT)
+
+    assert ("git", "rev-parse", f"{recorded_object}^{{commit}}") in runner.commands
+    assert (
+        "git",
+        "merge-base",
+        "--is-ancestor",
+        recorded_object,
+        COMMIT,
+    ) not in runner.commands
+
+
 @pytest.mark.parametrize("authority", ("rendered", "running"))
 def test_pre_install_schema_one_rejects_legacy_kimi_home(
     tmp_path: Path,
@@ -597,6 +775,18 @@ def test_pre_install_rejects_unauthorized_predecessor_transition(
 
     with pytest.raises(DeploymentDriftError, match=message):
         check_deployment_drift("pre-install", env, selected_commit=COMMIT)
+
+    if mutation in {"non-ancestor", "unknown-commit"}:
+        assert (
+            "git",
+            "rev-parse",
+            f"{predecessor}^{{commit}}",
+        ) in runner.commands
+        tree_command = ("git", "rev-parse", f"{predecessor}^{{tree}}")
+        log_command = ("git", "log", "--format=%T", COMMIT)
+        expected_tree_lookup = mutation == "non-ancestor"
+        assert (tree_command in runner.commands) is expected_tree_lookup
+        assert (log_command in runner.commands) is expected_tree_lookup
 
 
 @pytest.mark.parametrize(
