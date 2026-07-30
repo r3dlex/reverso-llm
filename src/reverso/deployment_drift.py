@@ -352,6 +352,18 @@ def _validate_provenance(
         _validate_launch_agents(env, recorded_commit, recorded_launcher)
         _validate_running_agents(env, recorded_commit, recorded_launcher)
         try:
+            resolved_recorded_commit = _git(
+                env, "rev-parse", f"{recorded_commit}^{{commit}}"
+            )
+        except DeploymentDriftError as exc:
+            raise DeploymentDriftError(
+                "deployment predecessor is not a known ancestor of selected commit"
+            ) from exc
+        if resolved_recorded_commit != recorded_commit:
+            raise DeploymentDriftError(
+                "deployment predecessor is not a known ancestor of selected commit"
+            )
+        try:
             env.command_runner(
                 (
                     "git",
@@ -363,9 +375,28 @@ def _validate_provenance(
                 env.repo_root,
             )
         except DeploymentDriftError as exc:
-            raise DeploymentDriftError(
-                "deployment predecessor is not a known ancestor of selected commit"
-            ) from exc
+            cause = exc.__cause__
+            if not (
+                isinstance(cause, subprocess.CalledProcessError)
+                and cause.returncode == 1
+            ):
+                raise DeploymentDriftError(
+                    "unable to determine deployment predecessor ancestry"
+                ) from exc
+            try:
+                recorded_tree = _git(env, "rev-parse", f"{recorded_commit}^{{tree}}")
+                selected_ancestry_trees = _git(
+                    env, "log", "--format=%T", selected_commit
+                ).splitlines()
+            except DeploymentDriftError as fallback_exc:
+                raise DeploymentDriftError(
+                    "deployment predecessor is not a known ancestor of selected commit"
+                ) from fallback_exc
+            if recorded_tree not in selected_ancestry_trees:
+                raise DeploymentDriftError(
+                    "deployment predecessor is not a known ancestor of selected commit"
+                ) from exc
+            return "valid-squash-predecessor"
         return "valid-predecessor"
     if recorded_launcher != str(env.launcher):
         raise DeploymentDriftError(
@@ -427,6 +458,18 @@ def _validate_schema_one_predecessor(
         recorded_launcher,
         require_kimi_home=False,
     )
+    try:
+        resolved_recorded_commit = _git(
+            env, "rev-parse", f"{recorded_commit}^{{commit}}"
+        )
+    except DeploymentDriftError as exc:
+        raise DeploymentDriftError(
+            "legacy deployment predecessor is not a known ancestor of selected commit"
+        ) from exc
+    if resolved_recorded_commit != recorded_commit:
+        raise DeploymentDriftError(
+            "legacy deployment predecessor is not a known ancestor of selected commit"
+        )
     try:
         env.command_runner(
             (
