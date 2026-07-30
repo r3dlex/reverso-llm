@@ -35,6 +35,7 @@ The response body is JSON with `schema_version: 1`.
   "rate_limits": null,
   "updated_at": "2026-01-01T00:00:00+00:00",
   "headroom": {
+    "schema_version": 2,
     "enabled": true,
     "profile": "coding",
     "requests_seen": 0,
@@ -44,9 +45,56 @@ The response body is JSON with `schema_version: 1`.
     "tokens_saved": 0,
     "compression_ratio": 0.0,
     "fail_open_count": 0,
-    "failure_reasons": {},
-    "error_types": {},
-    "updated_at": null
+    "failure_reasons": {
+      "worker_busy": 0,
+      "timeout": 0,
+      "exception": 0,
+      "inflation_guard": 0,
+      "retrieval_marker": 0,
+      "unsafe_output": 0,
+      "other": 0
+    },
+    "error_types": {
+      "timeout": 0,
+      "worker_busy": 0,
+      "dependency_exception": 0,
+      "inflation_guard": 0,
+      "retrieval_marker": 0,
+      "unsafe_output": 0,
+      "other": 0
+    },
+    "updated_at": null,
+    "process_started_at": "2026-01-01T00:00:00+00:00",
+    "measurement_started_at": "2026-01-01T00:00:00+00:00",
+    "requests_passed_through": 0,
+    "compression_success_rate": 0.0,
+    "average_tokens_saved": 0.0,
+    "outcome_counts": {
+      "compressed": 0,
+      "passed_through": 0,
+      "fail_open": 0,
+      "other": 0
+    },
+    "provider_counts": {
+      "claude": 0,
+      "copilot": 0,
+      "auggie": 0,
+      "deepseek": 0,
+      "kimi": 0,
+      "codex-direct": 0,
+      "openai-pass-through": 0,
+      "other": 0
+    },
+    "surface_counts": {
+      "responses": 0,
+      "anthropic_messages": 0,
+      "other": 0
+    },
+    "timeout_seconds": 2.0,
+    "model_limit": 200000,
+    "last_success_at": null,
+    "last_failure_at": null,
+    "reset_reason": "process_start"
   }
 }
 ```
@@ -78,6 +126,7 @@ compression metrics. The same aggregate is available directly at
   "schema_version": 1,
   "provider": "headroom",
   "headroom": {
+    "schema_version": 2,
     "enabled": true,
     "profile": "coding",
     "requests_seen": 0,
@@ -87,9 +136,56 @@ compression metrics. The same aggregate is available directly at
     "tokens_saved": 0,
     "compression_ratio": 0.0,
     "fail_open_count": 0,
-    "failure_reasons": {},
-    "error_types": {},
-    "updated_at": null
+    "failure_reasons": {
+      "worker_busy": 0,
+      "timeout": 0,
+      "exception": 0,
+      "inflation_guard": 0,
+      "retrieval_marker": 0,
+      "unsafe_output": 0,
+      "other": 0
+    },
+    "error_types": {
+      "timeout": 0,
+      "worker_busy": 0,
+      "dependency_exception": 0,
+      "inflation_guard": 0,
+      "retrieval_marker": 0,
+      "unsafe_output": 0,
+      "other": 0
+    },
+    "updated_at": null,
+    "process_started_at": "2026-01-01T00:00:00+00:00",
+    "measurement_started_at": "2026-01-01T00:00:00+00:00",
+    "requests_passed_through": 0,
+    "compression_success_rate": 0.0,
+    "average_tokens_saved": 0.0,
+    "outcome_counts": {
+      "compressed": 0,
+      "passed_through": 0,
+      "fail_open": 0,
+      "other": 0
+    },
+    "provider_counts": {
+      "claude": 0,
+      "copilot": 0,
+      "auggie": 0,
+      "deepseek": 0,
+      "kimi": 0,
+      "codex-direct": 0,
+      "openai-pass-through": 0,
+      "other": 0
+    },
+    "surface_counts": {
+      "responses": 0,
+      "anthropic_messages": 0,
+      "other": 0
+    },
+    "timeout_seconds": 2.0,
+    "model_limit": 200000,
+    "last_success_at": null,
+    "last_failure_at": null,
+    "reset_reason": "process_start"
   }
 }
 ```
@@ -99,6 +195,33 @@ content, compressed text, response text, or per-request identifiers. They reset 
 gateway process restart. `enabled` and `profile` reflect the current environment
 configuration; setting `REVERSO_HEADROOM_ENABLED=0` disables compression and is
 reported by this surface after restart.
+
+The Headroom object is the additive schema-version-2 authority. All counters are
+nonnegative integers. Ratios are finite numbers from zero through one.
+`compression_ratio` is `tokens_saved / tokens_before`, or zero when
+`tokens_before` is zero. `compression_success_rate` is
+`requests_compressed / requests_seen`, or zero when `requests_seen` is zero.
+`average_tokens_saved` is `tokens_saved / requests_compressed`, or zero when
+`requests_compressed` is zero. `requests_passed_through` is
+`max(requests_seen - requests_compressed - fail_open_count, 0)`.
+
+The bounded map keys are:
+
+- `outcome_counts`: `compressed`, `passed_through`, `fail_open`, `other`
+- `failure_reasons`: `worker_busy`, `timeout`, `exception`,
+  `inflation_guard`, `retrieval_marker`, `unsafe_output`, `other`
+- `error_types`: `timeout`, `worker_busy`, `dependency_exception`,
+  `inflation_guard`, `retrieval_marker`, `unsafe_output`, `other`
+- `provider_counts`: `claude`, `copilot`, `auggie`, `deepseek`, `kimi`,
+  `codex-direct`, `openai-pass-through`, `other`
+- `surface_counts`: `responses`, `anthropic_messages`, `other`
+
+Unknown dimensions accumulate only under `other`. Timestamp fields are RFC3339
+UTC or null. `reset_reason` is `process_start`, except an explicit test reset
+uses `manual_test_reset`. The embedded default profile is `coding`; an explicit
+environment override remains visible on the route. Embedded metrics do not
+invoke RTK, read standalone Headroom savings files, or persist across gateway
+process restarts.
 
 ## Invariants
 

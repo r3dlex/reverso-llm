@@ -150,6 +150,8 @@ launchctl unload "${SCHEDULED_PLIST}" 2>/dev/null || true
 launchctl load "${SCHEDULED_PLIST}"
 echo "Loaded:  ${SCHEDULED_AGENT}"
 
+run_deployment_drift --phase post-load
+
 if ! "${UV_BIN}" run --project "${REVERSO_DIR}" reverso-catalog-refresh; then
     echo "WARNING: initial catalog refresh did not complete successfully" >&2
 fi
@@ -160,3 +162,14 @@ echo "Logs: ${LOG_DIR}"
 echo ""
 echo "To check status:"
 echo "  launchctl list | grep reverso"
+echo ""
+echo "Run the canonical convergence and acceptance sequence:"
+echo "  uv run python scripts/check-deployment-drift.py --phase pre-sync"
+echo "  uv run reverso-client-sync dry-run --json"
+echo "  uv run reverso-client-sync apply --json"
+echo "  uv run reverso-client-sync apply --json"
+echo "  uv run reverso-client-sync refresh --json"
+echo "  uv run reverso-client-sync verify --json"
+echo "  ./scripts/smoke.sh"
+echo "  ./scripts/convergence-acceptance.sh"
+echo "  uv run python scripts/check-deployment-drift.py --phase acceptance"

@@ -78,6 +78,8 @@ def test_readme_preserves_codex_selector_invariants() -> None:
         'top-level `model = "gpt-5.5"` only when the user has no top-level `model`',
         "`copilot/<model>`, `auggie/<model>`, and `agy/<model>`",
         "MiniMax, DeepSeek, GPT from Codex, and Claude from Claude Code are not prefixed",
+        "The generated provider profile default matches its catalog slug",
+        "the gateway removes the matching prefix before adapter dispatch",
     ]
     for needle in expected:
         assert needle in selector_rules

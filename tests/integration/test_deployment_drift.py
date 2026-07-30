@@ -49,8 +49,23 @@ class FakeRunner:
             "com.user.reverso-daemon": "reverso-daemon",
         }
         self.running_extra_arguments: dict[str, list[str]] = {}
+        self.commands: list[tuple[str, ...]] = []
+        self.scheduled_label = deployment_drift.SCHEDULED_LAUNCH_AGENT_LABEL
+        self.scheduled_program = LAUNCHER
+        self.scheduled_arguments: list[str] | None = None
+        self.scheduled_project: str | None = None
+        self.scheduled_working_directory: str | None = None
+        self.scheduled_environment_commit = COMMIT
+        self.scheduled_environment_checkout: str | None = None
+        self.scheduled_properties = ""
+        self.scheduled_top_level_key: str | None = None
+        self.scheduled_intervals = [
+            {"Hour": 6, "Minute": 0},
+            {"Hour": 18, "Minute": 0},
+        ]
 
     def __call__(self, command: tuple[str, ...], cwd: Path | None) -> str:
+        self.commands.append(command)
         if command[:2] == ("git", "status"):
             return " M tracked.py\n" if self.dirty else ""
         if command[:2] == ("git", "rev-parse"):
@@ -63,6 +78,56 @@ class FakeRunner:
             raise DeploymentDriftError("commit is not an ancestor")
         if command[:2] == ("launchctl", "print"):
             label = command[-1].rsplit("/", 1)[-1]
+            if label == deployment_drift.SCHEDULED_LAUNCH_AGENT_LABEL:
+                arguments = self.scheduled_arguments or [
+                    LAUNCHER,
+                    "run",
+                    "--project",
+                    self.scheduled_project or self.running_environment_checkout,
+                    deployment_drift.SCHEDULED_LAUNCH_AGENT_EXECUTABLE,
+                ]
+                rendered_arguments = "\n".join(
+                    f"        {value}" for value in arguments
+                )
+                rendered_intervals = "\n".join(
+                    (
+                        f"        trigger-{index} => {{\n"
+                        "            keepalive = 0\n"
+                        "            stream = com.apple.launchd.calendarinterval\n"
+                        "            descriptor = {\n"
+                        f'                "Hour" => {interval["Hour"]}\n'
+                        f'                "Minute" => {interval["Minute"]}\n'
+                        "            }\n"
+                        "        }"
+                    )
+                    for index, interval in enumerate(self.scheduled_intervals)
+                )
+                top_level_key = (
+                    f"    {self.scheduled_top_level_key} = true\n"
+                    if self.scheduled_top_level_key is not None
+                    else ""
+                )
+                return (
+                    f"gui/501/{self.scheduled_label} = {{\n"
+                    f"    program = {self.scheduled_program}\n"
+                    "    arguments = {\n"
+                    f"{rendered_arguments}\n"
+                    "    }\n"
+                    "    working directory = "
+                    f"{self.scheduled_working_directory or self.running_working_directory}\n"
+                    "    environment = {\n"
+                    "        REVERSO_DEPLOYMENT_COMMIT => "
+                    f"{self.scheduled_environment_commit}\n"
+                    "        REVERSO_PROJECT_DIR => "
+                    f"{self.scheduled_environment_checkout or self.running_environment_checkout}\n"
+                    "    }\n"
+                    f"{top_level_key}"
+                    "    event triggers = {\n"
+                    f"{rendered_intervals}\n"
+                    "    }\n"
+                    f"    properties = {self.scheduled_properties}\n"
+                    "}\n"
+                )
             arguments = [
                 self.running_argument_zero,
                 "run",
@@ -200,6 +265,75 @@ def _write_generated_kimi(home: Path) -> None:
     )
 
 
+def _headroom_usage_payload() -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "provider": "headroom",
+        "headroom": {
+            "schema_version": 2,
+            "enabled": True,
+            "profile": "coding",
+            "requests_seen": 0,
+            "requests_compressed": 0,
+            "tokens_before": 0,
+            "tokens_after": 0,
+            "tokens_saved": 0,
+            "compression_ratio": 0.0,
+            "fail_open_count": 0,
+            "failure_reasons": {
+                "worker_busy": 0,
+                "timeout": 0,
+                "exception": 0,
+                "inflation_guard": 0,
+                "retrieval_marker": 0,
+                "unsafe_output": 0,
+                "other": 0,
+            },
+            "error_types": {
+                "timeout": 0,
+                "worker_busy": 0,
+                "dependency_exception": 0,
+                "inflation_guard": 0,
+                "retrieval_marker": 0,
+                "unsafe_output": 0,
+                "other": 0,
+            },
+            "updated_at": None,
+            "process_started_at": "2026-07-30T10:00:00+00:00",
+            "measurement_started_at": "2026-07-30T10:00:00+00:00",
+            "requests_passed_through": 0,
+            "compression_success_rate": 0.0,
+            "average_tokens_saved": 0.0,
+            "outcome_counts": {
+                "compressed": 0,
+                "passed_through": 0,
+                "fail_open": 0,
+                "other": 0,
+            },
+            "provider_counts": {
+                "claude": 0,
+                "copilot": 0,
+                "auggie": 0,
+                "deepseek": 0,
+                "kimi": 0,
+                "codex-direct": 0,
+                "openai-pass-through": 0,
+                "other": 0,
+            },
+            "surface_counts": {
+                "responses": 0,
+                "anthropic_messages": 0,
+                "other": 0,
+            },
+            "timeout_seconds": 2.0,
+            "model_limit": 120000,
+            "last_success_at": None,
+            "last_failure_at": None,
+            "reset_reason": "process_start",
+        },
+    }
+
+
 def _env(tmp_path: Path) -> tuple[DriftEnvironment, FakeRunner]:
     home = tmp_path / "home"
     checkout = tmp_path / "canonical"
@@ -208,15 +342,22 @@ def _env(tmp_path: Path) -> tuple[DriftEnvironment, FakeRunner]:
     runner.running_environment_checkout = str(checkout)
     runner.running_project = str(checkout)
     runner.running_working_directory = str(checkout)
+    runner.scheduled_environment_checkout = str(checkout)
+    runner.scheduled_project = str(checkout)
+    runner.scheduled_working_directory = str(checkout)
     env = DriftEnvironment(
         repo_root=checkout,
         home=home,
         canonical_checkout=checkout,
         command_runner=runner,
-        json_fetcher=lambda _url: {
-            "data": [{"id": "kimi-k3", "owned_by": "moonshot"}],
-            "model_discovery_source": "live",
-        },
+        json_fetcher=lambda url: (
+            _headroom_usage_payload()
+            if url == deployment_drift.HEADROOM_USAGE_URL
+            else {
+                "data": [{"id": "kimi-k3", "owned_by": "moonshot"}],
+                "model_discovery_source": "live",
+            }
+        ),
         uid=501,
         launcher=Path(LAUNCHER),
     )
@@ -812,6 +953,104 @@ def test_post_restart_passes_without_live_discovery(tmp_path: Path) -> None:
         check_deployment_drift("post-restart", env, selected_commit=COMMIT)["status"]
         == "passed"
     )
+    assert not any(
+        command[-1].endswith(deployment_drift.SCHEDULED_LAUNCH_AGENT_LABEL)
+        for command in runner.commands
+        if command[:2] == ("launchctl", "print")
+    )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    (
+        ("label", "wrong label"),
+        ("program", "unauthorized program"),
+        ("arguments", "ProgramArguments"),
+        ("project-argument", "ProgramArguments"),
+        ("working-directory", "WorkingDirectory"),
+        ("project", "running checkout"),
+        ("commit", "running revision"),
+        ("keepalive-property", "KeepAlive"),
+        ("runatload-property", "RunAtLoad"),
+        ("listener", "Sockets"),
+        ("log-path", "StandardOutPath"),
+        ("missing-schedule", "schedule"),
+        ("extra-schedule", "schedule"),
+        ("wrong-schedule", "schedule"),
+    ),
+)
+def test_post_load_rejects_running_scheduled_launchagent_drift(
+    tmp_path: Path,
+    mutation: str,
+    message: str,
+) -> None:
+    env, runner = _env(tmp_path)
+    _bootstrap(env)
+    if mutation == "label":
+        runner.scheduled_label = "com.user.wrong"
+    elif mutation == "program":
+        runner.scheduled_program = UNAUTHORIZED_LAUNCHER
+    elif mutation == "arguments":
+        runner.scheduled_arguments = [
+            LAUNCHER,
+            "run",
+            "--project",
+            str(env.canonical_checkout),
+            "reverso-proxy",
+        ]
+    elif mutation == "project-argument":
+        runner.scheduled_project = "/stale/reverso"
+    elif mutation == "working-directory":
+        runner.scheduled_working_directory = "/stale/reverso"
+    elif mutation == "project":
+        runner.scheduled_environment_checkout = "/stale/reverso"
+    elif mutation == "commit":
+        runner.scheduled_environment_commit = OLD_COMMIT
+    elif mutation == "keepalive-property":
+        runner.scheduled_properties = "keepalive"
+    elif mutation == "runatload-property":
+        runner.scheduled_properties = "runatload"
+    elif mutation == "listener":
+        runner.scheduled_top_level_key = "sockets"
+    elif mutation == "log-path":
+        runner.scheduled_top_level_key = "stdout path"
+    elif mutation == "missing-schedule":
+        runner.scheduled_intervals.pop()
+    elif mutation == "extra-schedule":
+        runner.scheduled_intervals.append({"Hour": 23, "Minute": 0})
+    else:
+        runner.scheduled_intervals[0] = {"Hour": 7, "Minute": 0}
+
+    with pytest.raises(DeploymentDriftError, match=message):
+        check_deployment_drift("post-load", env, selected_commit=COMMIT)
+
+
+def test_post_load_accepts_running_scheduled_launchagent_readback(
+    tmp_path: Path,
+) -> None:
+    env, runner = _env(tmp_path)
+    _bootstrap(env)
+
+    report = check_deployment_drift("post-load", env, selected_commit=COMMIT)
+
+    assert report["status"] == "passed"
+    assert (
+        "launchctl",
+        "print",
+        f"gui/{env.uid}/{deployment_drift.SCHEDULED_LAUNCH_AGENT_LABEL}",
+    ) in runner.commands
+
+
+def test_post_load_accepts_reversed_running_calendar_trigger_order(
+    tmp_path: Path,
+) -> None:
+    env, runner = _env(tmp_path)
+    _bootstrap(env)
+    runner.scheduled_intervals.reverse()
+
+    report = check_deployment_drift("post-load", env, selected_commit=COMMIT)
+
+    assert report["status"] == "passed"
 
 
 @pytest.mark.parametrize("value", (None, "/stale/kimi-home"))
@@ -897,6 +1136,37 @@ def test_pre_sync_rejects_each_runtime_mismatch(
 
 
 @pytest.mark.parametrize(
+    ("failure", "message"),
+    (
+        (OSError("unavailable"), "live Kimi discovery is unavailable or malformed"),
+        (
+            json.JSONDecodeError("malformed", "{", 0),
+            "live Kimi discovery is unavailable or malformed",
+        ),
+    ),
+)
+def test_pre_sync_reports_kimi_fetch_failures_with_kimi_authority(
+    tmp_path: Path,
+    failure: Exception,
+    message: str,
+) -> None:
+    env, runner = _env(tmp_path)
+    _bootstrap(env)
+    env = DriftEnvironment(
+        repo_root=env.repo_root,
+        home=env.home,
+        canonical_checkout=env.canonical_checkout,
+        command_runner=runner,
+        json_fetcher=lambda _url: (_ for _ in ()).throw(failure),
+        uid=env.uid,
+        launcher=env.launcher,
+    )
+
+    with pytest.raises(DeploymentDriftError, match=message):
+        check_deployment_drift("pre-sync", env, selected_commit=COMMIT)
+
+
+@pytest.mark.parametrize(
     ("mutation", "message"),
     (
         ("profile-model", "profile model"),
@@ -941,6 +1211,175 @@ def test_acceptance_rejects_each_generated_metadata_mismatch(
         check_deployment_drift("acceptance", env, selected_commit=COMMIT)
 
 
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    (
+        ("outer-schema", "outer schema"),
+        ("provider", "provider"),
+        ("inner-schema", "inner schema"),
+        ("profile", "profile"),
+        ("extra-field", "exact fields"),
+        ("sensitive-field", "sensitive field"),
+    ),
+)
+def test_acceptance_rejects_each_live_headroom_mismatch(
+    tmp_path: Path, mutation: str, message: str
+) -> None:
+    env, runner = _env(tmp_path)
+    _bootstrap(env)
+    _write_generated_kimi(env.home)
+    payload = _headroom_usage_payload()
+    if mutation == "outer-schema":
+        payload["schema_version"] = 2
+    elif mutation == "provider":
+        payload["provider"] = "standalone"
+    elif mutation == "inner-schema":
+        payload["headroom"]["schema_version"] = 1
+    elif mutation == "profile":
+        payload["headroom"]["profile"] = "generic"
+    elif mutation == "extra-field":
+        payload["headroom"]["unexpected"] = True
+    else:
+        payload["headroom"]["prompt"] = "must not be exposed"
+    env = DriftEnvironment(
+        repo_root=env.repo_root,
+        home=env.home,
+        canonical_checkout=env.canonical_checkout,
+        command_runner=runner,
+        json_fetcher=lambda url: (
+            payload
+            if url == deployment_drift.HEADROOM_USAGE_URL
+            else {
+                "data": [{"id": "kimi-k3"}],
+                "model_discovery_source": "live",
+            }
+        ),
+        uid=env.uid,
+        launcher=env.launcher,
+    )
+
+    with pytest.raises(DeploymentDriftError, match=message):
+        check_deployment_drift("acceptance", env, selected_commit=COMMIT)
+
+
+@pytest.mark.parametrize(
+    ("failure", "message"),
+    (
+        (OSError("unavailable"), "live Headroom usage is unavailable or malformed"),
+        (
+            json.JSONDecodeError("malformed", "{", 0),
+            "live Headroom usage is unavailable or malformed",
+        ),
+    ),
+)
+def test_acceptance_reports_headroom_fetch_failures_with_headroom_authority(
+    tmp_path: Path,
+    failure: Exception,
+    message: str,
+) -> None:
+    env, runner = _env(tmp_path)
+    _bootstrap(env)
+    _write_generated_kimi(env.home)
+
+    def fetch(url: str) -> Any:
+        if url == deployment_drift.KIMI_MODELS_URL:
+            return {
+                "data": [{"id": "kimi-k3"}],
+                "model_discovery_source": "live",
+            }
+        raise failure
+
+    env = DriftEnvironment(
+        repo_root=env.repo_root,
+        home=env.home,
+        canonical_checkout=env.canonical_checkout,
+        command_runner=runner,
+        json_fetcher=fetch,
+        uid=env.uid,
+        launcher=env.launcher,
+    )
+
+    with pytest.raises(DeploymentDriftError, match=message):
+        check_deployment_drift("acceptance", env, selected_commit=COMMIT)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    (
+        ("enabled", 1, "enabled"),
+        ("requests_seen", -1, "requests_seen"),
+        ("requests_compressed", True, "requests_compressed"),
+        ("compression_ratio", float("nan"), "compression_ratio"),
+        ("compression_success_rate", 2.0, "compression_success_rate"),
+        ("average_tokens_saved", float("inf"), "average_tokens_saved"),
+        ("timeout_seconds", 0.0, "timeout_seconds"),
+        ("model_limit", False, "model_limit"),
+        ("updated_at", "2026-07-30T10:00:00+02:00", "updated_at"),
+        ("reset_reason", "manual", "reset_reason"),
+    ),
+)
+def test_live_headroom_validator_rejects_invalid_scalar_contract(
+    field: str, value: Any, message: str
+) -> None:
+    payload = _headroom_usage_payload()
+    payload["headroom"][field] = value
+
+    with pytest.raises(DeploymentDriftError, match=message):
+        deployment_drift.validate_headroom_usage_payload(payload)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("compression_ratio", 0.1),
+        ("compression_success_rate", 0.1),
+        ("average_tokens_saved", 1.0),
+        ("requests_passed_through", 1),
+    ),
+)
+def test_live_headroom_validator_rejects_formula_drift(
+    field: str, value: float
+) -> None:
+    payload = _headroom_usage_payload()
+    payload["headroom"][field] = value
+
+    with pytest.raises(DeploymentDriftError, match="governed formula"):
+        deployment_drift.validate_headroom_usage_payload(payload)
+
+
+@pytest.mark.parametrize(
+    ("configured", "expected"),
+    (
+        (None, "coding"),
+        ("", "coding"),
+        ("   ", "coding"),
+        ("agent-90", "agent-90"),
+    ),
+)
+def test_live_headroom_validator_uses_normalized_configured_profile(
+    monkeypatch: pytest.MonkeyPatch,
+    configured: str | None,
+    expected: str,
+) -> None:
+    if configured is None:
+        monkeypatch.delenv("REVERSO_HEADROOM_PROFILE", raising=False)
+    else:
+        monkeypatch.setenv("REVERSO_HEADROOM_PROFILE", configured)
+    payload = _headroom_usage_payload()
+    payload["headroom"]["profile"] = expected
+
+    deployment_drift.validate_headroom_usage_payload(payload)
+
+
+def test_live_headroom_validator_rejects_profile_other_than_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("REVERSO_HEADROOM_PROFILE", "agent-90")
+
+    with pytest.raises(DeploymentDriftError, match="agent-90"):
+        deployment_drift.validate_headroom_usage_payload(_headroom_usage_payload())
+
+
 def test_all_phases_pass_when_authorities_converge(tmp_path: Path) -> None:
     env, _ = _env(tmp_path)
     assert (
@@ -955,6 +1394,10 @@ def test_all_phases_pass_when_authorities_converge(tmp_path: Path) -> None:
     )
     assert (
         check_deployment_drift("post-restart", env, selected_commit=COMMIT)["status"]
+        == "passed"
+    )
+    assert (
+        check_deployment_drift("post-load", env, selected_commit=COMMIT)["status"]
         == "passed"
     )
     assert (
@@ -976,9 +1419,15 @@ def test_installer_orders_all_drift_gates_around_launchctl() -> None:
     pre_restart = script.index("--phase pre-restart")
     launchctl = script.index("launchctl unload")
     post_restart = script.index("--phase post-restart")
+    scheduled_load = script.index('launchctl load "${SCHEDULED_PLIST}"')
+    post_load = script.index("--phase post-load")
+    initial_refresh = script.index(
+        '"${UV_BIN}" run --project "${REVERSO_DIR}" reverso-catalog-refresh'
+    )
     done = script.index("Done. Reverso LaunchAgents installed.")
 
     assert pre_install < write < pre_restart < launchctl < post_restart < done
+    assert post_restart < scheduled_load < post_load < initial_refresh < done
     assert str(CANONICAL_CHECKOUT) in script
     assert 'CANONICAL_USER_HOME="/Users/andresilvaburgstahler"' in script
     assert '"${HOME}" != "${CANONICAL_USER_HOME}"' in script

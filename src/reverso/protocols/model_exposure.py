@@ -136,8 +136,10 @@ def stale_codex_variant_profile_stems() -> frozenset[str]:
 def codex_profile_default_model(prefix: str, models: tuple[str, ...]) -> str:
     """Return the default model for a provider-name Codex profile."""
     if prefix == "deepseek" and DEEPSEEK_CODEX_PROFILE_DEFAULT in models:
-        return DEEPSEEK_CODEX_PROFILE_DEFAULT
-    return models[0]
+        model_id = DEEPSEEK_CODEX_PROFILE_DEFAULT
+    else:
+        model_id = models[0]
+    return selector_model_id(prefix, model_id)
 
 
 def codex_responses_compatible_model_ids(

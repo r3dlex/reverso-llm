@@ -45,7 +45,22 @@ check "usage endpoint" "${R}" "headroom"
 
 echo "==> Smoke: /usage/headroom"
 R=$(curl -sf "${BASE}/usage/headroom" 2>&1 || echo "CONNECTION_ERROR")
-check "headroom usage endpoint" "${R}" "tokens_saved"
+if EXPECTED_HEADROOM_PROFILE="$(printf '%s' "${R}" | uv run python -c '
+import json
+import sys
+
+from reverso.deployment_drift import validate_headroom_usage_payload
+from reverso.protocols.headroom_compression import HeadroomCompressionConfig
+
+validate_headroom_usage_payload(json.load(sys.stdin))
+print(HeadroomCompressionConfig.from_env().profile)
+' 2>/dev/null)"; then
+    echo "  PASS: headroom usage schema v2 with ${EXPECTED_HEADROOM_PROFILE} profile"
+    PASS=$((PASS + 1))
+else
+    echo "  FAIL: headroom usage schema v2 with configured profile"
+    FAIL=$((FAIL + 1))
+fi
 
 echo "==> Smoke: deepseek first-party Responses GPT-level alias"
 PAYLOAD='{"model":"gpt-5.5","input":"Reply with exactly: SMOKE_OK"}'

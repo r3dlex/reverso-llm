@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import math
 import os
 import plistlib
 import pwd
@@ -24,6 +25,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from reverso.protocols.headroom_compression import HeadroomCompressionConfig
 
 CANONICAL_CHECKOUT = Path("/Users/andresilvaburgstahler/.local/share/reverso")
 DEPLOYMENT_REPOSITORY = "git@github.com:r3dlex/reverso-llm.git"
@@ -47,7 +50,106 @@ KIMI_MODEL = "kimi-k3"
 KIMI_CONTEXT_WINDOW = 1048576
 KIMI_AUTO_COMPACT_TOKEN_LIMIT = 943718
 KIMI_MODELS_URL = "http://127.0.0.1:64946/kimi/v1/models"
-PHASES = ("pre-install", "pre-restart", "post-restart", "pre-sync", "acceptance")
+HEADROOM_USAGE_URL = "http://127.0.0.1:64946/usage/headroom"
+HEADROOM_USAGE_FIELDS = {
+    "schema_version",
+    "enabled",
+    "profile",
+    "requests_seen",
+    "requests_compressed",
+    "tokens_before",
+    "tokens_after",
+    "tokens_saved",
+    "compression_ratio",
+    "fail_open_count",
+    "failure_reasons",
+    "error_types",
+    "updated_at",
+    "process_started_at",
+    "measurement_started_at",
+    "requests_passed_through",
+    "compression_success_rate",
+    "average_tokens_saved",
+    "outcome_counts",
+    "provider_counts",
+    "surface_counts",
+    "timeout_seconds",
+    "model_limit",
+    "last_success_at",
+    "last_failure_at",
+    "reset_reason",
+}
+HEADROOM_USAGE_MAP_FIELDS = {
+    "failure_reasons": {
+        "worker_busy",
+        "timeout",
+        "exception",
+        "inflation_guard",
+        "retrieval_marker",
+        "unsafe_output",
+        "other",
+    },
+    "error_types": {
+        "timeout",
+        "worker_busy",
+        "dependency_exception",
+        "inflation_guard",
+        "retrieval_marker",
+        "unsafe_output",
+        "other",
+    },
+    "outcome_counts": {"compressed", "passed_through", "fail_open", "other"},
+    "provider_counts": {
+        "claude",
+        "copilot",
+        "auggie",
+        "deepseek",
+        "kimi",
+        "codex-direct",
+        "openai-pass-through",
+        "other",
+    },
+    "surface_counts": {"responses", "anthropic_messages", "other"},
+}
+HEADROOM_SENSITIVE_FIELDS = {
+    "request_body",
+    "prompt",
+    "response",
+    "tool_content",
+    "workspace",
+    "session_id",
+    "request_id",
+    "raw_model",
+    "raw_error",
+}
+HEADROOM_COUNTER_FIELDS = {
+    "requests_seen",
+    "requests_compressed",
+    "tokens_before",
+    "tokens_after",
+    "tokens_saved",
+    "fail_open_count",
+    "requests_passed_through",
+}
+HEADROOM_RATIO_FIELDS = {
+    "compression_ratio",
+    "compression_success_rate",
+}
+HEADROOM_TIMESTAMP_FIELDS = {
+    "updated_at",
+    "process_started_at",
+    "measurement_started_at",
+    "last_success_at",
+    "last_failure_at",
+}
+PHASES = (
+    "pre-install",
+    "pre-restart",
+    "post-restart",
+    "post-load",
+    "pre-sync",
+    "acceptance",
+)
 
 CommandRunner = Callable[[tuple[str, ...], Path | None], str]
 JsonFetcher = Callable[[str], Any]
@@ -78,7 +180,9 @@ def _fetch_json(url: str) -> Any:
         with urllib.request.urlopen(url, timeout=5.0) as response:
             return json.load(response)
     except (OSError, ValueError) as exc:
-        raise DeploymentDriftError("live Kimi discovery is unavailable") from exc
+        raise DeploymentDriftError(
+            "live JSON authority is unavailable or malformed"
+        ) from exc
 
 
 @dataclass(frozen=True)
@@ -574,6 +678,62 @@ def _launchctl_block(output: str, key: str) -> list[str] | None:
     return None
 
 
+def _launchctl_label(output: str) -> str | None:
+    match = re.search(r"^\s*gui/\d+/(.*?)\s*=\s*\{\s*$", output, re.MULTILINE)
+    return None if match is None else match.group(1)
+
+
+def _launchctl_has_top_level_key(output: str, key: str) -> bool:
+    pattern = re.compile(rf"^{re.escape(key)}\s*=", re.IGNORECASE)
+    for line in output.splitlines():
+        content = line.lstrip(" \t")
+        indentation = line[: len(line) - len(content)]
+        if indentation in {"\t", "    "} and pattern.match(content):
+            return True
+    return False
+
+
+def _launchctl_calendar_intervals(output: str) -> list[dict[str, int]]:
+    intervals: list[dict[str, int]] = []
+    descriptor_pattern = re.compile(r'^\s*"?(Hour|Minute)"?\s*=>\s*(\d+)\s*$')
+    lines = output.splitlines()
+    for index, line in enumerate(lines):
+        if line.strip() != "descriptor = {":
+            continue
+        interval: dict[str, int] = {}
+        for descriptor_line in lines[index + 1 :]:
+            if descriptor_line.strip() == "}":
+                break
+            match = descriptor_pattern.match(descriptor_line)
+            if match is not None:
+                interval[match.group(1)] = int(match.group(2))
+        if interval:
+            intervals.append(interval)
+    return intervals
+
+
+def _normalized_calendar_intervals(
+    intervals: object,
+) -> list[tuple[int, int]] | None:
+    if not isinstance(intervals, list):
+        return None
+    normalized: list[tuple[int, int]] = []
+    for interval in intervals:
+        if not isinstance(interval, dict) or set(interval) != {"Hour", "Minute"}:
+            return None
+        hour = interval["Hour"]
+        minute = interval["Minute"]
+        if (
+            not isinstance(hour, int)
+            or isinstance(hour, bool)
+            or not isinstance(minute, int)
+            or isinstance(minute, bool)
+        ):
+            return None
+        normalized.append((hour, minute))
+    return sorted(normalized)
+
+
 def _validate_running_agents(
     env: DriftEnvironment,
     selected_commit: str,
@@ -647,6 +807,85 @@ def _validate_running_agents(
             )
 
 
+def _validate_running_scheduled_agent(
+    env: DriftEnvironment,
+    selected_commit: str,
+    expected_launcher: str,
+) -> None:
+    label = SCHEDULED_LAUNCH_AGENT_LABEL
+    canonical = str(env.canonical_checkout)
+    rendered = _read_plist(env.launch_agents_dir / f"{label}.plist")
+    output = env.command_runner(
+        ("launchctl", "print", f"gui/{env.uid}/{label}"),
+        None,
+    )
+    if _launchctl_label(output) != label:
+        raise DeploymentDriftError(f"running LaunchAgent {label} has wrong label")
+    if _launchctl_assignment(output, "program") != expected_launcher:
+        raise DeploymentDriftError(
+            f"running LaunchAgent {label} has unauthorized program"
+        )
+    running_arguments = _launchctl_block(output, "arguments")
+    _validate_program_arguments(
+        label,
+        SCHEDULED_LAUNCH_AGENT_EXECUTABLE,
+        running_arguments,
+        canonical,
+        expected_launcher,
+        authority="running",
+    )
+    if running_arguments != rendered.get("ProgramArguments"):
+        raise DeploymentDriftError(
+            f"running LaunchAgent {label} does not match rendered ProgramArguments"
+        )
+    if _launchctl_assignment(output, "working directory") != canonical:
+        raise DeploymentDriftError(
+            f"running WorkingDirectory for LaunchAgent {label} is stale"
+        )
+    environment = _launchctl_block(output, "environment")
+    if environment is None:
+        raise DeploymentDriftError(
+            f"running LaunchAgent {label} has no deployment environment"
+        )
+    environment_output = "\n".join(environment)
+    if _launchctl_value(environment_output, "REVERSO_PROJECT_DIR") != canonical:
+        raise DeploymentDriftError(f"running checkout for LaunchAgent {label} is stale")
+    if (
+        _launchctl_value(environment_output, "REVERSO_DEPLOYMENT_COMMIT")
+        != selected_commit
+    ):
+        raise DeploymentDriftError(f"running revision for LaunchAgent {label} is stale")
+    properties = _launchctl_assignment(output, "properties") or ""
+    for running_property, plist_key in (
+        ("keepalive", "KeepAlive"),
+        ("runatload", "RunAtLoad"),
+    ):
+        if re.search(rf"\b{running_property}\b", properties, re.IGNORECASE):
+            raise DeploymentDriftError(
+                f"running LaunchAgent {label} must not set {plist_key}"
+            )
+    for running_key, plist_key in (
+        ("keepalive", "KeepAlive"),
+        ("runatload", "RunAtLoad"),
+        ("run at load", "RunAtLoad"),
+        ("sockets", "Sockets"),
+        ("machservices", "MachServices"),
+        ("mach services", "MachServices"),
+        ("stdout path", "StandardOutPath"),
+        ("stderr path", "StandardErrorPath"),
+    ):
+        if _launchctl_has_top_level_key(output, running_key):
+            raise DeploymentDriftError(
+                f"running LaunchAgent {label} must not set {plist_key}"
+            )
+    if _normalized_calendar_intervals(
+        _launchctl_calendar_intervals(output)
+    ) != _normalized_calendar_intervals(rendered.get("StartCalendarInterval")):
+        raise DeploymentDriftError(
+            f"running LaunchAgent {label} has unauthorized schedule"
+        )
+
+
 def _validate_kimi_code_home(env: DriftEnvironment) -> None:
     path = env.kimi_code_home
     try:
@@ -666,7 +905,12 @@ def _validate_kimi_code_home(env: DriftEnvironment) -> None:
 
 
 def _validate_live_kimi(env: DriftEnvironment) -> None:
-    payload = env.json_fetcher(KIMI_MODELS_URL)
+    try:
+        payload = env.json_fetcher(KIMI_MODELS_URL)
+    except (DeploymentDriftError, OSError, ValueError) as exc:
+        raise DeploymentDriftError(
+            "live Kimi discovery is unavailable or malformed"
+        ) from exc
     if not isinstance(payload, dict):
         raise DeploymentDriftError("live Kimi discovery payload is malformed")
     if payload.get("model_discovery_source") != "live":
@@ -682,6 +926,165 @@ def _validate_live_kimi(env: DriftEnvironment) -> None:
         raise DeploymentDriftError(
             "live Kimi discovery must contain exactly one kimi-k3 entry"
         )
+
+
+def validate_headroom_usage_payload(
+    payload: Any,
+    *,
+    expected_profile: str | None = None,
+) -> None:
+    """Validate the prompt-free live Headroom acceptance contract."""
+    configured_profile = (
+        HeadroomCompressionConfig.from_env().profile
+        if expected_profile is None
+        else HeadroomCompressionConfig.from_env(
+            {"REVERSO_HEADROOM_PROFILE": expected_profile}
+        ).profile
+    )
+    if not isinstance(payload, dict):
+        raise DeploymentDriftError("live Headroom usage payload is malformed")
+    if payload.get("schema_version") != 1:
+        raise DeploymentDriftError("live Headroom outer schema must be version 1")
+    if payload.get("provider") != "headroom":
+        raise DeploymentDriftError("live Headroom provider must be headroom")
+    if set(payload) != {"schema_version", "provider", "headroom"}:
+        raise DeploymentDriftError("live Headroom outer payload has unsupported fields")
+
+    usage = payload.get("headroom")
+    if not isinstance(usage, dict):
+        raise DeploymentDriftError("live Headroom inner usage payload is malformed")
+    if set(usage).intersection(HEADROOM_SENSITIVE_FIELDS):
+        raise DeploymentDriftError("live Headroom usage contains a sensitive field")
+    if set(usage) != HEADROOM_USAGE_FIELDS:
+        raise DeploymentDriftError("live Headroom usage must contain exact fields")
+    if usage.get("schema_version") != 2:
+        raise DeploymentDriftError("live Headroom inner schema must be version 2")
+    if not isinstance(usage.get("enabled"), bool):
+        raise DeploymentDriftError("live Headroom enabled must be boolean")
+    if usage.get("profile") != configured_profile:
+        raise DeploymentDriftError(
+            f"live Headroom profile must be {configured_profile}"
+        )
+    for field in HEADROOM_COUNTER_FIELDS:
+        value = usage.get(field)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise DeploymentDriftError(
+                f"live Headroom {field} must be a nonnegative integer"
+            )
+    model_limit = usage.get("model_limit")
+    if (
+        isinstance(model_limit, bool)
+        or not isinstance(model_limit, int)
+        or model_limit < 1
+    ):
+        raise DeploymentDriftError(
+            "live Headroom model_limit must be a positive integer"
+        )
+    timeout_seconds = usage.get("timeout_seconds")
+    if (
+        isinstance(timeout_seconds, bool)
+        or not isinstance(timeout_seconds, (int, float))
+        or not math.isfinite(timeout_seconds)
+        or timeout_seconds <= 0
+    ):
+        raise DeploymentDriftError(
+            "live Headroom timeout_seconds must be a positive finite number"
+        )
+    for field in HEADROOM_RATIO_FIELDS:
+        value = usage.get(field)
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or not 0 <= value <= 1
+        ):
+            raise DeploymentDriftError(f"live Headroom {field} must be a finite ratio")
+    average_tokens_saved = usage.get("average_tokens_saved")
+    if (
+        isinstance(average_tokens_saved, bool)
+        or not isinstance(average_tokens_saved, (int, float))
+        or not math.isfinite(average_tokens_saved)
+        or average_tokens_saved < 0
+    ):
+        raise DeploymentDriftError(
+            "live Headroom average_tokens_saved must be a finite nonnegative number"
+        )
+    for field in HEADROOM_TIMESTAMP_FIELDS:
+        value = usage.get(field)
+        if value is None:
+            continue
+        try:
+            parsed = dt.datetime.fromisoformat(value)
+        except (TypeError, ValueError) as exc:
+            raise DeploymentDriftError(
+                f"live Headroom {field} must be RFC3339 UTC or null"
+            ) from exc
+        if (
+            not isinstance(value, str)
+            or "T" not in value
+            or parsed.utcoffset() != dt.timedelta(0)
+            or not value.endswith(("Z", "+00:00"))
+        ):
+            raise DeploymentDriftError(
+                f"live Headroom {field} must be RFC3339 UTC or null"
+            )
+    if usage.get("reset_reason") not in {"process_start", "manual_test_reset"}:
+        raise DeploymentDriftError(
+            "live Headroom reset_reason must use a governed value"
+        )
+    for field, expected_keys in HEADROOM_USAGE_MAP_FIELDS.items():
+        counts = usage.get(field)
+        if (
+            not isinstance(counts, dict)
+            or set(counts) != expected_keys
+            or any(
+                isinstance(value, bool) or not isinstance(value, int) or value < 0
+                for value in counts.values()
+            )
+        ):
+            raise DeploymentDriftError(
+                f"live Headroom {field} must use bounded nonnegative counters"
+            )
+
+    requests_seen = usage["requests_seen"]
+    requests_compressed = usage["requests_compressed"]
+    fail_open_count = usage["fail_open_count"]
+    tokens_before = usage["tokens_before"]
+    tokens_saved = usage["tokens_saved"]
+    formulas = {
+        "compression_ratio": tokens_saved / tokens_before if tokens_before else 0.0,
+        "compression_success_rate": (
+            requests_compressed / requests_seen if requests_seen else 0.0
+        ),
+        "average_tokens_saved": (
+            tokens_saved / requests_compressed if requests_compressed else 0.0
+        ),
+        "requests_passed_through": max(
+            requests_seen - requests_compressed - fail_open_count,
+            0,
+        ),
+    }
+    for field, expected in formulas.items():
+        actual = usage[field]
+        matches = (
+            actual == expected
+            if isinstance(expected, int)
+            else math.isclose(actual, expected, rel_tol=1e-12, abs_tol=1e-12)
+        )
+        if not matches:
+            raise DeploymentDriftError(
+                f"live Headroom {field} does not match its governed formula"
+            )
+
+
+def _validate_live_headroom(env: DriftEnvironment) -> None:
+    try:
+        payload = env.json_fetcher(HEADROOM_USAGE_URL)
+    except (DeploymentDriftError, OSError, ValueError) as exc:
+        raise DeploymentDriftError(
+            "live Headroom usage is unavailable or malformed"
+        ) from exc
+    validate_headroom_usage_payload(payload)
 
 
 def _validate_generated_kimi(env: DriftEnvironment) -> None:
@@ -754,10 +1157,13 @@ def check_deployment_drift(
         _validate_scheduled_launch_agent(env, selected_commit, str(env.launcher))
     if phase in {"post-restart", "pre-sync", "acceptance"}:
         _validate_running_agents(env, selected_commit, str(env.launcher))
+    if phase in {"post-load", "pre-sync", "acceptance"}:
+        _validate_running_scheduled_agent(env, selected_commit, str(env.launcher))
     if phase in {"pre-sync", "acceptance"}:
         _validate_live_kimi(env)
     if phase == "acceptance":
         _validate_generated_kimi(env)
+        _validate_live_headroom(env)
     return {"phase": phase, "status": "passed", "provenance": provenance}
 
 

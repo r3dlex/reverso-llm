@@ -2,7 +2,7 @@
 type: agent-guide
 project: reverso
 stack: python-asgi-asyncio
-last_updated: 2026-06-10
+last_updated: 2026-07-30
 ---
 
 <!-- Generated: 2026-05-27 | Updated: 2026-06-10 -->
@@ -193,6 +193,34 @@ The existing LaunchAgents (`com.andres.codex-litellm-minimax.plist`, `com.andres
 - Phase-specific integration tests are under `tests/integration/`.
 - For Phase 0, results go in `docs/spike-notes.md`.
 
+## Canonical install and update convergence
+
+After cloning or fast-forwarding the canonical checkout, use this same sequence
+for a clean install or update:
+
+```bash
+uv sync --frozen
+./scripts/install-launchagents.sh
+uv run python scripts/check-deployment-drift.py --phase pre-sync
+uv run reverso-client-sync dry-run --json
+uv run reverso-client-sync apply --json
+uv run reverso-client-sync apply --json
+uv run reverso-client-sync refresh --json
+uv run reverso-client-sync verify --json
+./scripts/smoke.sh
+./scripts/convergence-acceptance.sh
+uv run python scripts/check-deployment-drift.py --phase acceptance
+```
+
+The second apply proves idempotency. The scheduled catalog refresh is a
+short-lived LaunchAgent at 06:00 and 18:00 local time; the proxy and daemon are
+the only two long-lived Reverso services. Acceptance derives all 17 client
+surfaces from `config/supported-client-surfaces.json`, verifies the RTK
+discovery symlink without executing RTK, and validates schema version 2
+embedded Headroom usage with the `coding` default on
+`http://127.0.0.1:64946/usage/headroom`. Embedded metrics reset on process
+restart, never call RTK, and never read standalone Headroom savings files.
+
 ## Key design decisions (locked, from Q1-Q18 in `docs/01-brd.md`)
 
 - Session key is `(machine, workspace, provider)`. Machine dimension reserved for v2.
@@ -206,7 +234,7 @@ The existing LaunchAgents (`com.andres.codex-litellm-minimax.plist`, `com.andres
 <!-- MANUAL: Add manually curated notes below this line. They are preserved on regeneration. -->
 
 - Reverso Codex profile files should use GPT model names. Provider slugs are resolved by `/deepseek/v1` and `/claude/v1` profile routing so Codex keeps its own model metadata. MiniMax is direct Codex-only and should use `model = "MiniMax-M3"` with `model_provider = "minimax"`.
-- `reverso-codex-sync` must keep built-in Codex GPT model ids bare and selectable (`gpt-5.5` is the default unless the user already selected another top-level `model`). Reverso provider models are extra selector/catalog entries. Prefix selector and catalog slugs for providers that can collide with built-ins or each other: `copilot/<model>`, `auggie/<model>`, and `agy/<model>`. Do not prefix MiniMax, DeepSeek, GPT (Codex), or Claude (Claude Code). Provider profile routing may still send the bare provider model id inside the provider-specific profile entry.
+- `reverso-codex-sync` must keep built-in Codex GPT model ids bare and selectable (`gpt-5.5` is the default unless the user already selected another top-level `model`). Reverso provider models are extra selector/catalog entries. Prefix selector, catalog, and generated profile default ids for providers that can collide with built-ins or each other: `copilot/<model>`, `auggie/<model>`, and `agy/<model>`. Feature-gated `codex-direct/<model>` and `openai-pass-through/<model>` defaults follow the same rule. Do not prefix MiniMax, DeepSeek, GPT (Codex), Claude (Claude Code), or Kimi. The gateway removes a matching governed prefix before adapter dispatch.
 
 <!-- v3-ai-sdlc-init:start -->
 ## AI SDLC v3

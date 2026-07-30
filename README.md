@@ -1,7 +1,7 @@
 ---
 type: readme
 project: reverso
-last_updated: 2026-07-25
+last_updated: 2026-07-30
 ---
 
 # Reverso
@@ -41,10 +41,9 @@ codex --version
 git clone git@github.com:r3dlex/reverso-llm.git \
   /Users/andresilvaburgstahler/.local/share/reverso
 cd /Users/andresilvaburgstahler/.local/share/reverso
-uv sync --frozen
-./scripts/install-launchagents.sh
 ```
 
+Run the canonical sequence in the next section to install and start Reverso.
 The installer accepts only the clean canonical checkout above. It records the
 exact Git revision and installer-selected `uv` launcher in
 `~/Library/Application Support/reverso/deployment-provenance.json`, renders the
@@ -73,18 +72,41 @@ Expected JSON includes:
 
 ### Converge the managed client surfaces
 
-With the gateway running:
+With the gateway running, use this canonical sequence for both a clean install
+and an update:
 
 ```bash
+uv sync --frozen
+./scripts/install-launchagents.sh
+uv run python scripts/check-deployment-drift.py --phase pre-sync
 uv run reverso-client-sync dry-run --json
 uv run reverso-client-sync apply --json
+uv run reverso-client-sync apply --json
+uv run reverso-client-sync refresh --json
 uv run reverso-client-sync verify --json
+./scripts/smoke.sh
+./scripts/convergence-acceptance.sh
+uv run python scripts/check-deployment-drift.py --phase acceptance
 ```
 
 The unified sync composes the lower-level Codex and Claude Code sync
 implementations and converges the host RTK discovery link. See
 [`docs/client-sync.md`](docs/client-sync.md) for modes, lock behavior,
 ownership rules, JSON fields, statuses, and exit codes.
+
+The second `apply` proves idempotency. `refresh` updates the machine-readable
+catalog status used by `verify`. The installer configures the short-lived
+`com.user.reverso-catalog-refresh` job for 06:00 and 18:00 local time; only
+`com.user.reverso-proxy` and `com.user.reverso-daemon` are long-lived.
+`convergence-acceptance.sh` renders into an isolated temporary home, validates
+all 17 manifest surfaces, confirms the RTK discovery symlink without executing
+RTK, and reads the schema version 2 Headroom aggregate with profile `coding`
+from `http://127.0.0.1:64946/usage/headroom`.
+
+Embedded Headroom is process-local. Its counters reset when the gateway
+restarts, it defaults to the `coding` profile when no explicit override is
+set, it never invokes RTK, and it never reads standalone Headroom savings
+files.
 
 The Codex portion reads each live provider's `/v1/models`, updates
 `~/.codex/config.toml`, writes product-scoped profiles such as
@@ -209,7 +231,11 @@ shim retain responsibility for their own secret injection.
 - MiniMax, DeepSeek, GPT from Codex, and Claude from Claude Code are not prefixed.
 - Additional experimental surfaces keep their own namespaces, including `codex-direct/<model>` and `openai-pass-through/<model>`.
 
-The catalog slug controls what Codex displays. The provider profile still sends the backend's bare model ID to its own Reverso route. This keeps provider identity visible without leaking one provider's models into another provider's catalog.
+The generated provider profile default matches its catalog slug. Collision-prone
+profiles therefore send their governed selector ID to their Reverso route, and
+the gateway removes the matching prefix before adapter dispatch. This keeps
+provider identity visible without leaking one provider's models into another
+provider's catalog.
 
 Hand-written Reverso profile files keep GPT-level model names when using the documented alias routing. For example, a DeepSeek or Claude profile may send `gpt-5.5`; the provider-specific route resolves it to the configured backend model. Generated profiles instead pin a live provider model and a matching provider-scoped catalog.
 
@@ -246,12 +272,15 @@ Update the checkout and refresh dependencies, services, and generated model cata
 ```bash
 git pull --ff-only
 uv sync --frozen
-uv run python scripts/check-deployment-drift.py --phase pre-install
 ./scripts/install-launchagents.sh
 uv run python scripts/check-deployment-drift.py --phase pre-sync
 uv run reverso-client-sync dry-run --json
 uv run reverso-client-sync apply --json
+uv run reverso-client-sync apply --json
+uv run reverso-client-sync refresh --json
 uv run reverso-client-sync verify --json
+./scripts/smoke.sh
+./scripts/convergence-acceptance.sh
 uv run python scripts/check-deployment-drift.py --phase acceptance
 ```
 
