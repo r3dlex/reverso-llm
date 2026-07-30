@@ -115,14 +115,20 @@ async def test_responses_nonstreaming_dispatches_compressed_request_for_each_pro
 ) -> None:
     adapters = {name: SpyAdapter() for name in RESPONSES_PROVIDERS}
     seen_inputs: list[Any] = []
+    seen_metadata: list[tuple[str, str]] = []
 
-    async def fake_compress(request: ResponsesRequest) -> HeadroomCompressionOutcome:
+    async def fake_compress(
+        request: ResponsesRequest, *, provider: str, surface: str
+    ) -> HeadroomCompressionOutcome:
         seen_inputs.append(request.input)
+        seen_metadata.append((provider, surface))
         return HeadroomCompressionOutcome(
-            request=replace(request, input=f"compressed input for {provider}"),
+            request=replace(request, input=f"compressed input for {provider_route}"),
             compressed=True,
             reason="compressed",
         )
+
+    provider_route = provider
 
     monkeypatch.setattr(responses_app, "compress_responses_request", fake_compress)
 
@@ -135,6 +141,8 @@ async def test_responses_nonstreaming_dispatches_compressed_request_for_each_pro
 
     assert resp.status_code == 200
     assert seen_inputs == ["original input"]
+    expected_provider = "openai-pass-through" if provider == "openai" else provider
+    assert seen_metadata == [(expected_provider, "responses")]
     assert (
         adapters[provider].create_requests[0].input
         == f"compressed input for {provider}"
@@ -153,13 +161,21 @@ async def test_responses_streaming_dispatches_compressed_request_for_each_provid
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     adapter = SpyAdapter()
+    seen_metadata: list[tuple[str, str]] = []
 
-    async def fake_compress(request: ResponsesRequest) -> HeadroomCompressionOutcome:
+    async def fake_compress(
+        request: ResponsesRequest, *, provider: str, surface: str
+    ) -> HeadroomCompressionOutcome:
+        seen_metadata.append((provider, surface))
         return HeadroomCompressionOutcome(
-            request=replace(request, input=f"compressed stream input for {provider}"),
+            request=replace(
+                request, input=f"compressed stream input for {provider_route}"
+            ),
             compressed=True,
             reason="compressed",
         )
+
+    provider_route = provider
 
     monkeypatch.setattr(responses_app, "compress_responses_request", fake_compress)
 
@@ -178,6 +194,8 @@ async def test_responses_streaming_dispatches_compressed_request_for_each_provid
     assert "response.created" in body
     assert "response.completed" in body
     assert "data: [DONE]" in body
+    expected_provider = "openai-pass-through" if provider == "openai" else provider
+    assert seen_metadata == [(expected_provider, "responses")]
     assert adapter.stream_requests[0].input == f"compressed stream input for {provider}"
     assert _text_from_input_items(input_items.json()) == "original stream input"
 

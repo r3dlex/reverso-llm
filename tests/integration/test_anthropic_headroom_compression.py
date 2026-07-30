@@ -131,9 +131,13 @@ async def test_messages_dispatches_compressed_request_for_each_backend(
 ) -> None:
     adapters = {name: SpyAdapter() for name in ANTHROPIC_BACKENDS}
     seen: list[str] = []
+    seen_metadata: list[tuple[str, str]] = []
 
-    async def fake_compress(request: ResponsesRequest) -> HeadroomCompressionOutcome:
+    async def fake_compress(
+        request: ResponsesRequest, *, provider: str, surface: str
+    ) -> HeadroomCompressionOutcome:
         seen.append(_first_input_text(request))
+        seen_metadata.append((provider, surface))
         return HeadroomCompressionOutcome(
             request=_replace_first_input_text(request, f"compressed for {backend}"),
             compressed=True,
@@ -154,6 +158,8 @@ async def test_messages_dispatches_compressed_request_for_each_backend(
 
     assert resp.status_code == 200
     assert seen == ["original text"]
+    expected_provider = "codex-direct" if backend == "codex" else backend
+    assert seen_metadata == [(expected_provider, "anthropic_messages")]
     assert (
         _first_input_text(adapters[backend].create_requests[0])
         == f"compressed for {backend}"
@@ -170,7 +176,9 @@ async def test_messages_compresses_tool_result_output(
 ) -> None:
     adapter = SpyAdapter()
 
-    async def fake_compress(request: ResponsesRequest) -> HeadroomCompressionOutcome:
+    async def fake_compress(
+        request: ResponsesRequest, **_metadata: str
+    ) -> HeadroomCompressionOutcome:
         input_items = cast(list[dict[str, Any]], request.input)
         copied = [dict(item) for item in input_items]
         copied[1] = dict(copied[1])
@@ -229,8 +237,12 @@ async def test_messages_streaming_dispatches_compressed_request_for_each_backend
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     adapter = SpyAdapter()
+    seen_metadata: list[tuple[str, str]] = []
 
-    async def fake_compress(request: ResponsesRequest) -> HeadroomCompressionOutcome:
+    async def fake_compress(
+        request: ResponsesRequest, *, provider: str, surface: str
+    ) -> HeadroomCompressionOutcome:
+        seen_metadata.append((provider, surface))
         return HeadroomCompressionOutcome(
             request=_replace_first_input_text(
                 request, f"compressed stream for {backend}"
@@ -257,6 +269,8 @@ async def test_messages_streaming_dispatches_compressed_request_for_each_backend
 
     assert "message_start" in body
     assert "content_block_delta" in body
+    expected_provider = "codex-direct" if backend == "codex" else backend
+    assert seen_metadata == [(expected_provider, "anthropic_messages")]
     assert (
         _first_input_text(adapter.stream_requests[0])
         == f"compressed stream for {backend}"
