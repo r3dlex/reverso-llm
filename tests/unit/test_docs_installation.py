@@ -83,7 +83,7 @@ def test_readme_preserves_codex_selector_invariants() -> None:
         assert needle in selector_rules
 
 
-def test_readme_install_and_update_refresh_all_client_catalog_surfaces() -> None:
+def test_readme_install_and_update_use_unified_client_convergence() -> None:
     text = Path("README.md").read_text()
     install = text.split("### Install and start", 1)[1].split(
         "## How routing works", 1
@@ -93,10 +93,9 @@ def test_readme_install_and_update_refresh_all_client_catalog_surfaces() -> None
     )[0]
 
     expected = [
-        "uv run reverso-codex-sync --dry-run",
-        "uv run reverso-codex-sync",
-        "uv run reverso-claude-code-sync --dry-run",
-        "uv run reverso-claude-code-sync",
+        "uv run reverso-client-sync dry-run --json",
+        "uv run reverso-client-sync apply --json",
+        "uv run reverso-client-sync verify --json",
     ]
     for command in expected:
         assert command in install

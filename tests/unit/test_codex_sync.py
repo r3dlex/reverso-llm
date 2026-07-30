@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import os
 import tomllib
 from pathlib import Path
 from typing import cast
@@ -17,7 +18,9 @@ from typing import cast
 import httpx
 import pytest
 
-from reverso import codex_sync
+from reverso import client_sync_mutations, codex_sync
+from reverso.client_sync_lock import acquire_client_sync_lock
+from reverso.client_sync_mutations import PreparedApplyFailed, apply_prepared_group
 from reverso.protocols import model_exposure
 
 
@@ -44,6 +47,177 @@ def _make_fetcher(
         return list(payload[prefix])
 
     return _fetch
+
+
+def test_provider_only_prepare_never_emits_shared_or_other_provider_mutations(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "config.toml"
+    target.write_text("shared-before\n", encoding="utf-8")
+    catalog_dir = tmp_path / "catalogs"
+    catalog_dir.mkdir()
+    other_profile = tmp_path / "reverso-claude.config.toml"
+    other_catalog = catalog_dir / "claude.json"
+    other_profile.write_text("other-profile\n", encoding="utf-8")
+    other_catalog.write_text("other-catalog\n", encoding="utf-8")
+    models = codex_sync.discover_provider_models(
+        "copilot",
+        fetcher=lambda _prefix: ["gpt-5.5"],
+    )
+
+    prepared = codex_sync.prepare_provider_sync(
+        models,
+        target=target,
+        catalog_dir=catalog_dir,
+    )
+
+    assert {mutation.path for mutation in prepared.group.mutations} == {
+        tmp_path / "reverso-copilot.config.toml",
+        catalog_dir / "copilot.json",
+    }
+    apply_prepared_group(prepared.group)
+    assert target.read_text(encoding="utf-8") == "shared-before\n"
+    assert other_profile.read_text(encoding="utf-8") == "other-profile\n"
+    assert other_catalog.read_text(encoding="utf-8") == "other-catalog\n"
+
+
+def test_dry_run_does_not_acquire_client_sync_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail_lock(**_kwargs: object) -> object:
+        raise AssertionError("dry-run must not acquire the writer lock")
+
+    monkeypatch.setattr(codex_sync, "acquire_client_sync_lock", fail_lock)
+    result = codex_sync.sync(
+        target=tmp_path / "config.toml",
+        fetcher=_make_fetcher(),
+        catalog_dir=tmp_path / "catalogs",
+        dry_run=True,
+    )
+    assert result.changed is True
+
+
+def test_sync_reuses_explicit_client_sync_lock_token(tmp_path: Path) -> None:
+    lock_path = tmp_path / "catalog-refresh.lock"
+    with acquire_client_sync_lock(path=lock_path) as token:
+        result = codex_sync.sync(
+            target=tmp_path / "config.toml",
+            fetcher=_make_fetcher(),
+            catalog_dir=tmp_path / "catalogs",
+            lock_path=lock_path,
+            lock_token=token,
+        )
+        assert token.released is False
+    assert result.changed is True
+
+
+def test_prepare_rejects_source_change_after_staging_copy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+    original_copy_paths = codex_sync._copy_managed_paths
+
+    def copy_then_change_owner_source(
+        source: Path,
+        destination: Path,
+        paths: set[Path],
+    ) -> dict[Path, client_sync_mutations.FileState]:
+        states = original_copy_paths(source, destination, paths)
+        target.write_text("owner changed during prepare\n", encoding="utf-8")
+        return states
+
+    monkeypatch.setattr(
+        codex_sync,
+        "_copy_managed_paths",
+        copy_then_change_owner_source,
+    )
+
+    with pytest.raises(RuntimeError, match="sync input changed while preparing"):
+        codex_sync.prepare_sync(
+            target=target,
+            fetcher=_make_fetcher(),
+            catalog_dir=tmp_path / "reverso",
+        )
+
+    assert target.read_text(encoding="utf-8") == "owner changed during prepare\n"
+    assert not (tmp_path / "reverso").exists()
+
+
+def test_prepare_never_visits_unrelated_config_siblings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+    unrelated = tmp_path / "unrelated"
+    unrelated.mkdir()
+    large = unrelated / "large.bin"
+    large.write_bytes(b"x" * 1024)
+    special = tmp_path / "unrelated-link"
+    special.symlink_to(unrelated, target_is_directory=True)
+    fifo = tmp_path / "unrelated-fifo"
+    os.mkfifo(fifo)
+    visited: list[Path] = []
+    original_capture_state = codex_sync.capture_state
+    original_copy_paths = codex_sync._copy_managed_paths
+
+    def capture_managed_only(path: Path) -> client_sync_mutations.FileState:
+        visited.append(path)
+        if (
+            path == unrelated
+            or path.is_relative_to(unrelated)
+            or path in {special, fifo}
+        ):
+            raise AssertionError(f"unrelated sibling was visited: {path}")
+        return original_capture_state(path)
+
+    def copy_while_unrelated_changes(
+        source: Path,
+        destination: Path,
+        paths: set[Path],
+    ) -> dict[Path, client_sync_mutations.FileState]:
+        states = original_copy_paths(source, destination, paths)
+        large.write_bytes(b"changed while preparing")
+        return states
+
+    monkeypatch.setattr(codex_sync, "capture_state", capture_managed_only)
+    monkeypatch.setattr(
+        codex_sync,
+        "_copy_managed_paths",
+        copy_while_unrelated_changes,
+    )
+    prepared = codex_sync.prepare_sync(
+        target=target,
+        fetcher=_make_fetcher(),
+        catalog_dir=tmp_path / "reverso",
+    )
+
+    assert prepared.group.changed is True
+    assert unrelated not in visited
+    assert special not in visited
+    assert fifo not in visited
+    assert large.read_bytes() == b"changed while preparing"
+
+
+def test_default_gateway_discovery_never_fetches_external_agy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requested: list[str] = []
+
+    def fetch(prefix: str) -> list[str]:
+        requested.append(prefix)
+        return _fixture_payload().get(prefix, ["gpt-5.5"])
+
+    monkeypatch.delenv("REVERSO_OPENAI_BACKEND", raising=False)
+    codex_sync.prepare_sync(
+        target=tmp_path / "config.toml",
+        fetcher=fetch,
+        catalog_dir=tmp_path / "reverso",
+    )
+    assert "agy" not in requested
 
 
 def _baseline_config_text() -> str:
@@ -1689,21 +1863,30 @@ def test_sync_atomic_write_uses_temp_in_same_dir(
     target = tmp_path / "config.toml"
     target.write_text(_baseline_config_text(), encoding="utf-8")
 
-    seen_dirs: list[str] = []
-    real_mkstemp = codex_sync.tempfile.mkstemp
+    seen_target_names: list[str] = []
+    real_create_state = client_sync_mutations._create_state
+    target_parent = target.parent.stat()
 
-    def _spy_mkstemp(*args, **kwargs):
-        seen_dirs.append(str(kwargs.get("dir")))
-        return real_mkstemp(*args, **kwargs)
+    def spy_create_state(
+        parent_fd: int,
+        name: str,
+        state: client_sync_mutations.FileState,
+    ) -> None:
+        parent = client_sync_mutations.os.fstat(parent_fd)
+        if (parent.st_dev, parent.st_ino) == (
+            target_parent.st_dev,
+            target_parent.st_ino,
+        ):
+            seen_target_names.append(name)
+        real_create_state(parent_fd, name, state)
 
-    monkeypatch.setattr(codex_sync.tempfile, "mkstemp", _spy_mkstemp)
+    monkeypatch.setattr(client_sync_mutations, "_create_state", spy_create_state)
 
     codex_sync.sync(
         target=target, fetcher=_make_fetcher(), catalog_dir=tmp_path / "rev"
     )
 
-    assert seen_dirs, "atomic write must mkstemp; none observed"
-    assert str(target.parent) in seen_dirs
+    assert target.name in seen_target_names
 
 
 def test_sync_no_temp_files_left_behind(tmp_path: Path) -> None:
@@ -2364,16 +2547,21 @@ def test_sync_catalog_write_failure_does_not_create_dependent_profile(
     catalog_dir = tmp_path / "reverso"
     profile = tmp_path / "reverso-kimi.config.toml"
     catalog = catalog_dir / "kimi.json"
-    atomic_write = codex_sync._atomic_write
+    apply_state = client_sync_mutations.apply_state
 
-    def fail_catalog_write(path: Path, text: str) -> None:
-        if path == catalog:
+    def fail_catalog_write(
+        path: Path,
+        state: client_sync_mutations.FileState,
+        *,
+        expected: client_sync_mutations.FileState | None = None,
+    ) -> None:
+        if path == catalog and state.kind == "file":
             raise OSError("injected catalog write failure")
-        atomic_write(path, text)
+        apply_state(path, state, expected=expected)
 
-    monkeypatch.setattr(codex_sync, "_atomic_write", fail_catalog_write)
+    monkeypatch.setattr(client_sync_mutations, "apply_state", fail_catalog_write)
 
-    with pytest.raises(OSError, match="injected catalog write failure"):
+    with pytest.raises(PreparedApplyFailed):
         codex_sync.sync(
             target=target,
             prefixes=("kimi",),

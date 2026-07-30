@@ -1,0 +1,340 @@
+{
+  "schema_version": 1,
+  "reverso_routes": [
+    "claude",
+    "copilot",
+    "auggie",
+    "deepseek",
+    "kimi"
+  ],
+  "feature_gated_routes": {
+    "codex-direct": "REVERSO_CODEX_DIRECT_BACKEND",
+    "openai-pass-through": "REVERSO_OPENAI_BACKEND"
+  },
+  "direct_codex_profiles": {
+    "openai": "openai",
+    "minimax": "minimax"
+  },
+  "claude_launchers": {
+    "claude-reverso": "all",
+    "claude-claude": "claude",
+    "claude-codex": "codex",
+    "claude-copilot": "copilot",
+    "claude-auggie": "auggie",
+    "claude-deepseek": "deepseek",
+    "claude-kimi": "kimi"
+  },
+  "external_catalogs": {
+    "agy": {
+      "selector_template": "agy/<model>",
+      "ownership": "external_user_preserving",
+      "runtime_authority": "external",
+      "runtime_route": false,
+      "gateway_fetch": false
+    }
+  },
+  "groups": [
+    {
+      "id": "claude-roots",
+      "kind": "prerequisite",
+      "dependencies": []
+    },
+    {
+      "id": "codex-roots",
+      "kind": "prerequisite",
+      "dependencies": []
+    },
+    {
+      "id": "direct-minimax",
+      "kind": "provider",
+      "dependencies": []
+    },
+    {
+      "id": "direct-openai",
+      "kind": "provider",
+      "dependencies": []
+    },
+    {
+      "id": "external-agy",
+      "kind": "provider",
+      "dependencies": []
+    },
+    {
+      "id": "provider-auggie",
+      "kind": "provider",
+      "dependencies": []
+    },
+    {
+      "id": "provider-claude",
+      "kind": "provider",
+      "dependencies": []
+    },
+    {
+      "id": "provider-codex",
+      "kind": "provider",
+      "dependencies": []
+    },
+    {
+      "id": "provider-codex-direct",
+      "kind": "provider",
+      "dependencies": []
+    },
+    {
+      "id": "provider-copilot",
+      "kind": "provider",
+      "dependencies": []
+    },
+    {
+      "id": "provider-deepseek",
+      "kind": "provider",
+      "dependencies": []
+    },
+    {
+      "id": "provider-kimi",
+      "kind": "provider",
+      "dependencies": []
+    },
+    {
+      "id": "provider-openai-pass-through",
+      "kind": "provider",
+      "dependencies": []
+    },
+    {
+      "id": "rtk",
+      "kind": "prerequisite",
+      "dependencies": []
+    },
+    {
+      "id": "shared-claude-settings",
+      "kind": "shared_dependency",
+      "dependencies": []
+    },
+    {
+      "id": "shared-codex-config",
+      "kind": "shared_dependency",
+      "dependencies": [
+        "provider-auggie",
+        "provider-claude",
+        "provider-codex-direct",
+        "provider-copilot",
+        "provider-deepseek",
+        "provider-kimi",
+        "provider-openai-pass-through"
+      ]
+    },
+    {
+      "id": "shared-codex-cleanup",
+      "kind": "shared_dependency",
+      "dependencies": [
+        "provider-auggie",
+        "provider-claude",
+        "provider-codex-direct",
+        "provider-copilot",
+        "provider-deepseek",
+        "provider-kimi",
+        "provider-openai-pass-through"
+      ]
+    },
+    {
+      "id": "shared-reverso-launcher",
+      "kind": "shared_dependency",
+      "dependencies": [
+        "provider-auggie",
+        "provider-claude",
+        "provider-codex",
+        "provider-copilot",
+        "provider-deepseek",
+        "provider-kimi"
+      ]
+    }
+  ],
+  "surfaces": [
+    {
+      "id": "claude-auggie",
+      "kind": "provider_launcher",
+      "group": "provider-auggie",
+      "selector_template": "auggie-<model>",
+      "default_model_authority": "runtime",
+      "ownership": "reverso_managed",
+      "runtime_authority": "reverso",
+      "path_template": "<launch_agent_dir>/claude-auggie",
+      "feature_gate": null
+    },
+    {
+      "id": "claude-claude",
+      "kind": "provider_launcher",
+      "group": "provider-claude",
+      "selector_template": "<model>",
+      "default_model_authority": "runtime",
+      "ownership": "reverso_managed",
+      "runtime_authority": "reverso",
+      "path_template": "<launch_agent_dir>/claude-claude",
+      "feature_gate": null
+    },
+    {
+      "id": "claude-codex",
+      "kind": "provider_launcher",
+      "group": "provider-codex",
+      "selector_template": "gpt-*",
+      "default_model_authority": "codex",
+      "ownership": "reverso_managed",
+      "runtime_authority": "codex",
+      "path_template": "<launch_agent_dir>/claude-codex",
+      "feature_gate": null
+    },
+    {
+      "id": "claude-copilot",
+      "kind": "provider_launcher",
+      "group": "provider-copilot",
+      "selector_template": "copilot-<model>",
+      "default_model_authority": "runtime",
+      "ownership": "reverso_managed",
+      "runtime_authority": "reverso",
+      "path_template": "<launch_agent_dir>/claude-copilot",
+      "feature_gate": null
+    },
+    {
+      "id": "claude-deepseek",
+      "kind": "provider_launcher",
+      "group": "provider-deepseek",
+      "selector_template": "<model>",
+      "default_model_authority": "runtime",
+      "ownership": "reverso_managed",
+      "runtime_authority": "reverso",
+      "path_template": "<launch_agent_dir>/claude-deepseek",
+      "feature_gate": null
+    },
+    {
+      "id": "claude-kimi",
+      "kind": "provider_launcher",
+      "group": "provider-kimi",
+      "selector_template": "kimi-k3",
+      "default_model_authority": "runtime",
+      "ownership": "reverso_managed",
+      "runtime_authority": "reverso",
+      "path_template": "<launch_agent_dir>/claude-kimi",
+      "feature_gate": null
+    },
+    {
+      "id": "claude-reverso",
+      "kind": "shared_launcher",
+      "group": "shared-reverso-launcher",
+      "selector_template": "<model>",
+      "default_model_authority": "runtime",
+      "ownership": "reverso_managed",
+      "runtime_authority": "reverso",
+      "path_template": "<launch_agent_dir>/claude-reverso",
+      "feature_gate": null
+    },
+    {
+      "id": "codex-agy",
+      "kind": "external_catalog",
+      "group": "external-agy",
+      "selector_template": "agy/<model>",
+      "default_model_authority": "external",
+      "ownership": "external_user_preserving",
+      "runtime_authority": "external",
+      "path_template": "<catalog_dir>/agy.json",
+      "feature_gate": null
+    },
+    {
+      "id": "codex-builtin-openai",
+      "kind": "direct_profile",
+      "group": "direct-openai",
+      "selector_template": "gpt-*",
+      "default_model_authority": "codex",
+      "ownership": "codex_user_preserving",
+      "runtime_authority": "codex",
+      "path_template": "<codex_config_dir>/openai.config.toml",
+      "feature_gate": null
+    },
+    {
+      "id": "codex-direct",
+      "kind": "feature_gated_route",
+      "group": "provider-codex-direct",
+      "selector_template": "codex-direct/<model>",
+      "default_model_authority": "runtime",
+      "ownership": "reverso_managed",
+      "runtime_authority": "reverso",
+      "path_template": "<codex_config_dir>/reverso-codex-direct.config.toml",
+      "feature_gate": "REVERSO_CODEX_DIRECT_BACKEND"
+    },
+    {
+      "id": "codex-minimax",
+      "kind": "direct_profile",
+      "group": "direct-minimax",
+      "selector_template": "MiniMax-*",
+      "default_model_authority": "codex",
+      "ownership": "codex_user_preserving",
+      "runtime_authority": "codex",
+      "path_template": "<codex_config_dir>/minimax.config.toml",
+      "feature_gate": null
+    },
+    {
+      "id": "codex-openai-pass-through",
+      "kind": "feature_gated_route",
+      "group": "provider-openai-pass-through",
+      "selector_template": "openai-pass-through/<model>",
+      "default_model_authority": "runtime",
+      "ownership": "reverso_managed",
+      "runtime_authority": "reverso",
+      "path_template": "<codex_config_dir>/reverso-openai-pass-through.config.toml",
+      "feature_gate": "REVERSO_OPENAI_BACKEND"
+    },
+    {
+      "id": "codex-reverso-auggie",
+      "kind": "reverso_route",
+      "group": "provider-auggie",
+      "selector_template": "auggie/<model>",
+      "default_model_authority": "runtime",
+      "ownership": "reverso_managed",
+      "runtime_authority": "reverso",
+      "path_template": "<codex_config_dir>/reverso-auggie.config.toml",
+      "feature_gate": null
+    },
+    {
+      "id": "codex-reverso-claude",
+      "kind": "reverso_route",
+      "group": "provider-claude",
+      "selector_template": "<model>",
+      "default_model_authority": "runtime",
+      "ownership": "reverso_managed",
+      "runtime_authority": "reverso",
+      "path_template": "<codex_config_dir>/reverso-claude.config.toml",
+      "feature_gate": null
+    },
+    {
+      "id": "codex-reverso-copilot",
+      "kind": "reverso_route",
+      "group": "provider-copilot",
+      "selector_template": "copilot/<model>",
+      "default_model_authority": "runtime",
+      "ownership": "reverso_managed",
+      "runtime_authority": "reverso",
+      "path_template": "<codex_config_dir>/reverso-copilot.config.toml",
+      "feature_gate": null
+    },
+    {
+      "id": "codex-reverso-deepseek",
+      "kind": "reverso_route",
+      "group": "provider-deepseek",
+      "selector_template": "<model>",
+      "default_model_authority": "runtime",
+      "ownership": "reverso_managed",
+      "runtime_authority": "reverso",
+      "path_template": "<codex_config_dir>/reverso-deepseek.config.toml",
+      "feature_gate": null
+    },
+    {
+      "id": "codex-reverso-kimi",
+      "kind": "reverso_route",
+      "group": "provider-kimi",
+      "selector_template": "kimi-k3",
+      "default_model_authority": "runtime",
+      "ownership": "reverso_managed",
+      "runtime_authority": "reverso",
+      "path_template": "<codex_config_dir>/reverso-kimi.config.toml",
+      "feature_gate": null
+    }
+  ]
+}
