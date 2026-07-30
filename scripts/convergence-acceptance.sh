@@ -319,6 +319,14 @@ try:
                     raise ValueError("disabled feature-gated profile")
                 feature_gated_absent_count += 1
                 continue
+            if not profile.exists():
+                if any(
+                    statuses[surface["id"]] != "current"
+                    for statuses in surface_statuses.values()
+                ):
+                    raise ValueError("unavailable feature-gated surface status")
+                feature_gated_absent_count += 1
+                continue
         if not profile.is_file():
             raise ValueError("codex profile")
         if kind == "direct_profile":

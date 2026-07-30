@@ -383,6 +383,11 @@ exit 99
                                     raw is not None
                                     and raw.strip().lower() in true_values
                                 )
+                            if (
+                                os.environ.get("FAKE_SYNC_UNAVAILABLE_FEATURE_GATE")
+                                == surface["feature_gate"]
+                            ):
+                                enabled = False
                         if not enabled:
                             continue
                         path = pathlib.Path(
@@ -547,6 +552,21 @@ def test_acceptance_executes_all_enabled_feature_gated_profiles(
     codex_calls = (tmp_path / "codex.log").read_text(encoding="utf-8").splitlines()
     assert any('model="codex-direct"' in call for call in codex_calls)
     assert any('model="codex-openai-pass-through"' in call for call in codex_calls)
+
+
+def test_acceptance_allows_enabled_feature_gate_without_live_profile(
+    tmp_path: Path,
+) -> None:
+    repo, env, _ = _acceptance_fixture(tmp_path)
+    env["FAKE_SYNC_UNAVAILABLE_FEATURE_GATE"] = "REVERSO_CODEX_DIRECT_BACKEND"
+
+    result = _run_acceptance(repo, env)
+
+    assert result.returncode == 0, result.stderr
+    evidence = json.loads(result.stdout)
+    assert evidence["codex_profiles_executed"] == 7
+    assert evidence["codex_feature_gated_profiles_executed"] == 0
+    assert evidence["codex_feature_gated_profiles_absent"] == 2
 
 
 @pytest.mark.parametrize(
