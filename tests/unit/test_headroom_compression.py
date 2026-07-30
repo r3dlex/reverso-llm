@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 import time
 from dataclasses import dataclass
@@ -13,9 +14,11 @@ from reverso.protocols import headroom_compression
 from reverso.protocols.adapter import ResponsesRequest
 from reverso.protocols.headroom_compression import (
     HeadroomCompressionConfig,
+    HeadroomCompressionOutcome,
     HeadroomUsageMetrics,
     compress_responses_request,
     configure_headroom_environment,
+    normalize_headroom_provider,
 )
 
 
@@ -65,6 +68,188 @@ def _rich_request() -> ResponsesRequest:
         tool_choice="auto",
         extra={"temperature": 0.2},
     )
+
+
+def _usage_contract() -> dict[str, Any]:
+    return json.loads(
+        Path(
+            "tests/fixtures/client_convergence/headroom_usage_v2_contract.json"
+        ).read_text(encoding="utf-8")
+    )
+
+
+def test_usage_metrics_v2_schema_and_reset_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    timestamps = iter(
+        (
+            "2026-07-30T10:00:00+00:00",
+            "2026-07-30T10:01:00+00:00",
+        )
+    )
+    monkeypatch.setattr(headroom_compression, "_timestamp", lambda: next(timestamps))
+    metrics = HeadroomUsageMetrics()
+    config = HeadroomCompressionConfig(
+        enabled=False,
+        profile="coding",
+        timeout_seconds=3.5,
+        model_limit=123456,
+    )
+
+    initial = metrics.snapshot(config)
+    contract = _usage_contract()
+    expected_fields = {
+        "schema_version",
+        *contract["preserved_fields"],
+        *contract["additive_fields"],
+    }
+
+    assert set(initial) == expected_fields
+    assert initial["schema_version"] == contract["schema_version"]
+    assert initial["enabled"] is False
+    assert initial["profile"] == "coding"
+    assert initial["timeout_seconds"] == 3.5
+    assert initial["model_limit"] == 123456
+    assert initial["process_started_at"] == "2026-07-30T10:00:00+00:00"
+    assert initial["measurement_started_at"] == initial["process_started_at"]
+    assert initial["reset_reason"] == contract["reset_reasons"]["new_process"]
+    assert initial["requests_passed_through"] == 0
+    assert initial["compression_ratio"] == 0.0
+    assert initial["compression_success_rate"] == 0.0
+    assert initial["average_tokens_saved"] == 0.0
+    for name, keys in contract["maps"].items():
+        assert list(initial[name]) == keys
+        assert set(initial[name].values()) == {0}
+
+    metrics.reset()
+    reset = metrics.snapshot(config)
+    assert reset["process_started_at"] == initial["process_started_at"]
+    assert reset["measurement_started_at"] == "2026-07-30T10:01:00+00:00"
+    assert reset["reset_reason"] == contract["reset_reasons"]["explicit_test_reset"]
+
+
+def test_usage_metrics_v2_bounded_attribution_and_formulas(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    timestamps = iter(f"2026-07-30T10:0{minute}:00+00:00" for minute in range(4))
+    monkeypatch.setattr(headroom_compression, "_timestamp", lambda: next(timestamps))
+    metrics = HeadroomUsageMetrics()
+    request = ResponsesRequest(model="untrusted/raw-model", input="secret prompt")
+
+    metrics.record(
+        HeadroomCompressionOutcome(
+            request=request,
+            compressed=True,
+            reason="compressed",
+            tokens_before=100,
+            tokens_after=40,
+            tokens_saved=60,
+        ),
+        provider="claude",
+        surface="responses",
+    )
+    metrics.record(
+        HeadroomCompressionOutcome(request=request, reason="disabled"),
+        provider="not-a-provider",
+        surface="not-a-surface",
+    )
+    metrics.record(
+        HeadroomCompressionOutcome(
+            request=request,
+            fail_open=True,
+            reason="exception",
+            error_type="ArbitrarySecretException",
+        ),
+        provider="other",
+        surface="anthropic_messages",
+    )
+
+    snapshot = metrics.snapshot()
+    assert snapshot["requests_seen"] == 3
+    assert snapshot["requests_compressed"] == 1
+    assert snapshot["requests_passed_through"] == 1
+    assert snapshot["fail_open_count"] == 1
+    assert snapshot["compression_ratio"] == 0.6
+    assert snapshot["compression_success_rate"] == pytest.approx(1 / 3)
+    assert snapshot["average_tokens_saved"] == 60.0
+    assert snapshot["outcome_counts"] == {
+        "compressed": 1,
+        "passed_through": 1,
+        "fail_open": 1,
+        "other": 0,
+    }
+    assert snapshot["failure_reasons"]["exception"] == 1
+    assert snapshot["error_types"]["dependency_exception"] == 1
+    assert snapshot["provider_counts"]["claude"] == 1
+    assert snapshot["provider_counts"]["other"] == 2
+    assert snapshot["surface_counts"]["responses"] == 1
+    assert snapshot["surface_counts"]["anthropic_messages"] == 1
+    assert snapshot["surface_counts"]["other"] == 1
+    assert snapshot["last_success_at"] == "2026-07-30T10:01:00+00:00"
+    assert snapshot["last_failure_at"] == "2026-07-30T10:03:00+00:00"
+    assert "secret prompt" not in repr(snapshot)
+    assert "untrusted/raw-model" not in repr(snapshot)
+    assert "ArbitrarySecretException" not in repr(snapshot)
+
+
+def test_usage_metrics_clamp_negative_counters_ratios_and_unknowns() -> None:
+    metrics = HeadroomUsageMetrics()
+    request = ResponsesRequest(model="misleading/claude", input="private")
+
+    metrics.record(
+        HeadroomCompressionOutcome(
+            request=request,
+            compressed=True,
+            reason="compressed",
+            tokens_before=10,
+            tokens_after=-5,
+            tokens_saved=50,
+        ),
+        provider="openai-pass-through",
+        surface="responses",
+    )
+    metrics.record(
+        HeadroomCompressionOutcome(
+            request=request,
+            fail_open=True,
+            reason="unbounded-reason",
+            error_type="unbounded-error",
+            tokens_before=-10,
+            tokens_after=-20,
+            tokens_saved=-30,
+        ),
+        provider="unbounded-provider",
+        surface="unbounded-surface",
+    )
+    metrics.record(
+        HeadroomCompressionOutcome(request=request, reason="unbounded-outcome"),
+    )
+
+    snapshot = metrics.snapshot()
+    assert snapshot["tokens_before"] == 10
+    assert snapshot["tokens_after"] == 0
+    assert snapshot["tokens_saved"] == 50
+    assert snapshot["compression_ratio"] == 1.0
+    assert snapshot["compression_success_rate"] == pytest.approx(1 / 3)
+    assert snapshot["requests_passed_through"] == 1
+    assert snapshot["outcome_counts"]["other"] == 1
+    assert snapshot["failure_reasons"]["other"] == 1
+    assert snapshot["error_types"]["other"] == 1
+    assert snapshot["provider_counts"]["other"] == 2
+    assert snapshot["surface_counts"]["other"] == 2
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("codex", "codex-direct"),
+        ("openai", "openai-pass-through"),
+        ("claude", "claude"),
+        ("unknown", "other"),
+    ],
+)
+def test_normalize_headroom_provider(value: str, expected: str) -> None:
+    assert normalize_headroom_provider(value) == expected
 
 
 @pytest.mark.asyncio
@@ -275,8 +460,10 @@ async def test_compressor_exception_fails_open() -> None:
     assert outcome.error_type == "RuntimeError"
     snapshot = metrics.snapshot()
     assert snapshot["fail_open_count"] == 1
-    assert snapshot["failure_reasons"] == {"exception": 1}
-    assert snapshot["error_types"] == {"RuntimeError": 1}
+    assert snapshot["failure_reasons"]["exception"] == 1
+    assert sum(snapshot["failure_reasons"].values()) == 1
+    assert snapshot["error_types"]["dependency_exception"] == 1
+    assert sum(snapshot["error_types"].values()) == 1
 
 
 @pytest.mark.asyncio
@@ -395,7 +582,9 @@ async def test_retrieval_marker_fails_open() -> None:
     assert outcome.fail_open is True
     assert outcome.reason == "retrieval_marker"
     assert outcome.error_type == "RetrievalMarker"
-    assert metrics.snapshot()["failure_reasons"] == {"retrieval_marker": 1}
+    failure_reasons = metrics.snapshot()["failure_reasons"]
+    assert failure_reasons["retrieval_marker"] == 1
+    assert sum(failure_reasons.values()) == 1
 
 
 @pytest.mark.asyncio

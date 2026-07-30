@@ -34,13 +34,16 @@ from reverso.protocols.feature_policy import (
     check_features,
     extract_features,
 )
+from reverso.protocols.headroom_compression import (
+    compress_responses_request,
+    normalize_headroom_provider,
+)
 from reverso.protocols.middleware import (
     encode_sse_event,
     models_with_codex_refresh,
     normalize_request_payload,
     strip_think_json,
 )
-from reverso.protocols.headroom_compression import compress_responses_request
 from reverso.protocols.model_exposure import PREFIXED_SELECTOR_PREFIXES
 from reverso.protocols.replay import record_input_items
 from reverso.proxy.profile_routing import (
@@ -268,7 +271,11 @@ async def _handle_create_response(
 
     normalized = normalize_request_payload(payload)
     request = ResponsesRequest.from_payload(normalized)
-    compression_outcome = await compress_responses_request(request)
+    compression_outcome = await compress_responses_request(
+        request,
+        provider=normalize_headroom_provider(provider),
+        surface="responses",
+    )
     dispatch_request = compression_outcome.request
     token = CURRENT_PROFILE_WORKSPACE.set(workspace)
     try:

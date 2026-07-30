@@ -682,6 +682,83 @@ async def test_get_usage_headroom_returns_aggregate_snapshot(monkeypatch) -> Non
 
 
 @pytest.mark.asyncio
+async def test_usage_routes_share_exact_headroom_v2_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both usage routes expose one exact process-local Headroom schema."""
+    import subprocess as subprocess_mod
+
+    import reverso.protocols.adapters.codex_usage_store as store_mod
+    from reverso.proxy.compose import CompositionRoot
+
+    contract = json.loads(
+        Path(
+            "tests/fixtures/client_convergence/headroom_usage_v2_contract.json"
+        ).read_text(encoding="utf-8")
+    )
+    expected_fields = {
+        "schema_version",
+        *contract["preserved_fields"],
+        *contract["additive_fields"],
+    }
+    original_read_text = Path.read_text
+
+    def guarded_read_text(path: Path, *args: Any, **kwargs: Any) -> str:
+        if path.name == "proxy_savings.json":
+            raise AssertionError("usage routes must not read standalone savings")
+        return original_read_text(path, *args, **kwargs)
+
+    def forbidden_subprocess(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("usage routes must not invoke subprocesses or RTK")
+
+    monkeypatch.setattr(Path, "read_text", guarded_read_text)
+    monkeypatch.setattr(subprocess_mod, "run", forbidden_subprocess)
+    monkeypatch.setattr(subprocess_mod, "Popen", forbidden_subprocess)
+    monkeypatch.setattr(store_mod, "_latest", None)
+    DEFAULT_HEADROOM_METRICS.reset()
+
+    async def _tripwire(scope, receive, send):
+        raise AssertionError("usage routes must not reach another ASGI app")
+
+    root = CompositionRoot(
+        gateway=_tripwire,
+        anthropic_app=_tripwire,
+        legacy_app=_tripwire,
+    )
+    try:
+        combined = await _asgi_get_usage(root)
+        standalone = await _asgi_get_usage(root, path="/usage/headroom")
+    finally:
+        DEFAULT_HEADROOM_METRICS.reset()
+
+    assert (
+        standalone["schema_version"] == contract["outer_usage_headroom_schema_version"]
+    )
+    assert standalone["provider"] == contract["outer_provider"]
+    assert combined["headroom"] == standalone["headroom"]
+    assert set(standalone["headroom"]) == expected_fields
+    assert standalone["headroom"]["schema_version"] == contract["schema_version"]
+    assert standalone["headroom"]["profile"] == "coding"
+    for name, keys in contract["maps"].items():
+        assert list(standalone["headroom"][name]) == keys
+
+    def nested_keys(value: Any) -> set[str]:
+        if isinstance(value, dict):
+            return {
+                key
+                for name, item in value.items()
+                for key in ({name} | nested_keys(item))
+            }
+        if isinstance(value, list):
+            return {key for item in value for key in nested_keys(item)}
+        return set()
+
+    snapshot_keys = nested_keys(standalone["headroom"])
+    for forbidden in contract["forbidden_payload_dimensions"]:
+        assert forbidden not in snapshot_keys
+
+
+@pytest.mark.asyncio
 async def test_get_usage_headroom_disabled_reflects_config(monkeypatch) -> None:
     """GET /usage/headroom reports the env rollback switch without side effects."""
     from reverso.proxy.compose import CompositionRoot

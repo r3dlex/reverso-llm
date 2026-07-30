@@ -28,6 +28,43 @@ _DEFAULT_PROFILE = "coding"
 _DEFAULT_TIMEOUT_SECONDS = 2.0
 _DEFAULT_MODEL_LIMIT = 200000
 _DEFAULT_PROFILE_MIN_TOKENS_TO_COMPRESS = 10
+_OUTCOME_KEYS = ("compressed", "passed_through", "fail_open", "other")
+_FAILURE_REASON_KEYS = (
+    "worker_busy",
+    "timeout",
+    "exception",
+    "inflation_guard",
+    "retrieval_marker",
+    "unsafe_output",
+    "other",
+)
+_ERROR_TYPE_KEYS = (
+    "timeout",
+    "worker_busy",
+    "dependency_exception",
+    "inflation_guard",
+    "retrieval_marker",
+    "unsafe_output",
+    "other",
+)
+_PROVIDER_KEYS = (
+    "claude",
+    "copilot",
+    "auggie",
+    "deepseek",
+    "kimi",
+    "codex-direct",
+    "openai-pass-through",
+    "other",
+)
+_SURFACE_KEYS = ("responses", "anthropic_messages", "other")
+_PASS_THROUGH_REASONS = {
+    "disabled",
+    "no_text",
+    "below_min_tokens",
+    "unchanged",
+    "pass_through",
+}
 
 CompressCallable = Callable[..., Any]
 
@@ -39,6 +76,53 @@ _HEADROOM_EXECUTOR = ThreadPoolExecutor(
 )
 _HEADROOM_WORKER_LOCK = threading.Lock()
 _HEADROOM_ACTIVE_WORKERS = 0
+
+
+def _timestamp() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def _zero_counts(keys: tuple[str, ...]) -> dict[str, int]:
+    return dict.fromkeys(keys, 0)
+
+
+def normalize_headroom_provider(value: str) -> str:
+    """Map a dispatch provider to the bounded Headroom provider dimension."""
+    aliases = {
+        "codex": "codex-direct",
+        "openai": "openai-pass-through",
+    }
+    normalized = aliases.get(value, value)
+    return normalized if normalized in _PROVIDER_KEYS else "other"
+
+
+def _normalize_headroom_surface(value: str) -> str:
+    return value if value in _SURFACE_KEYS else "other"
+
+
+def _normalize_failure_reason(value: str) -> str:
+    return value if value in _FAILURE_REASON_KEYS else "other"
+
+
+def _normalize_error_type(value: str, reason: str) -> str:
+    known = {
+        "TimeoutError": "timeout",
+        "WorkerBusy": "worker_busy",
+        "InflationGuard": "inflation_guard",
+        "RetrievalMarker": "retrieval_marker",
+        "UnsafeOutput": "unsafe_output",
+    }
+    if value in _ERROR_TYPE_KEYS:
+        return value
+    if value in known:
+        return known[value]
+    if reason == "exception":
+        return "dependency_exception"
+    return "other"
+
+
+def _clamp_ratio(value: float) -> float:
+    return min(max(value, 0.0), 1.0)
 
 
 def _try_reserve_headroom_worker() -> bool:
@@ -124,72 +208,185 @@ class HeadroomCompressionOutcome:
 class HeadroomUsageMetrics:
     """In-memory aggregate Headroom savings counters."""
 
+    process_started_at: str = field(init=False)
+    measurement_started_at: str = field(init=False)
     requests_seen: int = 0
     requests_compressed: int = 0
     tokens_before: int = 0
     tokens_after: int = 0
     tokens_saved: int = 0
     fail_open_count: int = 0
-    failure_reasons: dict[str, int] = field(default_factory=dict)
-    error_types: dict[str, int] = field(default_factory=dict)
+    outcome_counts: dict[str, int] = field(
+        default_factory=lambda: _zero_counts(_OUTCOME_KEYS)
+    )
+    failure_reasons: dict[str, int] = field(
+        default_factory=lambda: _zero_counts(_FAILURE_REASON_KEYS)
+    )
+    error_types: dict[str, int] = field(
+        default_factory=lambda: _zero_counts(_ERROR_TYPE_KEYS)
+    )
+    provider_counts: dict[str, int] = field(
+        default_factory=lambda: _zero_counts(_PROVIDER_KEYS)
+    )
+    surface_counts: dict[str, int] = field(
+        default_factory=lambda: _zero_counts(_SURFACE_KEYS)
+    )
     updated_at: str | None = None
+    last_success_at: str | None = None
+    last_failure_at: str | None = None
+    reset_reason: str = "process_start"
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
-    def record(self, outcome: HeadroomCompressionOutcome) -> None:
+    def __post_init__(self) -> None:
+        started_at = _timestamp()
+        self.process_started_at = started_at
+        self.measurement_started_at = started_at
+
+    def record(
+        self,
+        outcome: HeadroomCompressionOutcome,
+        *,
+        provider: str = "other",
+        surface: str = "other",
+    ) -> None:
         """Record one compression attempt without storing prompt content."""
         with self._lock:
+            timestamp = _timestamp()
             self.requests_seen += 1
+            provider_key = normalize_headroom_provider(provider)
+            surface_key = _normalize_headroom_surface(surface)
+            self.provider_counts[provider_key] = (
+                self.provider_counts.get(provider_key, 0) + 1
+            )
+            self.surface_counts[surface_key] = (
+                self.surface_counts.get(surface_key, 0) + 1
+            )
             if outcome.compressed:
                 self.requests_compressed += 1
+                self.outcome_counts["compressed"] = (
+                    self.outcome_counts.get("compressed", 0) + 1
+                )
+                self.last_success_at = timestamp
+            elif outcome.fail_open:
+                self.outcome_counts["fail_open"] = (
+                    self.outcome_counts.get("fail_open", 0) + 1
+                )
+            elif outcome.reason in _PASS_THROUGH_REASONS:
+                self.outcome_counts["passed_through"] = (
+                    self.outcome_counts.get("passed_through", 0) + 1
+                )
+            else:
+                self.outcome_counts["other"] = self.outcome_counts.get("other", 0) + 1
             if outcome.fail_open:
                 self.fail_open_count += 1
-                self.failure_reasons[outcome.reason] = (
-                    self.failure_reasons.get(outcome.reason, 0) + 1
+                reason_key = _normalize_failure_reason(outcome.reason)
+                self.failure_reasons[reason_key] = (
+                    self.failure_reasons.get(reason_key, 0) + 1
                 )
+                self.last_failure_at = timestamp
             if outcome.error_type:
-                self.error_types[outcome.error_type] = (
-                    self.error_types.get(outcome.error_type, 0) + 1
+                error_key = _normalize_error_type(
+                    outcome.error_type,
+                    outcome.reason,
                 )
+                self.error_types[error_key] = self.error_types.get(error_key, 0) + 1
             self.tokens_before += max(outcome.tokens_before, 0)
             self.tokens_after += max(outcome.tokens_after, 0)
             self.tokens_saved += max(outcome.tokens_saved, 0)
-            self.updated_at = datetime.now(UTC).isoformat()
+            self.updated_at = timestamp
 
     def snapshot(
         self, config: HeadroomCompressionConfig | None = None
     ) -> dict[str, Any]:
         """Return prompt-free aggregate metrics."""
         with self._lock:
-            ratio = (
-                self.tokens_saved / self.tokens_before if self.tokens_before else 0.0
+            requests_seen = max(self.requests_seen, 0)
+            requests_compressed = max(self.requests_compressed, 0)
+            fail_open_count = max(self.fail_open_count, 0)
+            tokens_before = max(self.tokens_before, 0)
+            tokens_after = max(self.tokens_after, 0)
+            tokens_saved = max(self.tokens_saved, 0)
+            compression_ratio = _clamp_ratio(
+                tokens_saved / tokens_before if tokens_before else 0.0
+            )
+            compression_success_rate = _clamp_ratio(
+                requests_compressed / requests_seen if requests_seen else 0.0
+            )
+            average_tokens_saved = (
+                tokens_saved / requests_compressed if requests_compressed else 0.0
             )
             return {
+                "schema_version": 2,
                 "enabled": True if config is None else config.enabled,
                 "profile": _DEFAULT_PROFILE if config is None else config.profile,
-                "requests_seen": self.requests_seen,
-                "requests_compressed": self.requests_compressed,
-                "tokens_before": self.tokens_before,
-                "tokens_after": self.tokens_after,
-                "tokens_saved": self.tokens_saved,
-                "compression_ratio": ratio,
-                "fail_open_count": self.fail_open_count,
-                "failure_reasons": dict(self.failure_reasons),
-                "error_types": dict(self.error_types),
+                "requests_seen": requests_seen,
+                "requests_compressed": requests_compressed,
+                "tokens_before": tokens_before,
+                "tokens_after": tokens_after,
+                "tokens_saved": tokens_saved,
+                "compression_ratio": compression_ratio,
+                "fail_open_count": fail_open_count,
+                "failure_reasons": {
+                    key: max(self.failure_reasons.get(key, 0), 0)
+                    for key in _FAILURE_REASON_KEYS
+                },
+                "error_types": {
+                    key: max(self.error_types.get(key, 0), 0)
+                    for key in _ERROR_TYPE_KEYS
+                },
                 "updated_at": self.updated_at,
+                "process_started_at": self.process_started_at,
+                "measurement_started_at": self.measurement_started_at,
+                "requests_passed_through": max(
+                    requests_seen - requests_compressed - fail_open_count,
+                    0,
+                ),
+                "compression_success_rate": compression_success_rate,
+                "average_tokens_saved": average_tokens_saved,
+                "outcome_counts": {
+                    key: max(self.outcome_counts.get(key, 0), 0)
+                    for key in _OUTCOME_KEYS
+                },
+                "provider_counts": {
+                    key: max(self.provider_counts.get(key, 0), 0)
+                    for key in _PROVIDER_KEYS
+                },
+                "surface_counts": {
+                    key: max(self.surface_counts.get(key, 0), 0)
+                    for key in _SURFACE_KEYS
+                },
+                "timeout_seconds": (
+                    _DEFAULT_TIMEOUT_SECONDS
+                    if config is None
+                    else config.timeout_seconds
+                ),
+                "model_limit": (
+                    _DEFAULT_MODEL_LIMIT if config is None else config.model_limit
+                ),
+                "last_success_at": self.last_success_at,
+                "last_failure_at": self.last_failure_at,
+                "reset_reason": self.reset_reason,
             }
 
     def reset(self) -> None:
         """Reset process-local metrics, used by tests."""
         with self._lock:
+            self.measurement_started_at = _timestamp()
             self.requests_seen = 0
             self.requests_compressed = 0
             self.tokens_before = 0
             self.tokens_after = 0
             self.tokens_saved = 0
             self.fail_open_count = 0
-            self.failure_reasons = {}
-            self.error_types = {}
+            self.outcome_counts = _zero_counts(_OUTCOME_KEYS)
+            self.failure_reasons = _zero_counts(_FAILURE_REASON_KEYS)
+            self.error_types = _zero_counts(_ERROR_TYPE_KEYS)
+            self.provider_counts = _zero_counts(_PROVIDER_KEYS)
+            self.surface_counts = _zero_counts(_SURFACE_KEYS)
             self.updated_at = None
+            self.last_success_at = None
+            self.last_failure_at = None
+            self.reset_reason = "manual_test_reset"
 
 
 DEFAULT_HEADROOM_METRICS = HeadroomUsageMetrics()
@@ -387,6 +584,8 @@ def _may_reach_headroom_token_floor(
 async def compress_responses_request(
     request: ResponsesRequest,
     *,
+    provider: str = "other",
+    surface: str = "other",
     config: HeadroomCompressionConfig | None = None,
     compressor: CompressCallable | None = None,
     metrics: HeadroomUsageMetrics | None = None,
@@ -396,7 +595,7 @@ async def compress_responses_request(
     recorder = DEFAULT_HEADROOM_METRICS if metrics is None else metrics
 
     async def finish(outcome: HeadroomCompressionOutcome) -> HeadroomCompressionOutcome:
-        recorder.record(outcome)
+        recorder.record(outcome, provider=provider, surface=surface)
         return outcome
 
     if not resolved.enabled:

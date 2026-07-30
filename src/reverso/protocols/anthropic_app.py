@@ -61,7 +61,10 @@ from reverso.protocols.anthropic_translate import (
     prepare_anthropic_request,
     responses_envelope_to_anthropic,
 )
-from reverso.protocols.headroom_compression import compress_responses_request
+from reverso.protocols.headroom_compression import (
+    compress_responses_request,
+    normalize_headroom_provider,
+)
 from reverso.protocols.replay import build_prompt, estimate_usage, new_message_id
 from reverso.protocols.surface_registry import (
     SURFACE_BACKENDS,
@@ -674,7 +677,11 @@ class AnthropicMessagesApp:
         502 Anthropic error envelope; the request is never silently dropped.
         """
         adapter = self._adapters[backend]
-        compression_outcome = await compress_responses_request(request)
+        compression_outcome = await compress_responses_request(
+            request,
+            provider=normalize_headroom_provider(backend),
+            surface="anthropic_messages",
+        )
         dispatch_request = compression_outcome.request
         try:
             envelope = await adapter.create_response(dispatch_request)
@@ -726,7 +733,11 @@ class AnthropicMessagesApp:
             only safe channel (emitted by the mapper itself).
         """
         adapter = self._adapters[backend]
-        compression_outcome = await compress_responses_request(request)
+        compression_outcome = await compress_responses_request(
+            request,
+            provider=normalize_headroom_provider(backend),
+            surface="anthropic_messages",
+        )
         dispatch_request = compression_outcome.request
         message_id = new_message_id()
         anthropic_events = responses_sse_to_anthropic(
