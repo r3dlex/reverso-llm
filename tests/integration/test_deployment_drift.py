@@ -200,6 +200,75 @@ def _write_generated_kimi(home: Path) -> None:
     )
 
 
+def _headroom_usage_payload() -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "provider": "headroom",
+        "headroom": {
+            "schema_version": 2,
+            "enabled": True,
+            "profile": "coding",
+            "requests_seen": 0,
+            "requests_compressed": 0,
+            "tokens_before": 0,
+            "tokens_after": 0,
+            "tokens_saved": 0,
+            "compression_ratio": 0.0,
+            "fail_open_count": 0,
+            "failure_reasons": {
+                "worker_busy": 0,
+                "timeout": 0,
+                "exception": 0,
+                "inflation_guard": 0,
+                "retrieval_marker": 0,
+                "unsafe_output": 0,
+                "other": 0,
+            },
+            "error_types": {
+                "timeout": 0,
+                "worker_busy": 0,
+                "dependency_exception": 0,
+                "inflation_guard": 0,
+                "retrieval_marker": 0,
+                "unsafe_output": 0,
+                "other": 0,
+            },
+            "updated_at": None,
+            "process_started_at": "2026-07-30T10:00:00+00:00",
+            "measurement_started_at": "2026-07-30T10:00:00+00:00",
+            "requests_passed_through": 0,
+            "compression_success_rate": 0.0,
+            "average_tokens_saved": 0.0,
+            "outcome_counts": {
+                "compressed": 0,
+                "passed_through": 0,
+                "fail_open": 0,
+                "other": 0,
+            },
+            "provider_counts": {
+                "claude": 0,
+                "copilot": 0,
+                "auggie": 0,
+                "deepseek": 0,
+                "kimi": 0,
+                "codex-direct": 0,
+                "openai-pass-through": 0,
+                "other": 0,
+            },
+            "surface_counts": {
+                "responses": 0,
+                "anthropic_messages": 0,
+                "other": 0,
+            },
+            "timeout_seconds": 2.0,
+            "model_limit": 120000,
+            "last_success_at": None,
+            "last_failure_at": None,
+            "reset_reason": "process_start",
+        },
+    }
+
+
 def _env(tmp_path: Path) -> tuple[DriftEnvironment, FakeRunner]:
     home = tmp_path / "home"
     checkout = tmp_path / "canonical"
@@ -213,10 +282,14 @@ def _env(tmp_path: Path) -> tuple[DriftEnvironment, FakeRunner]:
         home=home,
         canonical_checkout=checkout,
         command_runner=runner,
-        json_fetcher=lambda _url: {
-            "data": [{"id": "kimi-k3", "owned_by": "moonshot"}],
-            "model_discovery_source": "live",
-        },
+        json_fetcher=lambda url: (
+            _headroom_usage_payload()
+            if url == deployment_drift.HEADROOM_USAGE_URL
+            else {
+                "data": [{"id": "kimi-k3", "owned_by": "moonshot"}],
+                "model_discovery_source": "live",
+            }
+        ),
         uid=501,
         launcher=Path(LAUNCHER),
     )
@@ -939,6 +1012,134 @@ def test_acceptance_rejects_each_generated_metadata_mismatch(
 
     with pytest.raises(DeploymentDriftError, match=message):
         check_deployment_drift("acceptance", env, selected_commit=COMMIT)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    (
+        ("outer-schema", "outer schema"),
+        ("provider", "provider"),
+        ("inner-schema", "inner schema"),
+        ("profile", "profile"),
+        ("extra-field", "exact fields"),
+        ("sensitive-field", "sensitive field"),
+    ),
+)
+def test_acceptance_rejects_each_live_headroom_mismatch(
+    tmp_path: Path, mutation: str, message: str
+) -> None:
+    env, runner = _env(tmp_path)
+    _bootstrap(env)
+    _write_generated_kimi(env.home)
+    payload = _headroom_usage_payload()
+    if mutation == "outer-schema":
+        payload["schema_version"] = 2
+    elif mutation == "provider":
+        payload["provider"] = "standalone"
+    elif mutation == "inner-schema":
+        payload["headroom"]["schema_version"] = 1
+    elif mutation == "profile":
+        payload["headroom"]["profile"] = "generic"
+    elif mutation == "extra-field":
+        payload["headroom"]["unexpected"] = True
+    else:
+        payload["headroom"]["prompt"] = "must not be exposed"
+    env = DriftEnvironment(
+        repo_root=env.repo_root,
+        home=env.home,
+        canonical_checkout=env.canonical_checkout,
+        command_runner=runner,
+        json_fetcher=lambda url: (
+            payload
+            if url == deployment_drift.HEADROOM_USAGE_URL
+            else {
+                "data": [{"id": "kimi-k3"}],
+                "model_discovery_source": "live",
+            }
+        ),
+        uid=env.uid,
+        launcher=env.launcher,
+    )
+
+    with pytest.raises(DeploymentDriftError, match=message):
+        check_deployment_drift("acceptance", env, selected_commit=COMMIT)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    (
+        ("enabled", 1, "enabled"),
+        ("requests_seen", -1, "requests_seen"),
+        ("requests_compressed", True, "requests_compressed"),
+        ("compression_ratio", float("nan"), "compression_ratio"),
+        ("compression_success_rate", 2.0, "compression_success_rate"),
+        ("average_tokens_saved", float("inf"), "average_tokens_saved"),
+        ("timeout_seconds", 0.0, "timeout_seconds"),
+        ("model_limit", False, "model_limit"),
+        ("updated_at", "2026-07-30T10:00:00+02:00", "updated_at"),
+        ("reset_reason", "manual", "reset_reason"),
+    ),
+)
+def test_live_headroom_validator_rejects_invalid_scalar_contract(
+    field: str, value: Any, message: str
+) -> None:
+    payload = _headroom_usage_payload()
+    payload["headroom"][field] = value
+
+    with pytest.raises(DeploymentDriftError, match=message):
+        deployment_drift.validate_headroom_usage_payload(payload)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("compression_ratio", 0.1),
+        ("compression_success_rate", 0.1),
+        ("average_tokens_saved", 1.0),
+        ("requests_passed_through", 1),
+    ),
+)
+def test_live_headroom_validator_rejects_formula_drift(
+    field: str, value: float
+) -> None:
+    payload = _headroom_usage_payload()
+    payload["headroom"][field] = value
+
+    with pytest.raises(DeploymentDriftError, match="governed formula"):
+        deployment_drift.validate_headroom_usage_payload(payload)
+
+
+@pytest.mark.parametrize(
+    ("configured", "expected"),
+    (
+        (None, "coding"),
+        ("", "coding"),
+        ("   ", "coding"),
+        ("agent-90", "agent-90"),
+    ),
+)
+def test_live_headroom_validator_uses_normalized_configured_profile(
+    monkeypatch: pytest.MonkeyPatch,
+    configured: str | None,
+    expected: str,
+) -> None:
+    if configured is None:
+        monkeypatch.delenv("REVERSO_HEADROOM_PROFILE", raising=False)
+    else:
+        monkeypatch.setenv("REVERSO_HEADROOM_PROFILE", configured)
+    payload = _headroom_usage_payload()
+    payload["headroom"]["profile"] = expected
+
+    deployment_drift.validate_headroom_usage_payload(payload)
+
+
+def test_live_headroom_validator_rejects_profile_other_than_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("REVERSO_HEADROOM_PROFILE", "agent-90")
+
+    with pytest.raises(DeploymentDriftError, match="agent-90"):
+        deployment_drift.validate_headroom_usage_payload(_headroom_usage_payload())
 
 
 def test_all_phases_pass_when_authorities_converge(tmp_path: Path) -> None:

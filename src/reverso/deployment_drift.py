@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import math
 import os
 import plistlib
 import pwd
@@ -24,6 +25,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from reverso.protocols.headroom_compression import HeadroomCompressionConfig
 
 CANONICAL_CHECKOUT = Path("/Users/andresilvaburgstahler/.local/share/reverso")
 DEPLOYMENT_REPOSITORY = "git@github.com:r3dlex/reverso-llm.git"
@@ -47,6 +50,98 @@ KIMI_MODEL = "kimi-k3"
 KIMI_CONTEXT_WINDOW = 1048576
 KIMI_AUTO_COMPACT_TOKEN_LIMIT = 943718
 KIMI_MODELS_URL = "http://127.0.0.1:64946/kimi/v1/models"
+HEADROOM_USAGE_URL = "http://127.0.0.1:64946/usage/headroom"
+HEADROOM_USAGE_FIELDS = {
+    "schema_version",
+    "enabled",
+    "profile",
+    "requests_seen",
+    "requests_compressed",
+    "tokens_before",
+    "tokens_after",
+    "tokens_saved",
+    "compression_ratio",
+    "fail_open_count",
+    "failure_reasons",
+    "error_types",
+    "updated_at",
+    "process_started_at",
+    "measurement_started_at",
+    "requests_passed_through",
+    "compression_success_rate",
+    "average_tokens_saved",
+    "outcome_counts",
+    "provider_counts",
+    "surface_counts",
+    "timeout_seconds",
+    "model_limit",
+    "last_success_at",
+    "last_failure_at",
+    "reset_reason",
+}
+HEADROOM_USAGE_MAP_FIELDS = {
+    "failure_reasons": {
+        "worker_busy",
+        "timeout",
+        "exception",
+        "inflation_guard",
+        "retrieval_marker",
+        "unsafe_output",
+        "other",
+    },
+    "error_types": {
+        "timeout",
+        "worker_busy",
+        "dependency_exception",
+        "inflation_guard",
+        "retrieval_marker",
+        "unsafe_output",
+        "other",
+    },
+    "outcome_counts": {"compressed", "passed_through", "fail_open", "other"},
+    "provider_counts": {
+        "claude",
+        "copilot",
+        "auggie",
+        "deepseek",
+        "kimi",
+        "codex-direct",
+        "openai-pass-through",
+        "other",
+    },
+    "surface_counts": {"responses", "anthropic_messages", "other"},
+}
+HEADROOM_SENSITIVE_FIELDS = {
+    "request_body",
+    "prompt",
+    "response",
+    "tool_content",
+    "workspace",
+    "session_id",
+    "request_id",
+    "raw_model",
+    "raw_error",
+}
+HEADROOM_COUNTER_FIELDS = {
+    "requests_seen",
+    "requests_compressed",
+    "tokens_before",
+    "tokens_after",
+    "tokens_saved",
+    "fail_open_count",
+    "requests_passed_through",
+}
+HEADROOM_RATIO_FIELDS = {
+    "compression_ratio",
+    "compression_success_rate",
+}
+HEADROOM_TIMESTAMP_FIELDS = {
+    "updated_at",
+    "process_started_at",
+    "measurement_started_at",
+    "last_success_at",
+    "last_failure_at",
+}
 PHASES = ("pre-install", "pre-restart", "post-restart", "pre-sync", "acceptance")
 
 CommandRunner = Callable[[tuple[str, ...], Path | None], str]
@@ -684,6 +779,159 @@ def _validate_live_kimi(env: DriftEnvironment) -> None:
         )
 
 
+def validate_headroom_usage_payload(
+    payload: Any,
+    *,
+    expected_profile: str | None = None,
+) -> None:
+    """Validate the prompt-free live Headroom acceptance contract."""
+    configured_profile = (
+        HeadroomCompressionConfig.from_env().profile
+        if expected_profile is None
+        else HeadroomCompressionConfig.from_env(
+            {"REVERSO_HEADROOM_PROFILE": expected_profile}
+        ).profile
+    )
+    if not isinstance(payload, dict):
+        raise DeploymentDriftError("live Headroom usage payload is malformed")
+    if payload.get("schema_version") != 1:
+        raise DeploymentDriftError("live Headroom outer schema must be version 1")
+    if payload.get("provider") != "headroom":
+        raise DeploymentDriftError("live Headroom provider must be headroom")
+    if set(payload) != {"schema_version", "provider", "headroom"}:
+        raise DeploymentDriftError("live Headroom outer payload has unsupported fields")
+
+    usage = payload.get("headroom")
+    if not isinstance(usage, dict):
+        raise DeploymentDriftError("live Headroom inner usage payload is malformed")
+    if set(usage).intersection(HEADROOM_SENSITIVE_FIELDS):
+        raise DeploymentDriftError("live Headroom usage contains a sensitive field")
+    if set(usage) != HEADROOM_USAGE_FIELDS:
+        raise DeploymentDriftError("live Headroom usage must contain exact fields")
+    if usage.get("schema_version") != 2:
+        raise DeploymentDriftError("live Headroom inner schema must be version 2")
+    if not isinstance(usage.get("enabled"), bool):
+        raise DeploymentDriftError("live Headroom enabled must be boolean")
+    if usage.get("profile") != configured_profile:
+        raise DeploymentDriftError(
+            f"live Headroom profile must be {configured_profile}"
+        )
+    for field in HEADROOM_COUNTER_FIELDS:
+        value = usage.get(field)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise DeploymentDriftError(
+                f"live Headroom {field} must be a nonnegative integer"
+            )
+    model_limit = usage.get("model_limit")
+    if (
+        isinstance(model_limit, bool)
+        or not isinstance(model_limit, int)
+        or model_limit < 1
+    ):
+        raise DeploymentDriftError(
+            "live Headroom model_limit must be a positive integer"
+        )
+    timeout_seconds = usage.get("timeout_seconds")
+    if (
+        isinstance(timeout_seconds, bool)
+        or not isinstance(timeout_seconds, (int, float))
+        or not math.isfinite(timeout_seconds)
+        or timeout_seconds <= 0
+    ):
+        raise DeploymentDriftError(
+            "live Headroom timeout_seconds must be a positive finite number"
+        )
+    for field in HEADROOM_RATIO_FIELDS:
+        value = usage.get(field)
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or not 0 <= value <= 1
+        ):
+            raise DeploymentDriftError(f"live Headroom {field} must be a finite ratio")
+    average_tokens_saved = usage.get("average_tokens_saved")
+    if (
+        isinstance(average_tokens_saved, bool)
+        or not isinstance(average_tokens_saved, (int, float))
+        or not math.isfinite(average_tokens_saved)
+        or average_tokens_saved < 0
+    ):
+        raise DeploymentDriftError(
+            "live Headroom average_tokens_saved must be a finite nonnegative number"
+        )
+    for field in HEADROOM_TIMESTAMP_FIELDS:
+        value = usage.get(field)
+        if value is None:
+            continue
+        try:
+            parsed = dt.datetime.fromisoformat(value)
+        except (TypeError, ValueError) as exc:
+            raise DeploymentDriftError(
+                f"live Headroom {field} must be RFC3339 UTC or null"
+            ) from exc
+        if (
+            not isinstance(value, str)
+            or "T" not in value
+            or parsed.utcoffset() != dt.timedelta(0)
+            or not value.endswith(("Z", "+00:00"))
+        ):
+            raise DeploymentDriftError(
+                f"live Headroom {field} must be RFC3339 UTC or null"
+            )
+    if usage.get("reset_reason") not in {"process_start", "manual_test_reset"}:
+        raise DeploymentDriftError(
+            "live Headroom reset_reason must use a governed value"
+        )
+    for field, expected_keys in HEADROOM_USAGE_MAP_FIELDS.items():
+        counts = usage.get(field)
+        if (
+            not isinstance(counts, dict)
+            or set(counts) != expected_keys
+            or any(
+                isinstance(value, bool) or not isinstance(value, int) or value < 0
+                for value in counts.values()
+            )
+        ):
+            raise DeploymentDriftError(
+                f"live Headroom {field} must use bounded nonnegative counters"
+            )
+
+    requests_seen = usage["requests_seen"]
+    requests_compressed = usage["requests_compressed"]
+    fail_open_count = usage["fail_open_count"]
+    tokens_before = usage["tokens_before"]
+    tokens_saved = usage["tokens_saved"]
+    formulas = {
+        "compression_ratio": tokens_saved / tokens_before if tokens_before else 0.0,
+        "compression_success_rate": (
+            requests_compressed / requests_seen if requests_seen else 0.0
+        ),
+        "average_tokens_saved": (
+            tokens_saved / requests_compressed if requests_compressed else 0.0
+        ),
+        "requests_passed_through": max(
+            requests_seen - requests_compressed - fail_open_count,
+            0,
+        ),
+    }
+    for field, expected in formulas.items():
+        actual = usage[field]
+        matches = (
+            actual == expected
+            if isinstance(expected, int)
+            else math.isclose(actual, expected, rel_tol=1e-12, abs_tol=1e-12)
+        )
+        if not matches:
+            raise DeploymentDriftError(
+                f"live Headroom {field} does not match its governed formula"
+            )
+
+
+def _validate_live_headroom(env: DriftEnvironment) -> None:
+    validate_headroom_usage_payload(env.json_fetcher(HEADROOM_USAGE_URL))
+
+
 def _validate_generated_kimi(env: DriftEnvironment) -> None:
     try:
         profile = tomllib.loads(env.kimi_profile_path.read_text(encoding="utf-8"))
@@ -758,6 +1006,7 @@ def check_deployment_drift(
         _validate_live_kimi(env)
     if phase == "acceptance":
         _validate_generated_kimi(env)
+        _validate_live_headroom(env)
     return {"phase": phase, "status": "passed", "provenance": provenance}
 
 

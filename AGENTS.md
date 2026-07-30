@@ -2,7 +2,7 @@
 type: agent-guide
 project: reverso
 stack: python-asgi-asyncio
-last_updated: 2026-06-10
+last_updated: 2026-07-30
 ---
 
 <!-- Generated: 2026-05-27 | Updated: 2026-06-10 -->
@@ -192,6 +192,34 @@ The existing LaunchAgents (`com.andres.codex-litellm-minimax.plist`, `com.andres
 - Smoke tests: `./scripts/smoke.sh` (requires gateway running).
 - Phase-specific integration tests are under `tests/integration/`.
 - For Phase 0, results go in `docs/spike-notes.md`.
+
+## Canonical install and update convergence
+
+After cloning or fast-forwarding the canonical checkout, use this same sequence
+for a clean install or update:
+
+```bash
+uv sync --frozen
+./scripts/install-launchagents.sh
+uv run python scripts/check-deployment-drift.py --phase pre-sync
+uv run reverso-client-sync dry-run --json
+uv run reverso-client-sync apply --json
+uv run reverso-client-sync apply --json
+uv run reverso-client-sync refresh --json
+uv run reverso-client-sync verify --json
+./scripts/smoke.sh
+./scripts/convergence-acceptance.sh
+uv run python scripts/check-deployment-drift.py --phase acceptance
+```
+
+The second apply proves idempotency. The scheduled catalog refresh is a
+short-lived LaunchAgent at 06:00 and 18:00 local time; the proxy and daemon are
+the only two long-lived Reverso services. Acceptance derives all 17 client
+surfaces from `config/supported-client-surfaces.json`, verifies the RTK
+discovery symlink without executing RTK, and validates schema version 2
+embedded Headroom usage with the `coding` default on
+`http://127.0.0.1:64946/usage/headroom`. Embedded metrics reset on process
+restart, never call RTK, and never read standalone Headroom savings files.
 
 ## Key design decisions (locked, from Q1-Q18 in `docs/01-brd.md`)
 

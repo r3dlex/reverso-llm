@@ -13,6 +13,7 @@
 #      MUST return a structured 400 unsupported_feature body
 #   7. model selection via reverso-codex-sync against a temp config copy (does
 #      NOT touch ~/.codex/config.toml)
+#   8. complete supported client-surface inventory from the repository manifest
 #
 # Outputs a pass/fail table to stdout and writes evidence to
 # .omc/research/codex-e2e-matrix-results.md.
@@ -27,13 +28,14 @@
 
 set -uo pipefail
 
-REPO_ROOT="/Users/andreburgstahler/Ws/Personal/AiTool/reverso"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GATEWAY="http://127.0.0.1:64946"
-EVIDENCE_FILE="${REPO_ROOT}/.omc/research/codex-e2e-matrix-results.md"
+EVIDENCE_FILE="${REVERSO_E2E_EVIDENCE_FILE:-${REPO_ROOT}/.omc/research/codex-e2e-matrix-results.md}"
 RESULTS_TSV="$(mktemp -t codex-e2e-results.XXXXXX)"
 LOG_DIR="$(mktemp -d -t codex-e2e-logs.XXXXXX)"
 SCRATCH_ROOT="$(mktemp -d -t codex-e2e-scratch.XXXXXX)"
 PROVIDERS=("claude" "copilot" "auggie" "deepseek")
+SUPPORTED_SURFACE_MANIFEST="${REPO_ROOT}/config/supported-client-surfaces.json"
 
 CODEX_TIMEOUT_DEFAULT=180
 RESTART_TIMEOUT=45
@@ -429,6 +431,39 @@ TOML
   rm -f "$tmp_cfg" "$out"
 }
 
+surface_inventory_check() {
+  local out
+  out=$(mktemp)
+  if ! run_bounded 30 bash -c "cd '${REPO_ROOT}' && exec uv run --quiet reverso-client-sync verify --json > '${out}' 2>/dev/null"; then
+    local snippet
+    snippet=$(head -c 300 "$out")
+    rm -f "$out"
+    printf 'FAIL\tclient verify failed: %s\n' "$snippet"
+    return 0
+  fi
+  if ! python3 - "$SUPPORTED_SURFACE_MANIFEST" "$out" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+manifest = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+result = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+expected = {surface["id"] for surface in manifest["surfaces"]}
+actual = {surface["id"] for surface in result["surfaces"]}
+if not expected or actual != expected:
+    raise SystemExit(1)
+PY
+  then
+    rm -f "$out"
+    printf 'FAIL\tclient verify surface inventory differs from manifest\n'
+    return 0
+  fi
+  local count
+  count=$(jq '.surfaces | length' < "$out")
+  rm -f "$out"
+  printf 'PASS\tmanifest_surface_count=%s\n' "$count"
+}
+
 # Known-good chat-capable alternates for the model-selection drill. The first
 # listed model is not always usable for a chat turn (claude-opus-4.6 via the
 # copilot upstream returns 502 on the responses wire; listings also contain
@@ -625,6 +660,15 @@ cell_resume_after_restart() {
 # ---------------- main ----------------
 
 main() {
+  if [ "${1:-}" = "--surface-inventory-only" ]; then
+    local inventory_out inventory_status inventory_detail
+    inventory_out=$(surface_inventory_check)
+    inventory_status="${inventory_out%%$'\t'*}"
+    inventory_detail="${inventory_out#*$'\t'}"
+    record_result "all" "surface_inventory" "$inventory_status" "$inventory_detail"
+    emit_evidence
+    return $?
+  fi
   if ! curl -s -m 5 -o /dev/null -w "%{http_code}" "${GATEWAY}/claude/v1/models" | grep -q '^200$'; then
     log "gateway not reachable on first ping; restarting"
     restart_gateway || { log "FATAL: gateway unreachable"; exit 1; }
@@ -639,6 +683,11 @@ main() {
   local status="${out%%$'\t'*}"
   local detail="${out#*$'\t'}"
   record_result "all" "model_sync" "$status" "$detail"
+
+  out=$(surface_inventory_check)
+  status="${out%%$'\t'*}"
+  detail="${out#*$'\t'}"
+  record_result "all" "surface_inventory" "$status" "$detail"
 
   for provider in "${PROVIDERS[@]}"; do
     log "=== provider: $provider ==="
@@ -711,15 +760,22 @@ main() {
 
 emit_evidence() {
   mkdir -p "$(dirname "$EVIDENCE_FILE")"
-  local now_iso
+  local now_iso n_pass n_fail n_na evidence_status
   now_iso=$(python3 -c 'import datetime;print(datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"))')
+  n_pass=$(awk -F$'\t' '$3=="PASS"{c++} END{print c+0}' "$RESULTS_TSV")
+  n_fail=$(awk -F$'\t' '$3=="FAIL"{c++} END{print c+0}' "$RESULTS_TSV")
+  n_na=$(awk -F$'\t' '$3=="NA"{c++} END{print c+0}' "$RESULTS_TSV")
+  evidence_status="complete"
+  if [ "$n_fail" -ne 0 ]; then
+    evidence_status="failed"
+  fi
   # Build the markdown table from the TSV.
   local tmp_md
   tmp_md=$(mktemp)
   {
     printf -- '---\n'
     printf 'title: "C1 Codex E2E matrix results"\n'
-    printf 'status: complete\n'
+    printf 'status: %s\n' "$evidence_status"
     printf 'phase: C\n'
     printf 'gate: C1\n'
     printf 'gateway: 127.0.0.1:64946\n'
@@ -739,10 +795,6 @@ emit_evidence() {
     done < "$RESULTS_TSV"
     printf '\n'
     printf '## Counts\n\n'
-    local n_pass n_fail n_na
-    n_pass=$(awk -F$'\t' '$3=="PASS"{c++} END{print c+0}' "$RESULTS_TSV")
-    n_fail=$(awk -F$'\t' '$3=="FAIL"{c++} END{print c+0}' "$RESULTS_TSV")
-    n_na=$(awk -F$'\t' '$3=="NA"{c++} END{print c+0}' "$RESULTS_TSV")
     printf '* PASS: %s\n' "$n_pass"
     printf '* FAIL: %s\n' "$n_fail"
     printf '* NA (documented unsupported): %s\n\n' "$n_na"
@@ -790,6 +842,18 @@ PY
   while IFS=$'\t' read -r provider cell status detail; do
     printf '%-10s %-26s %-6s %s\n' "$provider" "$cell" "$status" "$detail"
   done < "$RESULTS_TSV"
+  if [ "$n_fail" -ne 0 ]; then
+    log "matrix failed with ${n_fail} failing cell(s)"
+    return 1
+  fi
 }
 
-main "$@"
+cleanup() {
+  rm -f "$RESULTS_TSV"
+  rm -rf "$LOG_DIR" "$SCRATCH_ROOT"
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  trap cleanup EXIT
+  main "$@"
+fi
