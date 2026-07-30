@@ -65,6 +65,7 @@ MANAGED_REVERSO_PROFILE_PREFIXES = (
     "codex-direct",
     "openai-pass-through",
 )
+PROVIDER_DISCOVERY_TIMEOUT_SECONDS = 10.0
 
 
 def _codex_responses_compatible_models(prefix: str, model_ids: list[str]) -> list[str]:
@@ -143,7 +144,7 @@ def _default_fetcher(base_url: str) -> ModelFetcher:
 
     def _fetch(prefix: str) -> list[str]:
         url = f"{base_url}/{prefix}/v1/models"
-        response = httpx.get(url, timeout=5.0)
+        response = httpx.get(url, timeout=PROVIDER_DISCOVERY_TIMEOUT_SECONDS)
         response.raise_for_status()
         payload = response.json()
         model_ids = _require_model_ids(payload)

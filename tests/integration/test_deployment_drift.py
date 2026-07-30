@@ -138,6 +138,32 @@ def _write_plists(
             )
         with (launchd_dir / f"{label}.plist").open("wb") as handle:
             plistlib.dump(payload, handle)
+    scheduled = {
+        "Label": deployment_drift.SCHEDULED_LAUNCH_AGENT_LABEL,
+        "Program": launcher,
+        "ProgramArguments": [
+            launcher,
+            "run",
+            "--project",
+            str(checkout),
+            deployment_drift.SCHEDULED_LAUNCH_AGENT_EXECUTABLE,
+        ],
+        "WorkingDirectory": str(checkout),
+        "EnvironmentVariables": {
+            "REVERSO_DEPLOYMENT_COMMIT": commit,
+            "REVERSO_PROJECT_DIR": str(checkout),
+            "PATH": (
+                "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:"
+                f"{home}/.local/bin"
+            ),
+        },
+        "StartCalendarInterval": deployment_drift.SCHEDULED_START_CALENDAR_INTERVAL,
+        "ProcessType": "Background",
+    }
+    with (launchd_dir / f"{deployment_drift.SCHEDULED_LAUNCH_AGENT_LABEL}.plist").open(
+        "wb"
+    ) as handle:
+        plistlib.dump(scheduled, handle)
 
 
 def _write_generated_kimi(home: Path) -> None:
@@ -618,6 +644,68 @@ def test_pre_restart_rejects_rendered_launchagent_drift(
     message = "Program$" if mutation == "unauthorized-program" else "ProgramArguments"
     with pytest.raises(DeploymentDriftError, match=message):
         check_deployment_drift("pre-restart", env, selected_commit=COMMIT)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    (
+        ("schedule", "schedule"),
+        ("keep-alive", "KeepAlive"),
+        ("executable", "ProgramArguments"),
+        ("argument-zero", "ProgramArguments"),
+        ("listener", "Sockets"),
+        ("working-directory", "WorkingDirectory"),
+        ("commit", "revision provenance"),
+        ("missing", "missing or malformed"),
+        ("malformed", "missing or malformed"),
+    ),
+)
+def test_pre_restart_rejects_scheduled_launchagent_drift(
+    tmp_path: Path,
+    mutation: str,
+    message: str,
+) -> None:
+    env, _ = _env(tmp_path)
+    _bootstrap(env)
+    path = (
+        env.home
+        / "Library"
+        / "LaunchAgents"
+        / f"{deployment_drift.SCHEDULED_LAUNCH_AGENT_LABEL}.plist"
+    )
+    if mutation == "missing":
+        path.unlink()
+    elif mutation == "malformed":
+        path.write_text("not a plist", encoding="utf-8")
+    else:
+        with path.open("rb") as handle:
+            payload = plistlib.load(handle)
+        if mutation == "schedule":
+            payload["StartCalendarInterval"] = [{"Hour": 7, "Minute": 0}]
+        elif mutation == "keep-alive":
+            payload["KeepAlive"] = True
+        elif mutation == "executable":
+            payload["ProgramArguments"][-1] = "reverso-proxy"
+        elif mutation == "argument-zero":
+            payload["ProgramArguments"][0] = UNAUTHORIZED_LAUNCHER
+        elif mutation == "listener":
+            payload["Sockets"] = {"Listener": {"SockServiceName": "64946"}}
+        elif mutation == "working-directory":
+            payload["WorkingDirectory"] = str(tmp_path / "stale")
+        else:
+            payload["EnvironmentVariables"]["REVERSO_DEPLOYMENT_COMMIT"] = OLD_COMMIT
+        with path.open("wb") as handle:
+            plistlib.dump(payload, handle)
+
+    with pytest.raises(DeploymentDriftError, match=message):
+        check_deployment_drift("pre-restart", env, selected_commit=COMMIT)
+
+
+def test_scheduled_agent_stays_outside_long_lived_runtime_map() -> None:
+    assert deployment_drift.LAUNCH_AGENT_EXECUTABLES == {
+        "com.user.reverso-proxy": "reverso-proxy",
+        "com.user.reverso-daemon": "reverso-daemon",
+    }
 
 
 @pytest.mark.parametrize(

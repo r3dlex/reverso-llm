@@ -535,6 +535,13 @@ def apply_prepared_group(
             )
             else None
         )
+        fatal_cause = (
+            exc.__cause__
+            if isinstance(exc, _TransitionGuardApplyFailed)
+            and exc.__cause__ is not None
+            and not isinstance(exc.__cause__, Exception)
+            else None
+        )
         if touched:
             failed = touched[-1]
             current = capture_state(failed.path)
@@ -556,6 +563,8 @@ def apply_prepared_group(
                 _settle_transition_guard(transition_guard)
         except (OSError, RuntimeError) as rollback_exc:
             raise PreparedRollbackFailed(type(rollback_exc).__name__) from exc
+        if fatal_cause is not None:
+            raise fatal_cause
         raise PreparedApplyFailed(type(exc).__name__) from exc
 
 

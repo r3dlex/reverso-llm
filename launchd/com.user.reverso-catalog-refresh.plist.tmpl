@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.user.reverso-catalog-refresh</string>
+
+    <key>Program</key>
+    <string>{{UV_BIN}}</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>{{UV_BIN}}</string>
+        <string>run</string>
+        <string>--project</string>
+        <string>{{REVERSO_DIR}}</string>
+        <string>reverso-catalog-refresh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>{{REVERSO_DIR}}</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>REVERSO_DEPLOYMENT_COMMIT</key>
+        <string>{{REVERSO_DEPLOYMENT_COMMIT}}</string>
+        <key>REVERSO_PROJECT_DIR</key>
+        <string>{{REVERSO_DIR}}</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:{{USER_HOME}}/.local/bin</string>
+    </dict>
+
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict>
+            <key>Hour</key>
+            <integer>6</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+        <dict>
+            <key>Hour</key>
+            <integer>18</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>
+    </array>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>
