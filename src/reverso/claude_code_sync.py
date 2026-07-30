@@ -9,10 +9,26 @@ import os
 import shlex
 import sys
 import tempfile
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from reverso.client_sync_lock import (
+    ClientSyncLockBusy,
+    HeldClientSyncLock,
+    acquire_client_sync_lock,
+    validate_client_sync_lock,
+)
+from reverso.client_sync_mutations import (
+    FileState,
+    PreparedGroup,
+    PreparedMutation,
+    apply_prepared_group,
+    capture_state,
+    file_state,
+    missing_parent_mutations,
+)
 
 DEFAULT_SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
 DEFAULT_LAUNCHER_DIR = Path.home() / ".local" / "bin"
@@ -69,6 +85,15 @@ class ClaudeCodeSyncResult:
     changed_launchers: tuple[str, ...] = ()
     conflicting_launchers: tuple[str, ...] = ()
     error: str | None = None
+
+
+@dataclass(frozen=True)
+class PreparedClaudeCodeSync:
+    """Immutable Claude Code candidate and its user-facing result."""
+
+    group: PreparedGroup
+    result: ClaudeCodeSyncResult
+    backup_path: Path | None = None
 
 
 def _load_settings(settings_path: Path) -> tuple[dict[str, Any] | None, str | None]:
@@ -129,6 +154,23 @@ def _backup_settings(
             raise
 
 
+def _next_backup_path(
+    settings_path: Path,
+    *,
+    now: datetime | None = None,
+) -> Path:
+    timestamp = (now or datetime.now(UTC)).strftime("%Y%m%dT%H%M%SZ")
+    suffix = 0
+    while True:
+        suffix_text = "" if suffix == 0 else f".{suffix}"
+        candidate = settings_path.with_name(
+            f"{settings_path.name}{BACKUP_SUFFIX_PREFIX}{timestamp}{suffix_text}"
+        )
+        if not candidate.exists() and not candidate.is_symlink():
+            return candidate
+        suffix += 1
+
+
 def _atomic_write_json(
     settings_path: Path, settings: dict[str, Any], indent: int
 ) -> None:
@@ -183,6 +225,16 @@ def _is_managed_launcher(path: Path) -> bool:
     try:
         first_lines = path.read_text(encoding="utf-8").splitlines()[:2]
     except (OSError, UnicodeDecodeError):
+        return False
+    return LAUNCHER_MANAGED_MARKER in first_lines
+
+
+def _is_managed_launcher_state(state: FileState) -> bool:
+    if state.kind != "file" or not isinstance(state.data, bytes):
+        return False
+    try:
+        first_lines = state.data.decode("utf-8").splitlines()[:2]
+    except UnicodeDecodeError:
         return False
     return LAUNCHER_MANAGED_MARKER in first_lines
 
@@ -365,7 +417,7 @@ def _remove_reverso_overrides(
     )
 
 
-def sync_claude_code_settings(
+def _sync_claude_code_settings_unlocked(
     settings_path: Path = DEFAULT_SETTINGS_PATH,
     *,
     launcher_dir: Path = DEFAULT_LAUNCHER_DIR,
@@ -461,6 +513,212 @@ def sync_claude_code_settings(
     )
 
 
+def prepare_sync(
+    settings_path: Path = DEFAULT_SETTINGS_PATH,
+    *,
+    launcher_dir: Path = DEFAULT_LAUNCHER_DIR,
+    claude_executable: Path | None = None,
+    backup: bool = True,
+    indent: int = 2,
+    now: datetime | None = None,
+) -> PreparedClaudeCodeSync:
+    """Prepare exact Claude Code bytes without mutating the filesystem."""
+    settings_path = settings_path.expanduser()
+    launcher_dir = launcher_dir.expanduser()
+    settings_before = capture_state(settings_path)
+    if settings_before.kind == "symlink":
+        settings = None
+        error = f"settings path must not be a symlink: {settings_path}"
+    elif settings_before.kind == "absent":
+        settings = None
+        error = None
+    elif settings_before.kind == "file" and isinstance(settings_before.data, bytes):
+        try:
+            raw_settings = json.loads(settings_before.data.decode("utf-8"))
+        except json.JSONDecodeError as exc:
+            settings = None
+            error = f"invalid JSON: {exc}"
+        else:
+            settings = raw_settings if isinstance(raw_settings, dict) else None
+            error = (
+                None if settings is not None else "settings root must be a JSON object"
+            )
+    else:
+        settings, error = _load_settings(settings_path)
+    if error is not None:
+        return PreparedClaudeCodeSync(
+            PreparedGroup("claude", ()),
+            ClaudeCodeSyncResult(
+                settings_path=str(settings_path),
+                changed=False,
+                dry_run=True,
+                backup_path=None,
+                removed_env_keys=(),
+                removed_settings_keys=(),
+                removed_model=None,
+                launcher_dir=str(launcher_dir),
+                error=error,
+            ),
+        )
+    resolved_claude, executable_error = _resolve_claude_executable(claude_executable)
+    if executable_error is not None or resolved_claude is None:
+        return PreparedClaudeCodeSync(
+            PreparedGroup("claude", ()),
+            ClaudeCodeSyncResult(
+                settings_path=str(settings_path),
+                changed=False,
+                dry_run=True,
+                backup_path=None,
+                removed_env_keys=(),
+                removed_settings_keys=(),
+                removed_model=None,
+                launcher_dir=str(launcher_dir),
+                error=executable_error,
+            ),
+        )
+    rendered_launchers = {
+        launcher_dir / name: _render_launcher(resolved_claude, catalog)
+        for name, catalog in LAUNCHER_CATALOGS
+    }
+    launcher_before = {path: capture_state(path) for path in rendered_launchers}
+    conflicts = tuple(
+        path.name
+        for path, state in launcher_before.items()
+        if state.kind != "absent" and not _is_managed_launcher_state(state)
+    )
+    if conflicts:
+        return PreparedClaudeCodeSync(
+            PreparedGroup("claude", ()),
+            ClaudeCodeSyncResult(
+                settings_path=str(settings_path),
+                changed=False,
+                dry_run=True,
+                backup_path=None,
+                removed_env_keys=(),
+                removed_settings_keys=(),
+                removed_model=None,
+                launcher_dir=str(launcher_dir),
+                claude_executable=str(resolved_claude),
+                conflicting_launchers=conflicts,
+                error=f"unmanaged launcher conflict: {', '.join(conflicts)}",
+            ),
+        )
+    (
+        cleaned,
+        removed_env_keys,
+        rewritten_env_keys,
+        removed_settings_keys,
+        removed_model,
+    ) = _remove_reverso_overrides(settings or {})
+    settings_changed = settings is not None and cleaned != settings
+    changed_launchers = tuple(
+        path.name
+        for path, text in rendered_launchers.items()
+        if launcher_before[path] != file_state(text, 0o755)
+    )
+    mutations: list[PreparedMutation] = []
+    backup_path: Path | None = None
+    if settings_changed:
+        encoded = (json.dumps(cleaned, indent=indent, sort_keys=True) + "\n").encode(
+            "utf-8"
+        )
+        if backup:
+            backup_path = _next_backup_path(settings_path, now=now)
+            backup_before = capture_state(backup_path)
+            if backup_before.kind != "absent":
+                raise RuntimeError(
+                    f"backup path changed while preparing: {backup_path}"
+                )
+            mutations.append(
+                PreparedMutation(
+                    backup_path,
+                    backup_before,
+                    settings_before,
+                )
+            )
+        mutations.append(
+            PreparedMutation(settings_path, settings_before, file_state(encoded, 0o600))
+        )
+    else:
+        mutations.append(
+            PreparedMutation(settings_path, settings_before, settings_before)
+        )
+    for path, text in rendered_launchers.items():
+        mutations.append(
+            PreparedMutation(path, launcher_before[path], file_state(text, 0o755))
+        )
+    parent_mutations = missing_parent_mutations(
+        mutation.path for mutation in mutations if mutation.after.kind != "absent"
+    )
+    group_mutations = (
+        *parent_mutations,
+        *mutations,
+    )
+    changed = any(mutation.changed for mutation in group_mutations)
+    return PreparedClaudeCodeSync(
+        PreparedGroup("claude", tuple(group_mutations)),
+        ClaudeCodeSyncResult(
+            settings_path=str(settings_path),
+            changed=changed,
+            dry_run=True,
+            backup_path=None,
+            removed_env_keys=removed_env_keys,
+            rewritten_env_keys=rewritten_env_keys,
+            removed_settings_keys=removed_settings_keys,
+            removed_model=removed_model,
+            launcher_dir=str(launcher_dir),
+            claude_executable=str(resolved_claude),
+            changed_launchers=changed_launchers,
+        ),
+        backup_path,
+    )
+
+
+def apply_prepared(
+    prepared: PreparedClaudeCodeSync,
+    *,
+    lock_token: HeldClientSyncLock,
+) -> ClaudeCodeSyncResult:
+    """Apply the exact prepared Claude Code candidate under a held lock."""
+    validate_client_sync_lock(lock_token)
+    apply_prepared_group(prepared.group)
+    return replace(
+        prepared.result,
+        dry_run=False,
+        backup_path=(
+            str(prepared.backup_path) if prepared.backup_path is not None else None
+        ),
+    )
+
+
+def sync_claude_code_settings(
+    settings_path: Path = DEFAULT_SETTINGS_PATH,
+    *,
+    launcher_dir: Path = DEFAULT_LAUNCHER_DIR,
+    claude_executable: Path | None = None,
+    dry_run: bool = False,
+    backup: bool = True,
+    indent: int = 2,
+    lock_path: Path | None = None,
+    lock_token: HeldClientSyncLock | None = None,
+) -> ClaudeCodeSyncResult:
+    """Repair Claude Code client files under the shared writer lock."""
+    kwargs = {
+        "settings_path": settings_path,
+        "launcher_dir": launcher_dir,
+        "claude_executable": claude_executable,
+        "backup": backup,
+        "indent": indent,
+    }
+    if dry_run:
+        return prepare_sync(**kwargs).result
+    with acquire_client_sync_lock(path=lock_path, token=lock_token) as held:
+        prepared = prepare_sync(**kwargs)
+        if prepared.result.error is not None:
+            return replace(prepared.result, dry_run=False)
+        return apply_prepared(prepared, lock_token=held)
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Remove Reverso-managed overrides from Claude Code settings."
@@ -503,14 +761,30 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    result = sync_claude_code_settings(
-        args.settings_path,
-        launcher_dir=args.launcher_dir,
-        claude_executable=args.claude_executable,
-        dry_run=args.dry_run,
-        backup=not args.no_backup,
-        indent=args.indent,
-    )
+    try:
+        result = sync_claude_code_settings(
+            args.settings_path,
+            launcher_dir=args.launcher_dir,
+            claude_executable=args.claude_executable,
+            dry_run=args.dry_run,
+            backup=not args.no_backup,
+            indent=args.indent,
+        )
+    except ClientSyncLockBusy as exc:
+        result = ClaudeCodeSyncResult(
+            settings_path=str(args.settings_path),
+            changed=False,
+            dry_run=False,
+            backup_path=None,
+            removed_env_keys=(),
+            removed_settings_keys=(),
+            removed_model=None,
+            launcher_dir=str(args.launcher_dir),
+            error=f"lock_busy: {exc}",
+        )
+        json.dump(asdict(result), sys.stdout, indent=2, sort_keys=True)
+        sys.stdout.write("\n")
+        return 2
     json.dump(asdict(result), sys.stdout, indent=2, sort_keys=True)
     sys.stdout.write("\n")
     return 1 if result.error else 0

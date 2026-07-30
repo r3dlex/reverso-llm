@@ -38,6 +38,20 @@ from pathlib import Path
 
 import httpx
 
+from reverso.client_sync_lock import (
+    ClientSyncLockBusy,
+    HeldClientSyncLock,
+    acquire_client_sync_lock,
+    validate_client_sync_lock,
+)
+from reverso.client_sync_mutations import (
+    FileState,
+    PreparedGroup,
+    PreparedMutation,
+    apply_prepared_group,
+    capture_state,
+    missing_parent_mutations,
+)
 from reverso.protocols import feature_policy, model_exposure
 
 logger = logging.getLogger(__name__)
@@ -118,6 +132,10 @@ class KimiDiscoveryError(RuntimeError):
 
 class ModelDiscoveryError(RuntimeError):
     """A provider returned a malformed OpenAI-shaped model listing."""
+
+
+class ProviderFreshnessError(RuntimeError):
+    """One or more required provider catalogs could not be refreshed."""
 
 
 def _default_fetcher(base_url: str) -> ModelFetcher:
@@ -210,6 +228,30 @@ def fetch_all(
                 deduped.append(model_id)
         out.append(ProviderModels(prefix=prefix, models=tuple(deduped)))
     return out
+
+
+def discover_provider_models(
+    prefix: str,
+    *,
+    fetcher: ModelFetcher | None = None,
+    base_url: str = GATEWAY_BASE_URL,
+) -> ProviderModels:
+    """Discover and validate one provider without preparing other surfaces."""
+    fetch = fetcher if fetcher is not None else _default_fetcher(base_url)
+    discovered = fetch_all((prefix,), fetch, skip_errors=fetcher is None)
+    if not discovered:
+        if prefix in OPTIONAL_DISCOVERY_PREFIXES:
+            return ProviderModels(prefix=prefix, models=())
+        raise ProviderFreshnessError(
+            f"required reverso provider model discovery failed for: {prefix}"
+        )
+    entry = discovered[0]
+    if prefix not in OPTIONAL_DISCOVERY_PREFIXES and not entry.models:
+        raise ProviderFreshnessError(
+            "required reverso provider model discovery returned no compatible "
+            f"models for: {prefix}"
+        )
+    return entry
 
 
 def _live_provider_models(
@@ -1181,7 +1223,392 @@ class SyncResult:
     archived_profiles: list[Path] = field(default_factory=list)
 
 
-def sync(
+@dataclass(frozen=True)
+class PreparedCodexSync:
+    """Immutable Codex candidate and dry-run/apply summaries."""
+
+    group: PreparedGroup
+    result: SyncResult
+    applied_result: SyncResult
+
+
+def _tree_states(root: Path) -> dict[Path, FileState]:
+    states: dict[Path, FileState] = {}
+    if not root.is_dir() or root.is_symlink():
+        return states
+    for current, directory_names, file_names in os.walk(root, followlinks=False):
+        current_path = Path(current)
+        for name in (*directory_names, *file_names):
+            path = current_path / name
+            states[path.relative_to(root)] = capture_state(path)
+    return states
+
+
+def _matching_managed_siblings(parent: Path, prefixes: set[str]) -> set[Path]:
+    """Return matching sibling names without inspecting unrelated entries."""
+    if not parent.is_dir() or parent.is_symlink():
+        return set()
+    with os.scandir(parent) as entries:
+        return {
+            parent / entry.name
+            for entry in entries
+            if any(entry.name.startswith(prefix) for prefix in prefixes)
+        }
+
+
+def _managed_staging_paths(
+    *,
+    target: Path,
+    catalog_dir: Path,
+    prefixes: tuple[str, ...],
+) -> set[Path]:
+    """Return the bounded paths that Codex sync may read, rotate, or archive."""
+    config_dir = target.parent
+    managed_prefixes = {*MANAGED_REVERSO_PROFILE_PREFIXES, *prefixes}
+    profile_paths = {
+        *(_reverso_profile_path_for(config_dir, prefix) for prefix in managed_prefixes),
+        *(_profile_path_for(config_dir, prefix) for prefix in managed_prefixes),
+        *(
+            _profile_path_for(config_dir, stem)
+            for stem in model_exposure.stale_codex_variant_profile_stems()
+        ),
+        *(
+            _profile_path_for(config_dir, spec.prefix)
+            for spec in model_exposure.direct_codex_profile_specs()
+        ),
+    }
+    catalog_paths = {
+        _catalog_path_for(catalog_dir, prefix) for prefix in managed_prefixes
+    }
+    for profile_path in profile_paths:
+        referenced = _managed_profile_catalog_path(profile_path)
+        if referenced is not None and referenced.parent == catalog_dir:
+            catalog_paths.add(referenced)
+
+    archive_dir = config_dir / PROFILE_ARCHIVE_DIR
+    paths = {target, archive_dir, *profile_paths, *catalog_paths}
+    if catalog_dir != config_dir and catalog_dir.is_relative_to(config_dir):
+        paths.add(catalog_dir)
+    backup_prefixes = {
+        path.name + BACKUP_SUFFIX_PREFIX for path in {target, *profile_paths}
+    }
+    paths.update(_matching_managed_siblings(config_dir, backup_prefixes))
+
+    archive_prefixes = {
+        path.name + BACKUP_SUFFIX_PREFIX for path in profile_paths | catalog_paths
+    }
+    paths.update(_matching_managed_siblings(archive_dir, archive_prefixes))
+    return paths
+
+
+def _materialize_state(path: Path, state: FileState) -> None:
+    if state.kind == "absent":
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if state.kind == "directory":
+        if state.mode is None:
+            raise RuntimeError(f"staged directory has no mode: {path}")
+        path.mkdir(exist_ok=True)
+        os.chmod(path, state.mode)
+    elif state.kind == "file":
+        if state.mode is None:
+            raise RuntimeError(f"staged file has no mode: {path}")
+        path.write_bytes(t.cast(bytes, state.data))
+        os.chmod(path, state.mode)
+    elif state.kind == "symlink":
+        path.symlink_to(t.cast(str, state.data))
+    else:
+        raise RuntimeError(f"unsupported staged file state: {state.kind}")
+
+
+def _copy_managed_paths(
+    source_root: Path,
+    destination_root: Path,
+    paths: set[Path],
+) -> dict[Path, FileState]:
+    """Copy only explicit managed paths into one controlled staging root."""
+    if source_root.is_symlink():
+        raise RuntimeError(f"sync root must be a real directory: {source_root}")
+    if source_root.exists() and not source_root.is_dir():
+        raise RuntimeError(f"sync root must be a real directory: {source_root}")
+    destination_root.mkdir(mode=0o700)
+    states: dict[Path, FileState] = {}
+    for path in sorted(paths):
+        if not path.is_relative_to(source_root):
+            continue
+        relative = path.relative_to(source_root)
+        for parent in reversed(relative.parents):
+            if parent == Path(".") or parent in states:
+                continue
+            parent_state = capture_state(source_root / parent)
+            states[parent] = parent_state
+            _materialize_state(destination_root / parent, parent_state)
+        state = capture_state(path)
+        states[relative] = state
+        _materialize_state(destination_root / relative, state)
+    return states
+
+
+def _translate_file_state(
+    state: FileState,
+    replacements: list[tuple[Path, Path]],
+) -> FileState:
+    if state.kind != "file" or not isinstance(state.data, bytes):
+        return state
+    try:
+        text = state.data.decode("utf-8")
+    except UnicodeDecodeError:
+        return state
+    lines = text.splitlines(keepends=True)
+    changed = False
+    for index, line in enumerate(lines):
+        match = re.match(
+            r'^(\s*model_catalog_json\s*=\s*)("(?:[^"\\]|\\.)*")(\s*)$', line
+        )
+        if match is None:
+            continue
+        value = json.loads(match.group(2))
+        candidate = Path(value)
+        for source, destination in replacements:
+            if candidate == source or candidate.is_relative_to(source):
+                mapped = destination / candidate.relative_to(source)
+                lines[index] = match.group(1) + json.dumps(str(mapped)) + match.group(3)
+                changed = True
+                break
+    if not changed:
+        return state
+    return FileState("file", "".join(lines).encode("utf-8"), state.mode)
+
+
+def _translate_staging_tree(
+    root: Path,
+    replacements: list[tuple[Path, Path]],
+) -> None:
+    for relative, state in _tree_states(root).items():
+        translated = _translate_file_state(state, replacements)
+        if translated != state:
+            (root / relative).write_bytes(t.cast(bytes, translated.data))
+
+
+def _ordered_mutations(
+    mutations: list[PreparedMutation],
+) -> tuple[PreparedMutation, ...]:
+    def key(mutation: PreparedMutation) -> tuple[int, int, str]:
+        depth = len(mutation.path.parts)
+        if mutation.after.kind == "directory":
+            return (0, depth, str(mutation.path))
+        if mutation.after.kind != "absent":
+            return (1, depth, str(mutation.path))
+        if mutation.before.kind != "directory":
+            return (2, -depth, str(mutation.path))
+        return (3, -depth, str(mutation.path))
+
+    return tuple(sorted(mutations, key=key))
+
+
+def _remap_result_path(
+    path: Path | None, mappings: list[tuple[Path, Path]]
+) -> Path | None:
+    if path is None:
+        return None
+    for shadow_root, real_root in mappings:
+        if path == shadow_root or path.is_relative_to(shadow_root):
+            return real_root / path.relative_to(shadow_root)
+    raise RuntimeError(f"prepared result path escaped staging roots: {path}")
+
+
+def _remap_result(
+    result: SyncResult,
+    mappings: list[tuple[Path, Path]],
+    *,
+    dry_run: bool,
+) -> SyncResult:
+    return SyncResult(
+        target=t.cast(Path, _remap_result_path(result.target, mappings)),
+        changed=result.changed,
+        backup=(None if dry_run else _remap_result_path(result.backup, mappings)),
+        rotated=(
+            []
+            if dry_run
+            else [
+                t.cast(Path, _remap_result_path(path, mappings))
+                for path in result.rotated
+            ]
+        ),
+        provider_models=result.provider_models,
+        catalog_dir=_remap_result_path(result.catalog_dir, mappings),
+        catalogs=[
+            t.cast(Path, _remap_result_path(path, mappings)) for path in result.catalogs
+        ],
+        profiles=[
+            t.cast(Path, _remap_result_path(path, mappings)) for path in result.profiles
+        ],
+        profile_backups=(
+            []
+            if dry_run
+            else [
+                t.cast(Path, _remap_result_path(path, mappings))
+                for path in result.profile_backups
+            ]
+        ),
+        archived_profiles=[
+            t.cast(Path, _remap_result_path(path, mappings))
+            for path in result.archived_profiles
+        ],
+    )
+
+
+def prepare_sync(
+    target: Path = DEFAULT_CONFIG_PATH,
+    *,
+    prefixes: t.Iterable[str] | None = None,
+    fetcher: ModelFetcher | None = None,
+    base_url: str = GATEWAY_BASE_URL,
+    now: datetime.datetime | None = None,
+    keep_backups: int = BACKUPS_KEPT,
+    catalog_dir: Path | None = None,
+    _provider_only: bool = False,
+) -> PreparedCodexSync:
+    """Render and validate exact Codex mutations in an isolated staging tree."""
+    target = target.expanduser()
+    sync_prefixes = (
+        tuple(prefixes)
+        if prefixes is not None
+        else model_exposure.reverso_routed_codex_profile_prefixes()
+    )
+    real_catalog_dir = (
+        catalog_dir.expanduser()
+        if catalog_dir is not None
+        else _default_catalog_dir(target)
+    )
+    config_root = target.parent
+    real_roots = [config_root]
+    if not real_catalog_dir.is_relative_to(config_root):
+        real_roots.append(real_catalog_dir)
+    managed_paths = _managed_staging_paths(
+        target=target,
+        catalog_dir=real_catalog_dir,
+        prefixes=sync_prefixes,
+    )
+    with tempfile.TemporaryDirectory(prefix="reverso-codex-prepare-") as temp_name:
+        staging = Path(temp_name)
+        shadow_config_root = staging / "config"
+        roots = [(shadow_config_root, config_root)]
+        shadow_target = shadow_config_root / target.relative_to(config_root)
+        if real_catalog_dir.is_relative_to(config_root):
+            shadow_catalog_dir = shadow_config_root / real_catalog_dir.relative_to(
+                config_root
+            )
+        else:
+            shadow_catalog_root = staging / "catalog"
+            roots.append((shadow_catalog_root, real_catalog_dir))
+            shadow_catalog_dir = shadow_catalog_root
+        tree_before = {
+            real_root: _copy_managed_paths(
+                real_root,
+                shadow_root,
+                managed_paths,
+            )
+            for shadow_root, real_root in roots
+        }
+        for shadow_root, real_root in roots:
+            for relative, state in tree_before[real_root].items():
+                real_path = real_root / relative
+                if capture_state(real_path) != state:
+                    raise RuntimeError(
+                        f"sync input changed while preparing: {real_path}"
+                    )
+                if capture_state(shadow_root / relative) != state:
+                    raise RuntimeError(
+                        f"sync staging copy did not match source: {real_path}"
+                    )
+        real_to_shadow = [(real_root, shadow_root) for shadow_root, real_root in roots]
+        shadow_to_real = [(shadow_root, real_root) for shadow_root, real_root in roots]
+        for shadow_root, _real_root in roots:
+            _translate_staging_tree(shadow_root, real_to_shadow)
+        staged_result = _sync_unlocked(
+            target=shadow_target,
+            prefixes=sync_prefixes,
+            fetcher=fetcher,
+            base_url=base_url,
+            now=now,
+            keep_backups=keep_backups,
+            catalog_dir=shadow_catalog_dir,
+            dry_run=False,
+            _provider_only=_provider_only,
+        )
+        mutations: list[PreparedMutation] = []
+        for shadow_root, real_root in roots:
+            old_states = tree_before[real_root]
+            new_states = _tree_states(shadow_root)
+            for relative in old_states.keys() | new_states.keys():
+                old_state = old_states.get(relative, FileState("absent"))
+                new_state = _translate_file_state(
+                    new_states.get(relative, FileState("absent")),
+                    shadow_to_real,
+                )
+                if old_state == new_state:
+                    continue
+                real_path = real_root / relative
+                if capture_state(real_path) != old_state:
+                    raise RuntimeError(
+                        f"sync input changed while preparing: {real_path}"
+                    )
+                mutations.append(PreparedMutation(real_path, old_state, new_state))
+        mutation_paths = {mutation.path for mutation in mutations}
+        mutations.extend(
+            mutation
+            for mutation in missing_parent_mutations(
+                mutation.path for mutation in mutations
+            )
+            if mutation.path not in mutation_paths
+        )
+        mappings = roots
+        applied_result = _remap_result(staged_result, mappings, dry_run=False)
+        dry_result = _remap_result(staged_result, mappings, dry_run=True)
+    return PreparedCodexSync(
+        PreparedGroup("codex", _ordered_mutations(mutations)),
+        dry_result,
+        applied_result,
+    )
+
+
+def prepare_provider_sync(
+    provider_models: ProviderModels,
+    *,
+    target: Path = DEFAULT_CONFIG_PATH,
+    base_url: str = GATEWAY_BASE_URL,
+    now: datetime.datetime | None = None,
+    keep_backups: int = BACKUPS_KEPT,
+    catalog_dir: Path | None = None,
+) -> PreparedCodexSync:
+    """Prepare only one provider profile and catalog as an immutable group."""
+    return prepare_sync(
+        target=target,
+        prefixes=(provider_models.prefix,),
+        fetcher=lambda prefix: (
+            list(provider_models.models) if prefix == provider_models.prefix else []
+        ),
+        base_url=base_url,
+        now=now,
+        keep_backups=keep_backups,
+        catalog_dir=catalog_dir,
+        _provider_only=True,
+    )
+
+
+def apply_prepared(
+    prepared: PreparedCodexSync,
+    *,
+    lock_token: HeldClientSyncLock,
+) -> SyncResult:
+    """Apply exact prepared Codex bytes under an active shared lock."""
+    validate_client_sync_lock(lock_token)
+    apply_prepared_group(prepared.group)
+    return prepared.applied_result
+
+
+def _sync_unlocked(
     target: Path = DEFAULT_CONFIG_PATH,
     *,
     prefixes: t.Iterable[str] | None = None,
@@ -1191,6 +1618,7 @@ def sync(
     keep_backups: int = BACKUPS_KEPT,
     catalog_dir: Path | None = None,
     dry_run: bool = False,
+    _provider_only: bool = False,
 ) -> SyncResult:
     """Synchronize ``target`` against live gateway models.
 
@@ -1222,7 +1650,9 @@ def sync(
         prefix for prefix in sync_prefixes if prefix not in OPTIONAL_DISCOVERY_PREFIXES
     )
     if not provider_models and required_prefixes:
-        raise RuntimeError("no reverso provider model listings were available")
+        raise ProviderFreshnessError(
+            "no reverso provider model listings were available"
+        )
     if "kimi" in sync_prefixes:
         kimi_models = next(
             (entry.models for entry in provider_models if entry.prefix == "kimi"),
@@ -1237,7 +1667,7 @@ def sync(
         prefix for prefix in required_prefixes if prefix not in discovered_prefixes
     ]
     if missing_prefixes:
-        raise RuntimeError(
+        raise ProviderFreshnessError(
             "required reverso provider model discovery failed for: "
             + ", ".join(missing_prefixes)
         )
@@ -1247,7 +1677,7 @@ def sync(
         if entry.prefix in required_prefixes and not entry.models
     ]
     if empty_prefixes:
-        raise RuntimeError(
+        raise ProviderFreshnessError(
             "required reverso provider model discovery returned no compatible models for: "
             + ", ".join(empty_prefixes)
         )
@@ -1256,21 +1686,27 @@ def sync(
     _reject_symlink(target, "config target")
     old_text = target.read_text(encoding="utf-8") if target.exists() else ""
 
-    profile_files = _profile_files(provider_models, target.parent, catalog_dir)
+    profile_files = (
+        _reverso_profile_files(provider_models, target.parent, catalog_dir)
+        if _provider_only
+        else _profile_files(provider_models, target.parent, catalog_dir)
+    )
     live_prefixes = {entry.prefix for entry in _live_provider_models(provider_models)}
 
-    new_text = _ensure_default_model(old_text)
-    # Strip the legacy global catalog and NUX managed blocks; neither is
-    # written any more. Profile files carry per-provider catalog pointers
-    # instead.
-    new_text = _merge_catalog_config_block(new_text, None)
-    new_text = _strip_managed_block(new_text, NUX_BEGIN, NUX_END)
-    new_text = _strip_managed_block(new_text, PROFILES_BEGIN, PROFILES_END)
-    new_text = _ensure_gateway_provider_tables(
-        new_text,
-        model_exposure.reverso_routed_codex_profile_prefixes(),
-        base_url=base_url,
-    )
+    new_text = old_text
+    if not _provider_only:
+        new_text = _ensure_default_model(old_text)
+        # Strip the legacy global catalog and NUX managed blocks; neither is
+        # written any more. Profile files carry per-provider catalog pointers
+        # instead.
+        new_text = _merge_catalog_config_block(new_text, None)
+        new_text = _strip_managed_block(new_text, NUX_BEGIN, NUX_END)
+        new_text = _strip_managed_block(new_text, PROFILES_BEGIN, PROFILES_END)
+        new_text = _ensure_gateway_provider_tables(
+            new_text,
+            model_exposure.reverso_routed_codex_profile_prefixes(),
+            base_url=base_url,
+        )
 
     for path, text in profile_files.items():
         _parse_toml(text, f"rendered profile {path.name}")
@@ -1278,12 +1714,16 @@ def sync(
         spec = model_exposure.reverso_codex_profile_spec(entry.prefix, entry.models)
         if spec.uses_model_catalog:
             json.loads(_generate_catalog_json(entry))
-    _validate_sync_paths(
-        target=target,
-        catalog_dir=catalog_dir,
-        profile_files=profile_files,
-        live_prefixes=live_prefixes,
-    )
+    if _provider_only:
+        for path in (catalog_dir, *profile_files):
+            _reject_symlink(path, "sync target")
+    else:
+        _validate_sync_paths(
+            target=target,
+            catalog_dir=catalog_dir,
+            profile_files=profile_files,
+            live_prefixes=live_prefixes,
+        )
     _validate_canonical_reverso_profile_targets(profile_files)
     _validate_catalog_mutations(
         provider_models,
@@ -1309,28 +1749,32 @@ def sync(
         keep_backups=keep_backups,
         dry_run=dry_run,
     )
-    archived_profiles = _archive_legacy_managed_reverso_profiles(
-        target.parent,
-        live_prefixes,
-        now=now,
-        dry_run=dry_run,
-    )
-    archived_profiles.extend(
-        _archive_stale_variant_profiles(
-            target.parent,
-            now=now,
-            dry_run=dry_run,
+    archived_profiles: list[Path] = []
+    if not _provider_only:
+        archived_profiles.extend(
+            _archive_legacy_managed_reverso_profiles(
+                target.parent,
+                live_prefixes,
+                now=now,
+                dry_run=dry_run,
+            )
         )
-    )
-    archived_profiles.extend(
-        _archive_stale_managed_reverso_profiles(
-            target.parent,
-            catalog_dir,
-            set(sync_prefixes),
-            now=now,
-            dry_run=dry_run,
+        archived_profiles.extend(
+            _archive_stale_variant_profiles(
+                target.parent,
+                now=now,
+                dry_run=dry_run,
+            )
         )
-    )
+        archived_profiles.extend(
+            _archive_stale_managed_reverso_profiles(
+                target.parent,
+                catalog_dir,
+                set(sync_prefixes),
+                now=now,
+                dry_run=dry_run,
+            )
+        )
 
     config_changed = new_text != old_text
     changed = (
@@ -1357,6 +1801,35 @@ def sync(
         profile_backups=profile_backups,
         archived_profiles=archived_profiles,
     )
+
+
+def sync(
+    target: Path = DEFAULT_CONFIG_PATH,
+    *,
+    prefixes: t.Iterable[str] | None = None,
+    fetcher: ModelFetcher | None = None,
+    base_url: str = GATEWAY_BASE_URL,
+    now: datetime.datetime | None = None,
+    keep_backups: int = BACKUPS_KEPT,
+    catalog_dir: Path | None = None,
+    dry_run: bool = False,
+    lock_path: Path | None = None,
+    lock_token: HeldClientSyncLock | None = None,
+) -> SyncResult:
+    """Synchronize Codex client files under the shared writer lock."""
+    kwargs = {
+        "target": target,
+        "prefixes": prefixes,
+        "fetcher": fetcher,
+        "base_url": base_url,
+        "now": now,
+        "keep_backups": keep_backups,
+        "catalog_dir": catalog_dir,
+    }
+    if dry_run:
+        return prepare_sync(**kwargs).result
+    with acquire_client_sync_lock(path=lock_path, token=lock_token) as held:
+        return apply_prepared(prepare_sync(**kwargs), lock_token=held)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -1464,6 +1937,9 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         result = sync(target=target, base_url=base_url, catalog_dir=catalog_dir)
+    except ClientSyncLockBusy as exc:
+        sys.stderr.write(f"reverso-codex-sync: lock_busy: {exc}\n")
+        return 2
     except httpx.HTTPError as exc:
         sys.stderr.write(f"reverso-codex-sync: gateway error: {exc}\n")
         return 2

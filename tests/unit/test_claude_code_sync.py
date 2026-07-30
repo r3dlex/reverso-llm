@@ -9,12 +9,16 @@ import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 from reverso import claude_code_sync
 from reverso.claude_code_sync import (
     LAUNCHER_MANAGED_MARKER,
     main,
     sync_claude_code_settings,
 )
+from reverso.client_sync_lock import acquire_client_sync_lock
+from reverso.client_sync_mutations import PreparedStateChanged
 
 
 def _write_settings(path: Path, settings: dict[str, object]) -> None:
@@ -36,6 +40,139 @@ printf '%s\\n' "$@" >> "$REVERSO_TEST_CAPTURE"
         encoding="utf-8",
     )
     path.chmod(0o755)
+
+
+def test_dry_run_does_not_acquire_client_sync_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_claude = tmp_path / "claude"
+    _fake_claude(real_claude)
+
+    def fail_lock(**_kwargs: object) -> object:
+        raise AssertionError("dry-run must not acquire the writer lock")
+
+    monkeypatch.setattr(claude_code_sync, "acquire_client_sync_lock", fail_lock)
+    result = sync_claude_code_settings(
+        tmp_path / "settings.json",
+        launcher_dir=tmp_path / "bin",
+        claude_executable=real_claude,
+        dry_run=True,
+    )
+    assert result.changed is True
+
+
+def test_sync_reuses_explicit_client_sync_lock_token(tmp_path: Path) -> None:
+    real_claude = tmp_path / "claude"
+    _fake_claude(real_claude)
+    lock_path = tmp_path / "catalog-refresh.lock"
+    with acquire_client_sync_lock(path=lock_path) as token:
+        result = sync_claude_code_settings(
+            tmp_path / "settings.json",
+            launcher_dir=tmp_path / "bin",
+            claude_executable=real_claude,
+            lock_path=lock_path,
+            lock_token=token,
+        )
+        assert token.released is False
+    assert result.changed is True
+
+
+@pytest.mark.parametrize("changed_source", ["settings", "launcher"])
+def test_apply_prepared_rejects_source_change_before_any_write(
+    tmp_path: Path,
+    changed_source: str,
+) -> None:
+    settings_path = tmp_path / "settings.json"
+    _write_settings(
+        settings_path,
+        {
+            "env": {
+                "ANTHROPIC_BASE_URL": "http://127.0.0.1:64946",
+                "ANTHROPIC_AUTH_TOKEN": "reverso-local-loopback",
+            }
+        },
+    )
+    claude = tmp_path / "claude"
+    _fake_claude(claude)
+    launcher_dir = tmp_path / "bin"
+    prepared = claude_code_sync.prepare_sync(
+        settings_path,
+        launcher_dir=launcher_dir,
+        claude_executable=claude,
+    )
+    if changed_source == "settings":
+        settings_path.write_text('{"owner": "changed"}\n', encoding="utf-8")
+        changed_path = settings_path
+    else:
+        launcher_dir.mkdir()
+        changed_path = launcher_dir / "claude-codex"
+        changed_path.write_text("#!/bin/sh\n# owner changed\n", encoding="utf-8")
+
+    lock_path = tmp_path / "catalog-refresh.lock"
+    with (
+        acquire_client_sync_lock(path=lock_path) as token,
+        pytest.raises(PreparedStateChanged),
+    ):
+        claude_code_sync.apply_prepared(prepared, lock_token=token)
+
+    assert changed_path.exists()
+    assert not (launcher_dir / "claude-reverso").exists()
+    assert not tuple(tmp_path.glob("settings.json.reverso.bak.*"))
+
+
+def test_prepare_keeps_authoritative_settings_snapshot_when_owner_changes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings_path = tmp_path / "settings.json"
+    _write_settings(
+        settings_path,
+        {
+            "env": {
+                "ANTHROPIC_BASE_URL": "http://127.0.0.1:64946",
+                "ANTHROPIC_AUTH_TOKEN": "reverso-local-loopback",
+            }
+        },
+    )
+    original = settings_path.read_bytes()
+    claude = tmp_path / "claude"
+    _fake_claude(claude)
+    original_resolve = claude_code_sync._resolve_claude_executable
+
+    def change_owner_during_render(
+        explicit: Path | None,
+    ) -> tuple[Path | None, str | None]:
+        settings_path.write_text('{"owner": "changed"}\n', encoding="utf-8")
+        return original_resolve(explicit)
+
+    monkeypatch.setattr(
+        claude_code_sync,
+        "_resolve_claude_executable",
+        change_owner_during_render,
+    )
+    launcher_dir = tmp_path / "bin"
+    prepared = claude_code_sync.prepare_sync(
+        settings_path,
+        launcher_dir=launcher_dir,
+        claude_executable=claude,
+    )
+    settings_mutation = next(
+        mutation
+        for mutation in prepared.group.mutations
+        if mutation.path == settings_path
+    )
+    assert settings_mutation.before.data == original
+    assert settings_path.read_text(encoding="utf-8") == '{"owner": "changed"}\n'
+
+    with (
+        acquire_client_sync_lock(path=tmp_path / "sync.lock") as token,
+        pytest.raises(PreparedStateChanged),
+    ):
+        claude_code_sync.apply_prepared(prepared, lock_token=token)
+
+    assert settings_path.read_text(encoding="utf-8") == '{"owner": "changed"}\n'
+    assert not launcher_dir.exists()
+    assert not tuple(tmp_path.glob("settings.json.reverso.bak.*"))
 
 
 def test_sync_removes_reverso_global_overrides_and_preserves_stock_settings(

@@ -23,6 +23,8 @@ This path uses an authenticated Claude subscription, Reverso's `/claude/v1` Resp
 - Python 3.11 or newer and [`uv`](https://docs.astral.sh/uv/)
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) with an active subscription login
 - [Codex CLI](https://github.com/openai/codex) for the recommended client path
+- One executable `rtk` on the host `PATH`, or its exact path for
+  `reverso-client-sync --rtk-bin`
 
 Confirm the CLIs and authenticate Claude before installing Reverso:
 
@@ -69,18 +71,22 @@ Expected JSON includes:
 {"status":"healthy"}
 ```
 
-### Create the managed Codex profiles and Claude Code launchers
+### Converge the managed client surfaces
 
 With the gateway running:
 
 ```bash
-uv run reverso-codex-sync --dry-run
-uv run reverso-codex-sync
-uv run reverso-claude-code-sync --dry-run
-uv run reverso-claude-code-sync
+uv run reverso-client-sync dry-run --json
+uv run reverso-client-sync apply --json
+uv run reverso-client-sync verify --json
 ```
 
-The Codex sync reads each live provider's `/v1/models`, updates
+The unified sync composes the lower-level Codex and Claude Code sync
+implementations and converges the host RTK discovery link. See
+[`docs/client-sync.md`](docs/client-sync.md) for modes, lock behavior,
+ownership rules, JSON fields, statuses, and exit codes.
+
+The Codex portion reads each live provider's `/v1/models`, updates
 `~/.codex/config.toml`, writes product-scoped profiles such as
 `~/.codex/reverso-claude.config.toml` and
 `~/.codex/reverso-kimi.config.toml`, and writes provider-scoped catalogs under
@@ -243,10 +249,9 @@ uv sync --frozen
 uv run python scripts/check-deployment-drift.py --phase pre-install
 ./scripts/install-launchagents.sh
 uv run python scripts/check-deployment-drift.py --phase pre-sync
-uv run reverso-codex-sync --dry-run
-uv run reverso-codex-sync
-uv run reverso-claude-code-sync --dry-run
-uv run reverso-claude-code-sync
+uv run reverso-client-sync dry-run --json
+uv run reverso-client-sync apply --json
+uv run reverso-client-sync verify --json
 uv run python scripts/check-deployment-drift.py --phase acceptance
 ```
 
@@ -278,8 +283,8 @@ The uninstall script removes generated user LaunchAgent files. It does not delet
 | Readiness connection refused | `launchctl list | grep reverso` | Rerun `./scripts/install-launchagents.sh`, then inspect `~/Library/Logs/reverso/proxy.stderr.log`. |
 | Gateway exits at startup | `tail -n 100 ~/Library/Logs/reverso/proxy.stderr.log` | Run `uv sync --frozen`; confirm the checkout has not moved since the LaunchAgents were installed. |
 | Claude returns an auth error | `claude auth status` | Run `claude auth login` in the same user account, then retry. |
-| A Codex provider profile is missing | `uv run reverso-codex-sync --dry-run` | Start the gateway, confirm `/<provider>/v1/models` responds, then rerun the sync without `--dry-run`. |
-| Wrong models appear in a provider picker | Inspect `~/.codex/reverso/<provider>.json` | Do not edit generated catalogs. Rerun `uv run reverso-codex-sync`; catalogs are surface-scoped. |
+| A Codex provider profile is missing | `uv run reverso-client-sync verify --json` | Start the gateway, confirm `/<provider>/v1/models` responds, then run the unified dry-run and apply sequence. |
+| Wrong models appear in a provider picker | Inspect `~/.codex/reverso/<provider>.json` | Do not edit generated catalogs. Run the unified dry-run, apply, and verify sequence; catalogs are surface-scoped. |
 | DeepSeek returns 503 | `security find-generic-password -s reverso/DEEPSEEK_API_KEY -w` | Store the key with `./scripts/keychain-set.sh`, then restart the proxy LaunchAgent. |
 | A managed config edit is unexpected | Inspect `~/.codex/config.toml.reverso-sync.*` | Restore the newest backup if needed, then use `--dry-run` before syncing again. |
 
