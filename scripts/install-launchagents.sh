@@ -24,6 +24,7 @@ if [[ -z "${HOME:-}" || "${HOME}" != "${CANONICAL_USER_HOME}" ]]; then
 fi
 USER_HOME="${CANONICAL_USER_HOME}"
 LAUNCHD_DIR="${USER_HOME}/Library/LaunchAgents"
+STATE_DIR="${USER_HOME}/Library/Application Support/reverso"
 LOG_DIR="${USER_HOME}/Library/Logs/reverso"
 KIMI_CODE_HOME="${USER_HOME}/Library/Application Support/reverso/kimi-code"
 
@@ -57,6 +58,20 @@ require_real_kimi_home_path() {
     done
 }
 
+prepare_private_directory() {
+    local directory="$1"
+    if [[ -L "${directory}" || ( -e "${directory}" && ! -d "${directory}" ) ]]; then
+        echo "ERROR: refresh directory must be a real directory: ${directory}" >&2
+        exit 1
+    fi
+    mkdir -p "${directory}"
+    if [[ -L "${directory}" || ! -d "${directory}" ]]; then
+        echo "ERROR: refresh directory must be a real directory: ${directory}" >&2
+        exit 1
+    fi
+    chmod 0700 "${directory}"
+}
+
 require_real_kimi_home_path
 
 # Locate uv
@@ -77,6 +92,8 @@ run_deployment_drift() {
 
 run_deployment_drift --phase pre-install
 
+prepare_private_directory "${STATE_DIR}"
+prepare_private_directory "${LOG_DIR}"
 require_real_kimi_home_path
 mkdir -p "${KIMI_CODE_HOME}"
 require_real_kimi_home_path
@@ -87,12 +104,14 @@ run_deployment_drift \
     --phase pre-install \
     --write-provenance
 
-mkdir -p "${LAUNCHD_DIR}" "${LOG_DIR}"
+mkdir -p "${LAUNCHD_DIR}"
 
-AGENTS=(
+LONG_LIVED_AGENTS=(
     "com.user.reverso-proxy"
     "com.user.reverso-daemon"
 )
+SCHEDULED_AGENT="com.user.reverso-catalog-refresh"
+AGENTS=("${LONG_LIVED_AGENTS[@]}" "${SCHEDULED_AGENT}")
 
 for AGENT in "${AGENTS[@]}"; do
     TMPL="${REVERSO_DIR}/launchd/${AGENT}.plist.tmpl"
@@ -116,7 +135,7 @@ done
 
 run_deployment_drift --phase pre-restart
 
-for AGENT in "${AGENTS[@]}"; do
+for AGENT in "${LONG_LIVED_AGENTS[@]}"; do
     DEST="${LAUNCHD_DIR}/${AGENT}.plist"
     # Unload if already loaded (ignore errors - agent may not be loaded yet)
     launchctl unload "${DEST}" 2>/dev/null || true
@@ -125,6 +144,15 @@ for AGENT in "${AGENTS[@]}"; do
 done
 
 run_deployment_drift --phase post-restart
+
+SCHEDULED_PLIST="${LAUNCHD_DIR}/${SCHEDULED_AGENT}.plist"
+launchctl unload "${SCHEDULED_PLIST}" 2>/dev/null || true
+launchctl load "${SCHEDULED_PLIST}"
+echo "Loaded:  ${SCHEDULED_AGENT}"
+
+if ! "${UV_BIN}" run --project "${REVERSO_DIR}" reverso-catalog-refresh; then
+    echo "WARNING: initial catalog refresh did not complete successfully" >&2
+fi
 
 echo ""
 echo "Done. Reverso LaunchAgents installed."

@@ -37,6 +37,12 @@ LAUNCH_AGENT_EXECUTABLES = {
     "com.user.reverso-daemon": "reverso-daemon",
 }
 LAUNCH_AGENT_LABELS = tuple(LAUNCH_AGENT_EXECUTABLES)
+SCHEDULED_LAUNCH_AGENT_LABEL = "com.user.reverso-catalog-refresh"
+SCHEDULED_LAUNCH_AGENT_EXECUTABLE = "reverso-catalog-refresh"
+SCHEDULED_START_CALENDAR_INTERVAL = [
+    {"Hour": 6, "Minute": 0},
+    {"Hour": 18, "Minute": 0},
+]
 KIMI_MODEL = "kimi-k3"
 KIMI_CONTEXT_WINDOW = 1048576
 KIMI_AUTO_COMPACT_TOKEN_LIMIT = 943718
@@ -398,6 +404,7 @@ def _read_plist(path: Path) -> dict[str, Any]:
 
 def _validate_program_arguments(
     label: str,
+    executable: str,
     arguments: object,
     canonical: str,
     expected_launcher: str,
@@ -409,7 +416,7 @@ def _validate_program_arguments(
         "run",
         "--project",
         canonical,
-        LAUNCH_AGENT_EXECUTABLES[label],
+        executable,
     ]
     if not isinstance(arguments, list) or arguments != expected_arguments:
         raise DeploymentDriftError(
@@ -439,6 +446,7 @@ def _validate_launch_agents(
             )
         _validate_program_arguments(
             label,
+            LAUNCH_AGENT_EXECUTABLES[label],
             payload.get("ProgramArguments"),
             canonical,
             expected_launcher,
@@ -473,6 +481,63 @@ def _validate_launch_agents(
             raise DeploymentDriftError(
                 "rendered LaunchAgent com.user.reverso-daemon "
                 "must not set KIMI_CODE_HOME"
+            )
+
+
+def _validate_scheduled_launch_agent(
+    env: DriftEnvironment,
+    selected_commit: str,
+    expected_launcher: str,
+) -> None:
+    label = SCHEDULED_LAUNCH_AGENT_LABEL
+    canonical = str(env.canonical_checkout)
+    payload = _read_plist(env.launch_agents_dir / f"{label}.plist")
+    if payload.get("Label") != label:
+        raise DeploymentDriftError(f"rendered LaunchAgent {label} has wrong label")
+    if payload.get("WorkingDirectory") != canonical:
+        raise DeploymentDriftError(
+            f"rendered LaunchAgent {label} has stale WorkingDirectory"
+        )
+    if payload.get("Program") != expected_launcher:
+        raise DeploymentDriftError(
+            f"rendered LaunchAgent {label} has unauthorized Program"
+        )
+    _validate_program_arguments(
+        label,
+        SCHEDULED_LAUNCH_AGENT_EXECUTABLE,
+        payload.get("ProgramArguments"),
+        canonical,
+        expected_launcher,
+        authority="rendered",
+    )
+    environment = payload.get("EnvironmentVariables")
+    if not isinstance(environment, dict):
+        raise DeploymentDriftError(
+            f"rendered LaunchAgent {label} has no deployment environment"
+        )
+    if environment.get("REVERSO_PROJECT_DIR") != canonical:
+        raise DeploymentDriftError(
+            f"rendered LaunchAgent {label} project provenance is stale"
+        )
+    if environment.get("REVERSO_DEPLOYMENT_COMMIT") != selected_commit:
+        raise DeploymentDriftError(
+            f"rendered LaunchAgent {label} revision provenance is stale"
+        )
+    if payload.get("StartCalendarInterval") != SCHEDULED_START_CALENDAR_INTERVAL:
+        raise DeploymentDriftError(
+            f"rendered LaunchAgent {label} has unauthorized schedule"
+        )
+    for key in (
+        "KeepAlive",
+        "RunAtLoad",
+        "Sockets",
+        "MachServices",
+        "StandardOutPath",
+        "StandardErrorPath",
+    ):
+        if key in payload:
+            raise DeploymentDriftError(
+                f"rendered LaunchAgent {label} must not set {key}"
             )
 
 
@@ -567,6 +632,7 @@ def _validate_running_agents(
         running_arguments = _launchctl_block(output, "arguments")
         _validate_program_arguments(
             label,
+            LAUNCH_AGENT_EXECUTABLES[label],
             running_arguments,
             canonical,
             expected_launcher,
@@ -685,6 +751,7 @@ def check_deployment_drift(
     if phase != "pre-install":
         _validate_kimi_code_home(env)
         _validate_launch_agents(env, selected_commit, str(env.launcher))
+        _validate_scheduled_launch_agent(env, selected_commit, str(env.launcher))
     if phase in {"post-restart", "pre-sync", "acceptance"}:
         _validate_running_agents(env, selected_commit, str(env.launcher))
     if phase in {"pre-sync", "acceptance"}:

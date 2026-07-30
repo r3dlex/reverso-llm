@@ -77,6 +77,29 @@ advance, but provider and shared dependency groups are preserved. A shared
 artifact is never rendered from a mixture of current and prior provider state.
 The result is `partial_freshness` with exit code 4.
 
+## Scheduled refresh
+
+`scripts/install-launchagents.sh` installs the short-lived
+`com.user.reverso-catalog-refresh` job separately from the proxy and daemon.
+It attempts `refresh` at 06:00 and 18:00 local time, with a 10-second bound for
+each provider discovery and a 120-second bound for the complete refresh. It
+does not keep running and never restarts either long-lived service.
+The scheduled runner acquires the shared lock and invokes the same in-process
+`client_sync.run("refresh")` convergence path with the held lock capability. It
+does not spawn or reimplement a second refresh pipeline.
+
+The latest status is stored at:
+
+```text
+~/Library/Application Support/reverso/catalog-refresh-status.json
+```
+
+The scheduled stdout and stderr logs are under
+`~/Library/Logs/reverso/`. Each rotates at 1 MiB and retains `.1`, `.2`, and
+`.3`. A normal uninstall removes the scheduled job but preserves its lock,
+status, and logs. Use `scripts/uninstall-launchagents.sh --purge-state` only
+when those exact refresh artifacts should also be removed.
+
 ## RTK prerequisite
 
 The command resolves an explicit `--rtk-bin` first. Otherwise, the exact host
