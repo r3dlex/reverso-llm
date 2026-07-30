@@ -168,9 +168,18 @@ def test_model_exposure_owns_codex_profile_default_model_policy() -> None:
     )
     spec = reverso_codex_profile_spec("copilot", ("gpt-5.5", "gpt-4o"))
     assert spec.prefix == "copilot"
-    assert spec.model == "gpt-5.5"
+    assert spec.model == "copilot/gpt-5.5"
     assert spec.model_provider == "reverso_copilot"
     assert spec.uses_model_catalog is True
+    assert reverso_codex_profile_spec("auggie", ("prism-a",)).model == "auggie/prism-a"
+    assert (
+        reverso_codex_profile_spec("codex-direct", ("gpt-5.5",)).model
+        == "codex-direct/gpt-5.5"
+    )
+    assert (
+        reverso_codex_profile_spec("openai-pass-through", ("gpt-5.5",)).model
+        == "openai-pass-through/gpt-5.5"
+    )
     kimi = reverso_codex_profile_spec("kimi", ("kimi-k3",))
     assert kimi.model == "kimi-k3"
     assert kimi.model_provider == "reverso_kimi"

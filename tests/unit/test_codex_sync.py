@@ -779,10 +779,10 @@ def test_default_model_for_prefers_deepseek_v4_pro() -> None:
         )
         == "deepseek-v3"
     )
-    # Non-deepseek providers always use the first model.
+    # Collision-prone providers namespace the first model to match their catalog.
     assert (
         model_exposure.codex_profile_default_model("copilot", ("gpt-4o", "gpt-5.5"))
-        == "gpt-4o"
+        == "copilot/gpt-4o"
     )
 
 
@@ -817,7 +817,8 @@ def test_profile_files_emit_one_file_per_live_prefix(
     assert parsed["deepseek"]["model_provider"] == "reverso_deepseek"
     assert parsed["codex-direct"]["model_provider"] == "reverso_codex-direct"
     assert parsed["claude"]["model"] == "claude-fable-5"
-    assert parsed["copilot"]["model"] == "gpt-5.5"
+    assert parsed["copilot"]["model"] == "copilot/gpt-5.5"
+    assert parsed["auggie"]["model"] == "auggie/prism-a"
     assert parsed["deepseek"]["model"] == "deepseek-v4-pro"
     assert parsed["kimi"] == {
         "model": "kimi-k3",
@@ -826,7 +827,7 @@ def test_profile_files_emit_one_file_per_live_prefix(
         "model_context_window": 1048576,
         "model_auto_compact_token_limit": 943718,
     }
-    assert parsed["codex-direct"]["model"] == "gpt-5.5"
+    assert parsed["codex-direct"]["model"] == "codex-direct/gpt-5.5"
     assert parsed["codex-direct"]["model_catalog_json"] == str(
         catalog_dir / "codex-direct.json"
     )
@@ -2778,7 +2779,7 @@ def test_sync_opt_in_openai_pass_through_profile(
     profile_path = tmp_path / "reverso-openai-pass-through.config.toml"
     parsed = tomllib.loads(profile_path.read_text())
     assert parsed["model_provider"] == "reverso_openai-pass-through"
-    assert parsed["model"] == "gpt-5.5"
+    assert parsed["model"] == "openai-pass-through/gpt-5.5"
     assert parsed["model_catalog_json"] == str(catalog_dir / "openai-pass-through.json")
     catalog = json.loads(
         (catalog_dir / "openai-pass-through.json").read_text(encoding="utf-8")

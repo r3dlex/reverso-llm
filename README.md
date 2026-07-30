@@ -231,7 +231,11 @@ shim retain responsibility for their own secret injection.
 - MiniMax, DeepSeek, GPT from Codex, and Claude from Claude Code are not prefixed.
 - Additional experimental surfaces keep their own namespaces, including `codex-direct/<model>` and `openai-pass-through/<model>`.
 
-The catalog slug controls what Codex displays. The provider profile still sends the backend's bare model ID to its own Reverso route. This keeps provider identity visible without leaking one provider's models into another provider's catalog.
+The generated provider profile default matches its catalog slug. Collision-prone
+profiles therefore send their governed selector ID to their Reverso route, and
+the gateway removes the matching prefix before adapter dispatch. This keeps
+provider identity visible without leaking one provider's models into another
+provider's catalog.
 
 Hand-written Reverso profile files keep GPT-level model names when using the documented alias routing. For example, a DeepSeek or Claude profile may send `gpt-5.5`; the provider-specific route resolves it to the configured backend model. Generated profiles instead pin a live provider model and a matching provider-scoped catalog.
 

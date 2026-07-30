@@ -234,7 +234,7 @@ restart, never call RTK, and never read standalone Headroom savings files.
 <!-- MANUAL: Add manually curated notes below this line. They are preserved on regeneration. -->
 
 - Reverso Codex profile files should use GPT model names. Provider slugs are resolved by `/deepseek/v1` and `/claude/v1` profile routing so Codex keeps its own model metadata. MiniMax is direct Codex-only and should use `model = "MiniMax-M3"` with `model_provider = "minimax"`.
-- `reverso-codex-sync` must keep built-in Codex GPT model ids bare and selectable (`gpt-5.5` is the default unless the user already selected another top-level `model`). Reverso provider models are extra selector/catalog entries. Prefix selector and catalog slugs for providers that can collide with built-ins or each other: `copilot/<model>`, `auggie/<model>`, and `agy/<model>`. Do not prefix MiniMax, DeepSeek, GPT (Codex), or Claude (Claude Code). Provider profile routing may still send the bare provider model id inside the provider-specific profile entry.
+- `reverso-codex-sync` must keep built-in Codex GPT model ids bare and selectable (`gpt-5.5` is the default unless the user already selected another top-level `model`). Reverso provider models are extra selector/catalog entries. Prefix selector, catalog, and generated profile default ids for providers that can collide with built-ins or each other: `copilot/<model>`, `auggie/<model>`, and `agy/<model>`. Feature-gated `codex-direct/<model>` and `openai-pass-through/<model>` defaults follow the same rule. Do not prefix MiniMax, DeepSeek, GPT (Codex), Claude (Claude Code), or Kimi. The gateway removes a matching governed prefix before adapter dispatch.
 
 <!-- v3-ai-sdlc-init:start -->
 ## AI SDLC v3
