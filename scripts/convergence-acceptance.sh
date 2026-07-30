@@ -57,6 +57,35 @@ CODEX_CONFIG="${ACCEPTANCE_HOME}/.codex/config.toml"
 CLAUDE_CONFIG_DIR="${ACCEPTANCE_HOME}/.claude"
 CATALOG_DIR="${ACCEPTANCE_HOME}/.codex/reverso"
 LAUNCHER_DIR="${ACCEPTANCE_HOME}/.local/bin"
+mkdir -p "${CATALOG_DIR}"
+cat >"${CODEX_CONFIG}" <<'EOF'
+[model_providers.minimax]
+name = "MiniMax"
+base_url = "http://127.0.0.1:1/v1"
+wire_api = "responses"
+EOF
+cat >"${ACCEPTANCE_HOME}/.codex/openai.config.toml" <<'EOF'
+model = "gpt-5.5"
+model_provider = "openai"
+approval_policy = "never"
+EOF
+cat >"${ACCEPTANCE_HOME}/.codex/minimax.config.toml" <<'EOF'
+model = "MiniMax-M3"
+model_provider = "minimax"
+model_context_window = 512000
+EOF
+cat >"${ACCEPTANCE_HOME}/.codex/agy.config.toml" <<EOF
+model_provider = "agy"
+model_catalog_json = "${CATALOG_DIR}/agy.json"
+EOF
+cat >"${CATALOG_DIR}/agy.json" <<'EOF'
+{"models":[{"slug":"agy/external-acceptance-model"}]}
+EOF
+cp "${ACCEPTANCE_HOME}/.codex/openai.config.toml" \
+    "${RESULTS_DIR}/openai.config.toml.before"
+cp "${ACCEPTANCE_HOME}/.codex/minimax.config.toml" \
+    "${RESULTS_DIR}/minimax.config.toml.before"
+cp "${CATALOG_DIR}/agy.json" "${RESULTS_DIR}/agy.json.before"
 
 emit_sanitized_diagnostic() {
     local diagnostic_file="$1"
@@ -222,18 +251,83 @@ try:
     if (home / ".headroom/bin/rtk").resolve(strict=True) != rtk:
         raise ValueError("rtk")
 
+    local_host = os.environ.get("REVERSO_HOST", "127.0.0.1").strip() == "127.0.0.1"
+    codex_direct_value = os.environ.get("REVERSO_CODEX_DIRECT_BACKEND")
+    openai_value = os.environ.get("REVERSO_OPENAI_BACKEND")
+    feature_gate_enabled = {
+        "REVERSO_CODEX_DIRECT_BACKEND": local_host
+        and (
+            codex_direct_value is None
+            or codex_direct_value.strip().lower() not in {"0", "false", "no", "off"}
+        ),
+        "REVERSO_OPENAI_BACKEND": local_host
+        and openai_value is not None
+        and openai_value.strip().lower() in {"1", "true", "yes", "on", "openai"},
+    }
     codex_profile_count = 0
+    codex_profile_counts = {
+        "direct_profile": 0,
+        "feature_gated_route": 0,
+        "reverso_route": 0,
+    }
+    surface_statuses = {
+        result["mode"]: {
+            item["id"]: item["status"] for item in result["surfaces"]
+        }
+        for result in results
+    }
+    feature_gated_absent_count = 0
+    preserved_direct_profile_count = 0
+    preserved_external_catalog_count = 0
     for surface in manifest["surfaces"]:
-        if surface["kind"] not in {"reverso_route", "feature_gated_route"}:
+        kind = surface["kind"]
+        if kind in {"direct_profile", "external_catalog"} and any(
+            statuses[surface["id"]] != "current"
+            for statuses in surface_statuses.values()
+        ):
+            raise ValueError("user-preserving surface status")
+        if kind == "external_catalog":
+            catalog = Path(
+                surface["path_template"].replace("<catalog_dir>", str(home / ".codex/reverso"))
+            )
+            if catalog.read_bytes() != (
+                results_dir / f"{catalog.name}.before"
+            ).read_bytes():
+                raise ValueError("external catalog preservation")
+            preserved_external_catalog_count += 1
+            continue
+        if kind not in {
+            "direct_profile",
+            "feature_gated_route",
+            "reverso_route",
+        }:
             continue
         profile = Path(
             surface["path_template"].replace(
                 "<codex_config_dir>", str(home / ".codex")
             )
         )
-        if not profile.exists():
-            if surface["kind"] == "reverso_route":
-                raise ValueError("codex profile")
+        if kind == "feature_gated_route":
+            enabled = feature_gate_enabled[surface["feature_gate"]]
+            if not enabled:
+                if any(
+                    statuses[surface["id"]] != "current"
+                    for statuses in surface_statuses.values()
+                ):
+                    raise ValueError("disabled feature-gated surface status")
+                if profile.exists():
+                    raise ValueError("disabled feature-gated profile")
+                feature_gated_absent_count += 1
+                continue
+        if not profile.is_file():
+            raise ValueError("codex profile")
+        if kind == "direct_profile":
+            if profile.read_bytes() != (
+                results_dir / f"{profile.name}.before"
+            ).read_bytes():
+                raise ValueError("direct profile preservation")
+            preserved_direct_profile_count += 1
+        if kind == "feature_gated_route" and not enabled:
             continue
         codex_home = results_dir / "client-smoke" / surface["id"]
         codex_home.mkdir(parents=True, exist_ok=True)
@@ -264,11 +358,12 @@ try:
         if completed.returncode != 0:
             raise ValueError("codex profile execution")
         catalog = json.loads(completed.stdout)
-        if profile_config["model"] not in {
+        if kind != "direct_profile" and profile_config["model"] not in {
             model["slug"] for model in catalog["models"]
         }:
             raise ValueError("codex profile catalog")
         codex_profile_count += 1
+        codex_profile_counts[kind] += 1
 
     claude_launcher_count = 0
     for launcher in manifest["claude_launchers"]:
@@ -326,6 +421,18 @@ print(
             "headroom_schema_version": 2,
             "headroom_profile": expected_profile,
             "codex_profiles_executed": codex_profile_count,
+            "codex_reverso_profiles_executed": codex_profile_counts[
+                "reverso_route"
+            ],
+            "codex_direct_profiles_executed": codex_profile_counts[
+                "direct_profile"
+            ],
+            "codex_feature_gated_profiles_executed": codex_profile_counts[
+                "feature_gated_route"
+            ],
+            "codex_feature_gated_profiles_absent": feature_gated_absent_count,
+            "codex_direct_profiles_preserved": preserved_direct_profile_count,
+            "external_catalogs_preserved": preserved_external_catalog_count,
             "claude_launchers_executed": claude_launcher_count,
             "rtk_discovered_without_execution": True,
             "second_apply": "no_op",

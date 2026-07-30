@@ -970,6 +970,37 @@ def test_pre_sync_rejects_each_runtime_mismatch(
 
 
 @pytest.mark.parametrize(
+    ("failure", "message"),
+    (
+        (OSError("unavailable"), "live Kimi discovery is unavailable or malformed"),
+        (
+            json.JSONDecodeError("malformed", "{", 0),
+            "live Kimi discovery is unavailable or malformed",
+        ),
+    ),
+)
+def test_pre_sync_reports_kimi_fetch_failures_with_kimi_authority(
+    tmp_path: Path,
+    failure: Exception,
+    message: str,
+) -> None:
+    env, runner = _env(tmp_path)
+    _bootstrap(env)
+    env = DriftEnvironment(
+        repo_root=env.repo_root,
+        home=env.home,
+        canonical_checkout=env.canonical_checkout,
+        command_runner=runner,
+        json_fetcher=lambda _url: (_ for _ in ()).throw(failure),
+        uid=env.uid,
+        launcher=env.launcher,
+    )
+
+    with pytest.raises(DeploymentDriftError, match=message):
+        check_deployment_drift("pre-sync", env, selected_commit=COMMIT)
+
+
+@pytest.mark.parametrize(
     ("mutation", "message"),
     (
         ("profile-model", "profile model"),
@@ -1057,6 +1088,47 @@ def test_acceptance_rejects_each_live_headroom_mismatch(
                 "model_discovery_source": "live",
             }
         ),
+        uid=env.uid,
+        launcher=env.launcher,
+    )
+
+    with pytest.raises(DeploymentDriftError, match=message):
+        check_deployment_drift("acceptance", env, selected_commit=COMMIT)
+
+
+@pytest.mark.parametrize(
+    ("failure", "message"),
+    (
+        (OSError("unavailable"), "live Headroom usage is unavailable or malformed"),
+        (
+            json.JSONDecodeError("malformed", "{", 0),
+            "live Headroom usage is unavailable or malformed",
+        ),
+    ),
+)
+def test_acceptance_reports_headroom_fetch_failures_with_headroom_authority(
+    tmp_path: Path,
+    failure: Exception,
+    message: str,
+) -> None:
+    env, runner = _env(tmp_path)
+    _bootstrap(env)
+    _write_generated_kimi(env.home)
+
+    def fetch(url: str) -> Any:
+        if url == deployment_drift.KIMI_MODELS_URL:
+            return {
+                "data": [{"id": "kimi-k3"}],
+                "model_discovery_source": "live",
+            }
+        raise failure
+
+    env = DriftEnvironment(
+        repo_root=env.repo_root,
+        home=env.home,
+        canonical_checkout=env.canonical_checkout,
+        command_runner=runner,
+        json_fetcher=fetch,
         uid=env.uid,
         launcher=env.launcher,
     )

@@ -173,7 +173,9 @@ def _fetch_json(url: str) -> Any:
         with urllib.request.urlopen(url, timeout=5.0) as response:
             return json.load(response)
     except (OSError, ValueError) as exc:
-        raise DeploymentDriftError("live Kimi discovery is unavailable") from exc
+        raise DeploymentDriftError(
+            "live JSON authority is unavailable or malformed"
+        ) from exc
 
 
 @dataclass(frozen=True)
@@ -761,7 +763,12 @@ def _validate_kimi_code_home(env: DriftEnvironment) -> None:
 
 
 def _validate_live_kimi(env: DriftEnvironment) -> None:
-    payload = env.json_fetcher(KIMI_MODELS_URL)
+    try:
+        payload = env.json_fetcher(KIMI_MODELS_URL)
+    except (DeploymentDriftError, OSError, ValueError) as exc:
+        raise DeploymentDriftError(
+            "live Kimi discovery is unavailable or malformed"
+        ) from exc
     if not isinstance(payload, dict):
         raise DeploymentDriftError("live Kimi discovery payload is malformed")
     if payload.get("model_discovery_source") != "live":
@@ -929,7 +936,13 @@ def validate_headroom_usage_payload(
 
 
 def _validate_live_headroom(env: DriftEnvironment) -> None:
-    validate_headroom_usage_payload(env.json_fetcher(HEADROOM_USAGE_URL))
+    try:
+        payload = env.json_fetcher(HEADROOM_USAGE_URL)
+    except (DeploymentDriftError, OSError, ValueError) as exc:
+        raise DeploymentDriftError(
+            "live Headroom usage is unavailable or malformed"
+        ) from exc
+    validate_headroom_usage_payload(payload)
 
 
 def _validate_generated_kimi(env: DriftEnvironment) -> None:

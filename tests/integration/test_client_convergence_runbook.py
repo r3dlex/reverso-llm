@@ -61,6 +61,9 @@ def test_acceptance_script_proves_the_complete_isolated_contract() -> None:
     assert "HEADROOM_USAGE_URL" in script
     assert '"headroom_schema_version": 2' in script
     assert '"headroom_profile": expected_profile' in script
+    assert '"codex_direct_profiles_preserved"' in script
+    assert '"external_catalogs_preserved"' in script
+    assert '"codex_feature_gated_profiles_absent"' in script
     assert "REVERSO_ACCEPTANCE_BASE_COMMIT" not in script
     assert "status --porcelain --untracked-files=all" in script
     assert "refs/remotes/origin/main" in script
@@ -197,6 +200,7 @@ def _acceptance_fixture(
     tmp_path: Path,
     *,
     headroom_profile: str = "coding",
+    enable_openai_pass_through: bool = False,
 ) -> tuple[Path, dict[str, str], Path]:
     source_root = Path.cwd().resolve()
     repo = tmp_path / "repo"
@@ -361,10 +365,25 @@ exit 99
                 status = "no_op" if marker.exists() else "success"
                 if not marker.exists():
                     codex_config.parent.mkdir(parents=True, exist_ok=True)
-                    codex_config.write_text("# base\\n")
                     catalog_dir.mkdir(parents=True, exist_ok=True)
+                    false_values = {{"0", "false", "no", "off"}}
+                    true_values = {{"1", "true", "yes", "on", "openai"}}
                     for surface in manifest["surfaces"]:
-                        if surface["kind"] != "reverso_route":
+                        kind = surface["kind"]
+                        enabled = kind == "reverso_route"
+                        if kind == "feature_gated_route":
+                            raw = os.environ.get(surface["feature_gate"])
+                            if surface["feature_gate"] == "REVERSO_CODEX_DIRECT_BACKEND":
+                                enabled = (
+                                    raw is None
+                                    or raw.strip().lower() not in false_values
+                                )
+                            else:
+                                enabled = (
+                                    raw is not None
+                                    and raw.strip().lower() in true_values
+                                )
+                        if not enabled:
                             continue
                         path = pathlib.Path(
                             surface["path_template"].replace(
@@ -394,6 +413,8 @@ exit 99
                     link = home / ".headroom/bin/rtk"
                     link.parent.mkdir(parents=True, exist_ok=True)
                     link.symlink_to(rtk)
+                    if relative := os.environ.get("FAKE_SYNC_MUTATE_PRESERVED"):
+                        (home / relative).write_bytes(b"mutated\\n")
                     marker.write_text("applied\\n")
             refresh = {{
                 "last_attempt_at": "2026-07-30T10:00:00+00:00",
@@ -404,8 +425,12 @@ exit 99
                 "observed_at": "2026-07-30T10:00:00+00:00",
             }}
             payload = {{
+                "mode": mode,
                 "status": status,
-                "surfaces": [{{"id": surface["id"]}} for surface in manifest["surfaces"]],
+                "surfaces": [
+                    {{"id": surface["id"], "status": "current"}}
+                    for surface in manifest["surfaces"]
+                ],
                 "catalog_refresh": refresh,
             }}
             print(json.dumps(payload))
@@ -433,6 +458,9 @@ exit 99
             "REVERSO_ACCEPTANCE_CODEX_BIN": str(fake_codex),
             "REVERSO_ACCEPTANCE_RTK_BIN": str(fake_rtk),
             "REVERSO_HEADROOM_PROFILE": headroom_profile,
+            "REVERSO_OPENAI_BACKEND": (
+                "openai" if enable_openai_pass_through else "off"
+            ),
             "REVERSO_UV_BIN": str(fake_uv),
         }
     )
@@ -463,15 +491,32 @@ def test_acceptance_executes_generated_clients_with_configured_profile(
     assert result.returncode == 0, result.stderr
     evidence = json.loads(result.stdout)
     assert evidence["headroom_profile"] == "agent-90"
-    assert evidence["codex_profiles_executed"] == 5
+    assert evidence["codex_profiles_executed"] == 8
+    assert evidence["codex_reverso_profiles_executed"] == 5
+    assert evidence["codex_direct_profiles_executed"] == 2
+    assert evidence["codex_feature_gated_profiles_executed"] == 1
+    assert evidence["codex_feature_gated_profiles_absent"] == 1
+    assert evidence["codex_direct_profiles_preserved"] == 2
+    assert evidence["external_catalogs_preserved"] == 1
     assert evidence["claude_launchers_executed"] == 7
     codex_calls = (tmp_path / "codex.log").read_text(encoding="utf-8").splitlines()
     claude_calls = (tmp_path / "claude.log").read_text(encoding="utf-8").splitlines()
-    assert len(codex_calls) == 5
+    assert len(codex_calls) == 8
     assert all("|debug models " in call for call in codex_calls)
     assert all("-c model=" in call for call in codex_calls)
     assert all("-c model_provider=" in call for call in codex_calls)
-    assert all("-c model_catalog_json=" in call for call in codex_calls)
+    direct_calls = [
+        call
+        for call in codex_calls
+        if "codex-builtin-openai|" in call or "codex-minimax|" in call
+    ]
+    assert len(direct_calls) == 2
+    assert all("-c model_catalog_json=" not in call for call in direct_calls)
+    assert all(
+        "-c model_catalog_json=" in call
+        for call in codex_calls
+        if call not in direct_calls
+    )
     assert {call.partition("|")[0] for call in claude_calls} == {
         "claude-reverso",
         "claude-claude",
@@ -482,6 +527,47 @@ def test_acceptance_executes_generated_clients_with_configured_profile(
         "claude-kimi",
     }
     assert all(call.endswith("|--version") for call in claude_calls)
+
+
+def test_acceptance_executes_all_enabled_feature_gated_profiles(
+    tmp_path: Path,
+) -> None:
+    repo, env, _ = _acceptance_fixture(
+        tmp_path,
+        enable_openai_pass_through=True,
+    )
+
+    result = _run_acceptance(repo, env)
+
+    assert result.returncode == 0, result.stderr
+    evidence = json.loads(result.stdout)
+    assert evidence["codex_profiles_executed"] == 9
+    assert evidence["codex_feature_gated_profiles_executed"] == 2
+    assert evidence["codex_feature_gated_profiles_absent"] == 0
+    codex_calls = (tmp_path / "codex.log").read_text(encoding="utf-8").splitlines()
+    assert any('model="codex-direct"' in call for call in codex_calls)
+    assert any('model="codex-openai-pass-through"' in call for call in codex_calls)
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "message"),
+    (
+        (".codex/openai.config.toml", "direct profile preservation"),
+        (".codex/reverso/agy.json", "external catalog preservation"),
+    ),
+)
+def test_acceptance_rejects_user_preserving_surface_byte_drift(
+    tmp_path: Path,
+    relative_path: str,
+    message: str,
+) -> None:
+    repo, env, _ = _acceptance_fixture(tmp_path)
+    env["FAKE_SYNC_MUTATE_PRESERVED"] = relative_path
+
+    result = _run_acceptance(repo, env)
+
+    assert result.returncode == 2
+    assert message in result.stderr
 
 
 def test_acceptance_preserves_safe_sync_failure_diagnostic(tmp_path: Path) -> None:
