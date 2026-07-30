@@ -712,6 +712,28 @@ def _launchctl_calendar_intervals(output: str) -> list[dict[str, int]]:
     return intervals
 
 
+def _normalized_calendar_intervals(
+    intervals: object,
+) -> list[tuple[int, int]] | None:
+    if not isinstance(intervals, list):
+        return None
+    normalized: list[tuple[int, int]] = []
+    for interval in intervals:
+        if not isinstance(interval, dict) or set(interval) != {"Hour", "Minute"}:
+            return None
+        hour = interval["Hour"]
+        minute = interval["Minute"]
+        if (
+            not isinstance(hour, int)
+            or isinstance(hour, bool)
+            or not isinstance(minute, int)
+            or isinstance(minute, bool)
+        ):
+            return None
+        normalized.append((hour, minute))
+    return sorted(normalized)
+
+
 def _validate_running_agents(
     env: DriftEnvironment,
     selected_commit: str,
@@ -856,7 +878,9 @@ def _validate_running_scheduled_agent(
             raise DeploymentDriftError(
                 f"running LaunchAgent {label} must not set {plist_key}"
             )
-    if _launchctl_calendar_intervals(output) != rendered.get("StartCalendarInterval"):
+    if _normalized_calendar_intervals(
+        _launchctl_calendar_intervals(output)
+    ) != _normalized_calendar_intervals(rendered.get("StartCalendarInterval")):
         raise DeploymentDriftError(
             f"running LaunchAgent {label} has unauthorized schedule"
         )

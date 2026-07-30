@@ -1041,6 +1041,18 @@ def test_post_load_accepts_running_scheduled_launchagent_readback(
     ) in runner.commands
 
 
+def test_post_load_accepts_reversed_running_calendar_trigger_order(
+    tmp_path: Path,
+) -> None:
+    env, runner = _env(tmp_path)
+    _bootstrap(env)
+    runner.scheduled_intervals.reverse()
+
+    report = check_deployment_drift("post-load", env, selected_commit=COMMIT)
+
+    assert report["status"] == "passed"
+
+
 @pytest.mark.parametrize("value", (None, "/stale/kimi-home"))
 def test_post_restart_rejects_running_proxy_kimi_home_drift(
     tmp_path: Path,
