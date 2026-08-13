@@ -29,6 +29,8 @@ from reverso.protocols.adapter import (
     SSEEvent,
 )
 from reverso.protocols.feature_policy import (
+    CAPABILITY_TABLES,
+    PARTIAL,
     UnsupportedFeature,
     build_unsupported_payload,
     check_features,
@@ -250,6 +252,43 @@ async def _send_unsupported_feature(send: Send, provider: str, feature: str) -> 
     await _send_json(send, 400, build_unsupported_payload(provider, feature))
 
 
+# Subkeys of the `reasoning` extra object, mapped to their capability-table
+# feature. A provider classified partial accepts the subfield as a best-effort
+# no-op (a CLI runner has no reasoning knob), but the adapter must never see
+# it: forwarding an accepted no-op upstream would turn it into a provider-side
+# 400. Subfields the provider translates or supports natively are preserved.
+_REASONING_SUBKEY_FEATURES: dict[str, str] = {
+    "effort": "reasoning.effort",
+    "summary": "reasoning.summary",
+}
+
+
+def _strip_partial_features(provider: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Drop reasoning subfields the provider accepts only as a no-op.
+
+    Codex can force `model_reasoning_effort` from the CLI on any profile; for
+    CLI-runner providers the gate accepts the field, and this strip keeps the
+    accepted request from leaking an unsupported knob to the adapter.
+    """
+    table = CAPABILITY_TABLES.get(provider, {})
+    reasoning = payload.get("reasoning")
+    if not isinstance(reasoning, dict):
+        return payload
+    kept = {
+        key: value
+        for key, value in reasoning.items()
+        if table.get(_REASONING_SUBKEY_FEATURES.get(key, "")) != PARTIAL
+    }
+    if kept == reasoning:
+        return payload
+    stripped = dict(payload)
+    if kept:
+        stripped["reasoning"] = kept
+    else:
+        stripped.pop("reasoning", None)
+    return stripped
+
+
 async def _handle_create_response(
     adapter: ProviderAdapter,
     provider: str,
@@ -269,7 +308,7 @@ async def _handle_create_response(
         await _send_unsupported_feature(send, exc.provider, exc.feature)
         return
 
-    normalized = normalize_request_payload(payload)
+    normalized = normalize_request_payload(_strip_partial_features(provider, payload))
     request = ResponsesRequest.from_payload(normalized)
     compression_outcome = await compress_responses_request(
         request,

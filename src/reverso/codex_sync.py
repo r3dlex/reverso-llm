@@ -294,6 +294,19 @@ def _provider_supports_feature(prefix: str, feature: str) -> bool:
     )
 
 
+def _provider_applies_feature(prefix: str, feature: str) -> bool:
+    """Return whether the provider actually applies a feature upstream.
+
+    Only native/translated classifications change upstream behavior; partial
+    means the gateway accepts the field as a best-effort no-op, so profiles
+    and catalogs must not surface it as usable.
+    """
+    return feature_policy.CAPABILITY_TABLES.get(prefix, {}).get(feature) in (
+        feature_policy.NATIVE,
+        feature_policy.TRANSLATED,
+    )
+
+
 def _render_profile_file(
     *,
     model: str,
@@ -302,6 +315,7 @@ def _render_profile_file(
     model_context_window: int | None = None,
     model_auto_compact_token_limit: int | None = None,
     model_reasoning_summary: str | None = None,
+    model_reasoning_effort: str | None = None,
 ) -> str:
     """Render one provider-name Codex profile file."""
     lines = [
@@ -309,6 +323,8 @@ def _render_profile_file(
         f"model = {_toml_string(model)}",
         f"model_provider = {_toml_string(model_provider)}",
     ]
+    if model_reasoning_effort is not None:
+        lines.append(f"model_reasoning_effort = {_toml_string(model_reasoning_effort)}")
     if model_reasoning_summary is not None:
         lines.append(
             f"model_reasoning_summary = {_toml_string(model_reasoning_summary)}"
@@ -347,8 +363,17 @@ def _reverso_profile_files(
                 model_auto_compact_token_limit=spec.model_auto_compact_token_limit,
                 model_reasoning_summary=(
                     None
-                    if _provider_supports_feature(entry.prefix, "reasoning.summary")
+                    if _provider_applies_feature(entry.prefix, "reasoning.summary")
                     else "none"
+                ),
+                # Pin the default effort only where the provider forwards it
+                # upstream (native/translated). CLI-runner providers (claude,
+                # auggie: parity partial) get no key; the gateway strips a
+                # CLI-forced effort for them instead.
+                model_reasoning_effort=(
+                    "medium"
+                    if _provider_applies_feature(entry.prefix, "reasoning.effort")
+                    else None
                 ),
             )
         )
@@ -402,9 +427,10 @@ def _catalog_display_name(entry: CatalogModelEntry) -> str:
 def _generate_catalog_json(provider: ProviderModels) -> str:
     """Generate Codex-compatible catalog JSON for one provider's models."""
     models: list[dict[str, t.Any]] = []
-    reasoning_supported = _provider_supports_feature(
-        provider.prefix, "reasoning.effort"
-    )
+    # Advertise reasoning levels only where the provider actually forwards
+    # effort upstream (native/translated). CLI-runner providers accept effort
+    # as a no-op (partial) and must not advertise levels the model ignores.
+    reasoning_supported = _provider_applies_feature(provider.prefix, "reasoning.effort")
     default_reasoning_level = "medium" if reasoning_supported else None
     supported_reasoning_levels = (
         [

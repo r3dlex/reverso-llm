@@ -155,17 +155,17 @@
       "codex": "partial"
     },
     "reasoning.effort": {
-      "claude": "unsupported",
+      "claude": "partial",
       "copilot": "native",
-      "auggie": "unsupported",
+      "auggie": "partial",
       "deepseek": "translated",
       "kimi": "translated",
       "codex": "unsupported"
     },
     "reasoning.summary": {
-      "claude": "unsupported",
+      "claude": "partial",
       "copilot": "native",
-      "auggie": "unsupported",
+      "auggie": "partial",
       "deepseek": "translated",
       "kimi": "translated",
       "codex": "unsupported"

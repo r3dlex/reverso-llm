@@ -826,6 +826,7 @@ def test_profile_files_emit_one_file_per_live_prefix(
         "model_catalog_json": str(catalog_dir / "kimi.json"),
         "model_context_window": 1048576,
         "model_auto_compact_token_limit": 943718,
+        "model_reasoning_effort": "medium",
     }
     assert parsed["codex-direct"]["model"] == "codex-direct/gpt-5.5"
     assert parsed["codex-direct"]["model_catalog_json"] == str(
@@ -1201,6 +1202,36 @@ def test_sync_disables_reasoning_summary_for_unsupported_profiles(
     assert auggie["model_reasoning_summary"] == "none"
     assert "model_reasoning_summary" not in copilot
     assert "model_reasoning_summary" not in deepseek
+
+
+def test_sync_pins_default_reasoning_effort_only_for_supported_profiles(
+    tmp_path: Path,
+) -> None:
+    """Profiles pin model_reasoning_effort only where the provider supports it.
+
+    Copilot/deepseek/kimi forward reasoning.effort upstream, so the profile
+    seeds a "medium" default that `codex --high/--xhigh` can override.
+    claude/auggie CLI runners have no reasoning knob, so the profile omits the
+    key entirely (the gateway accepts-and-strips a CLI-forced effort instead).
+    """
+    target = tmp_path / "config.toml"
+    target.write_text(_baseline_config_text(), encoding="utf-8")
+
+    codex_sync.sync(
+        target=target, fetcher=_make_fetcher(), catalog_dir=tmp_path / "reverso"
+    )
+
+    claude = tomllib.loads((tmp_path / "reverso-claude.config.toml").read_text())
+    auggie = tomllib.loads((tmp_path / "reverso-auggie.config.toml").read_text())
+    copilot = tomllib.loads((tmp_path / "reverso-copilot.config.toml").read_text())
+    deepseek = tomllib.loads((tmp_path / "reverso-deepseek.config.toml").read_text())
+    kimi = tomllib.loads((tmp_path / "reverso-kimi.config.toml").read_text())
+
+    assert "model_reasoning_effort" not in claude
+    assert "model_reasoning_effort" not in auggie
+    assert copilot["model_reasoning_effort"] == "medium"
+    assert deepseek["model_reasoning_effort"] == "medium"
+    assert kimi["model_reasoning_effort"] == "medium"
 
 
 def test_sync_uses_model_exposure_profile_prefix_interface(

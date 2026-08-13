@@ -42,7 +42,10 @@ from reverso.protocols.feature_policy import (
     check_features,
     extract_features,
 )
-from reverso.protocols.responses_app import build_app
+from reverso.protocols.responses_app import (
+    _strip_partial_features,
+    build_app,
+)
 
 BASE_URL = "http://127.0.0.1:64946"
 
@@ -341,6 +344,21 @@ def test_claude_accepts_max_output_tokens_as_best_effort() -> None:
     check_features("claude", {"max_output_tokens"})
 
 
+def test_cli_runner_providers_accept_reasoning_fields_as_noop() -> None:
+    """claude/auggie accept reasoning.effort/summary as best-effort no-ops.
+
+    Codex CLI-forced effort (`omx --high` -> `-c model_reasoning_effort=...`)
+    reaches the gateway on every profile; the claude/auggie CLI runners have
+    no reasoning knob, so the gate must accept-and-ignore rather than fail the
+    whole turn with unsupported_feature (parity: partial, same shape as
+    max_output_tokens).
+    """
+    for provider in ("claude", "auggie"):
+        assert CAPABILITY_TABLES[provider]["reasoning.effort"] == "partial"
+        assert CAPABILITY_TABLES[provider]["reasoning.summary"] == "partial"
+        check_features(provider, {"reasoning.effort", "reasoning.summary"})
+
+
 def test_encrypted_content_include_capability_matrix() -> None:
     feature = "include.reasoning.encrypted_content"
     for provider in ("claude", "copilot", "auggie", "deepseek", "kimi"):
@@ -610,6 +628,58 @@ async def test_fast_path_allows_supported_feature_payload() -> None:
         )
     assert resp.status_code == 200
     assert resp.json()["id"] == "resp_ok"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["claude", "auggie"])
+@pytest.mark.parametrize("stream", [False, True])
+async def test_partial_reasoning_fields_are_stripped_before_dispatch(
+    provider: str, stream: bool
+) -> None:
+    """The adapter must never see reasoning fields classified partial.
+
+    The gate accepts them (best-effort) but responses_app strips them from the
+    dispatch payload so a CLI-runner adapter cannot accidentally forward an
+    unsupported knob upstream.
+    """
+    adapter = _RecordingAdapter()
+    payload: dict[str, Any] = {
+        "model": "m",
+        "input": "hi",
+        "stream": stream,
+        "reasoning": {"effort": "high", "summary": "auto"},
+    }
+    async with _client(adapter, provider) as client:
+        resp = await client.post(f"/{provider}/v1/responses", json=payload)
+    assert resp.status_code == 200
+    recorded = adapter.stream_requests if stream else adapter.create_requests
+    assert len(recorded) == 1
+    assert recorded[0].extra.get("reasoning") is None
+
+
+def test_strip_partial_features_preserves_translated_effort() -> None:
+    """deepseek translates reasoning.effort upstream; the strip must not apply.
+
+    Asserted on the raw payload (pre-normalizer) because the Codex normalizer
+    downstream drops `reasoning` for every provider anyway; the strip is what
+    must stay provider-scoped.
+    """
+    payload = {"model": "m", "input": "hi", "reasoning": {"effort": "high"}}
+    assert _strip_partial_features("deepseek", payload) == payload
+
+
+def test_strip_partial_features_drops_only_partial_reasoning_subkeys() -> None:
+    payload = {
+        "model": "m",
+        "input": "hi",
+        "reasoning": {"effort": "high", "summary": "auto"},
+    }
+    stripped = _strip_partial_features("claude", payload)
+    assert "reasoning" not in stripped
+    # unknown subkeys survive so future reasoning.* fields pass through
+    # untouched until the parity table classifies them
+    mixed = {"model": "m", "reasoning": {"effort": "high", "future": 1}}
+    assert _strip_partial_features("claude", mixed)["reasoning"] == {"future": 1}
 
 
 @pytest.mark.asyncio

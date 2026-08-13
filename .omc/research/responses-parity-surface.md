@@ -82,8 +82,8 @@ A4=done. The machine-readable matrix lives at `.omc/research/responses-parity-su
 
 | Feature | claude | copilot | auggie | deepseek | Source citation |
 |---------|--------|---------|--------|----------|-----------------|
-| reasoning.effort | unsupported | native | unsupported | translated | claude/auggie CLI ignore; copilot forwards verbatim; deepseek passes through `extra` (e.g. to deepseek-reasoner) |
-| reasoning.summary | unsupported | native | unsupported | translated | only copilot forwards; deepseek surfaces `reasoning_content` on the envelope and replays it forward (see `_prior_turn`) |
+| reasoning.effort | partial | native | partial | translated | claude/auggie CLI runners have no reasoning knob: accepted as a best-effort no-op (Codex CLI-forced `model_reasoning_effort` reaches the gateway on every profile) and stripped from the dispatch payload by responses_app; copilot forwards verbatim; deepseek passes through `extra` (e.g. to deepseek-reasoner) |
+| reasoning.summary | partial | native | partial | translated | claude/auggie accepted-and-stripped with reasoning.effort (same no-op boundary); only copilot forwards; deepseek surfaces `reasoning_content` on the envelope and replays it forward (see `_prior_turn`) |
 | sampling.temperature | unsupported | native | unsupported | translated | claude/auggie CLI flags do not expose this; copilot forwards; deepseek forwards via `extra` carry-through |
 | sampling.top_p | unsupported | native | unsupported | translated | same shape as temperature |
 | max_output_tokens | unsupported | native | unsupported | translated | claude CLI has no flag for this; auggie similarly; copilot forwards; deepseek forwards via `extra` |
