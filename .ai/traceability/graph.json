@@ -377,6 +377,94 @@
       "repo_id": "reverso-root",
       "path": ".ai/work-intake/reverso-install-profile-catalog-headroom-convergence.md",
       "backlinks": []
+    },
+    {
+      "id": "prd:reverso-root:ollama-reverso-provider",
+      "type": "prd",
+      "title": "Reverso-routed Ollama provider",
+      "status": "active",
+      "repo_id": "reverso-root",
+      "path": "docs/specifications/ACTIVE/ollama-reverso-provider.md",
+      "backlinks": []
+    },
+    {
+      "id": "issue:reverso-root:ollama-reverso-provider",
+      "type": "issue",
+      "title": "northstar issue: ollama-reverso-provider",
+      "status": "ready-for-agent",
+      "repo_id": "reverso-root",
+      "path": ".ai/work-intake/ollama-reverso-provider.md",
+      "backlinks": []
+    },
+    {
+      "id": "issue:reverso-root:ollama-reverso-provider-g1-codex-responses",
+      "type": "issue",
+      "title": "OLLAMA-RP-G1 Codex Responses vertical",
+      "status": "ready-for-agent",
+      "repo_id": "reverso-root",
+      "path": ".ai/work-intake/ollama-reverso-provider-g1-codex-responses.md",
+      "backlinks": [
+        "issue:reverso-root:ollama-reverso-provider",
+        "prd:reverso-root:ollama-reverso-provider"
+      ]
+    },
+    {
+      "id": "issue:reverso-root:ollama-reverso-provider-g2-claude-messages",
+      "type": "issue",
+      "title": "OLLAMA-RP-G2 Claude Messages vertical",
+      "status": "ready-for-agent",
+      "repo_id": "reverso-root",
+      "path": ".ai/work-intake/ollama-reverso-provider-g2-claude-messages.md",
+      "backlinks": [
+        "issue:reverso-root:ollama-reverso-provider",
+        "prd:reverso-root:ollama-reverso-provider"
+      ]
+    },
+    {
+      "id": "issue:reverso-root:ollama-reverso-provider-g3-convergence-refresh-docs",
+      "type": "issue",
+      "title": "OLLAMA-RP-G3 convergence refresh docs",
+      "status": "ready-for-agent",
+      "repo_id": "reverso-root",
+      "path": ".ai/work-intake/ollama-reverso-provider-g3-convergence-refresh-docs.md",
+      "backlinks": [
+        "issue:reverso-root:ollama-reverso-provider",
+        "prd:reverso-root:ollama-reverso-provider"
+      ]
+    },
+    {
+      "id": "issue:reverso-root:ollama-reverso-provider-g4-attended-proof-hardening",
+      "type": "issue",
+      "title": "OLLAMA-RP-G4 attended proof hardening",
+      "status": "ready-for-human",
+      "repo_id": "reverso-root",
+      "path": ".ai/work-intake/ollama-reverso-provider-g4-attended-proof-hardening.md",
+      "backlinks": [
+        "issue:reverso-root:ollama-reverso-provider",
+        "prd:reverso-root:ollama-reverso-provider"
+      ]
+    },
+    {
+      "id": "plan:reverso-root:northstar-ollama-reverso-provider",
+      "type": "plan",
+      "title": "northstar sliced plan: ollama-reverso-provider",
+      "status": "active",
+      "repo_id": "reverso-root",
+      "path": ".ai/handoff/northstar-ollama-reverso-provider.md",
+      "backlinks": [
+        "issue:reverso-root:ollama-reverso-provider"
+      ]
+    },
+    {
+      "id": "handoff:reverso-root:northstar-ollama-reverso-provider",
+      "type": "handoff",
+      "title": "northstar A to B handoff: ollama-reverso-provider",
+      "status": "active",
+      "repo_id": "reverso-root",
+      "path": ".ai/handoff/northstar-ollama-reverso-provider.md",
+      "backlinks": [
+        "plan:reverso-root:northstar-ollama-reverso-provider"
+      ]
     }
   ],
   "edges": [
@@ -554,6 +642,55 @@
       "relation": "planned-by",
       "created_by": "northstar-reconciler",
       "evidence_path": ".ai/work-intake/reverso-install-profile-catalog-headroom-convergence.md"
+    },
+    {
+      "source": "prd:reverso-root:ollama-reverso-provider",
+      "target": "issue:reverso-root:ollama-reverso-provider",
+      "relation": "tracked-by",
+      "created_by": "northstar",
+      "evidence_path": ".ai/work-intake/ollama-reverso-provider.md"
+    },
+    {
+      "source": "issue:reverso-root:ollama-reverso-provider",
+      "target": "issue:reverso-root:ollama-reverso-provider-g1-codex-responses",
+      "relation": "decomposes-to",
+      "created_by": "northstar",
+      "evidence_path": ".ai/work-intake/ollama-reverso-provider.md"
+    },
+    {
+      "source": "issue:reverso-root:ollama-reverso-provider",
+      "target": "issue:reverso-root:ollama-reverso-provider-g2-claude-messages",
+      "relation": "decomposes-to",
+      "created_by": "northstar",
+      "evidence_path": ".ai/work-intake/ollama-reverso-provider.md"
+    },
+    {
+      "source": "issue:reverso-root:ollama-reverso-provider",
+      "target": "issue:reverso-root:ollama-reverso-provider-g3-convergence-refresh-docs",
+      "relation": "decomposes-to",
+      "created_by": "northstar",
+      "evidence_path": ".ai/work-intake/ollama-reverso-provider.md"
+    },
+    {
+      "source": "issue:reverso-root:ollama-reverso-provider",
+      "target": "issue:reverso-root:ollama-reverso-provider-g4-attended-proof-hardening",
+      "relation": "decomposes-to",
+      "created_by": "northstar",
+      "evidence_path": ".ai/work-intake/ollama-reverso-provider.md"
+    },
+    {
+      "source": "issue:reverso-root:ollama-reverso-provider",
+      "target": "plan:reverso-root:northstar-ollama-reverso-provider",
+      "relation": "planned-by",
+      "created_by": "northstar-reconciler",
+      "evidence_path": ".ai/work-intake/ollama-reverso-provider.md"
+    },
+    {
+      "source": "plan:reverso-root:northstar-ollama-reverso-provider",
+      "target": "handoff:reverso-root:northstar-ollama-reverso-provider",
+      "relation": "summarized-by",
+      "created_by": "northstar-reconciler",
+      "evidence_path": ".ai/handoff/northstar-ollama-reverso-provider.md"
     }
   ],
   "coverage": {

@@ -74,6 +74,7 @@ APP_PROVIDER_PREFIXES = frozenset(
         "codex-direct",
         "openai",
         "openai-pass-through",
+        "ollama",
     }
 )
 
@@ -463,7 +464,7 @@ class ResponsesGatewayApp:
                 f"unsupported provider prefix(es): {sorted(unknown)}; "
                 f"allowed: {sorted(APP_PROVIDER_PREFIXES)}"
             )
-        self._adapters = dict(adapters)
+        self._adapters = adapters
         self._input_items_lock = threading.Lock()
         self._original_input_items: dict[str, list[dict[str, Any]]] = {}
 

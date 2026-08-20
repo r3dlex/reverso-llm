@@ -252,6 +252,7 @@ def test_usage_metrics_clamp_negative_counters_ratios_and_unknowns() -> None:
         ("codex", "codex-direct"),
         ("openai", "openai-pass-through"),
         ("claude", "claude"),
+        ("ollama", "ollama"),
         ("unknown", "other"),
     ],
 )

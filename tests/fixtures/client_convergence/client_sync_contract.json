@@ -130,6 +130,12 @@
       "runtime_authority": "reverso"
     },
     {
+      "surface": "Ollama through Reverso",
+      "selector": "bare raw Ollama id",
+      "ownership": "Reverso-managed client presentation",
+      "runtime_authority": "reverso"
+    },
+    {
       "surface": "Copilot through Reverso",
       "selector": "copilot/<model>",
       "ownership": "Reverso-managed client presentation",

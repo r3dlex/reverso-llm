@@ -36,6 +36,7 @@ from typing import Any
 from reverso.protocols.adapter import ProviderAdapter
 from reverso.protocols.adapters import codex_usage_store
 from reverso.protocols.adapters.kimi import KimiAdapter, KimiOAuthAuth
+from reverso.protocols.adapters.ollama import OllamaRuntime, build_ollama_runtime
 from reverso.protocols.anthropic_app import (
     build_anthropic_app,
     route_is_anthropic_surface,
@@ -175,29 +176,64 @@ class CompositionRoot:
         gateway: Callable[[Scope, Receive, Send], Awaitable[None]] | None = None,
         anthropic_app: Callable[[Scope, Receive, Send], Awaitable[None]] | None = None,
         legacy_app: Callable[[Scope, Receive, Send], Awaitable[None]] | None = None,
+        ollama_runtime: OllamaRuntime | None = None,
     ) -> None:
         self._kimi_login: KimiLoginCoordinator | None = None
         self._kimi_auth: KimiOAuthAuth | None = None
+        self._ollama_runtime: OllamaRuntime | None = None
+        self._accepting_http = True
+        self._active_http: set[asyncio.Task[Any]] = set()
+        self._http_quiesced = asyncio.Event()
+        self._http_quiesced.set()
+        self._close_lock = asyncio.Lock()
+        self._lifespan_close_task: asyncio.Task[None] | None = None
+        self._closed = False
         self._lifespan_cleanup_timeout_seconds = _LIFESPAN_CLEANUP_TIMEOUT_SECONDS
         if gateway is None:
             self._kimi_login = KimiLoginCoordinator()
             self._kimi_auth = KimiOAuthAuth(login_coordinator=self._kimi_login)
-        self._gateway = (
-            gateway
-            if gateway is not None
-            else build_app(build_adapters(kimi_auth=self._kimi_auth))
-        )
         self._anthropic_app = (
             anthropic_app
             if anthropic_app is not None
             else build_anthropic_app(kimi_auth=self._kimi_auth)
         )
+        if gateway is None:
+            adapters = build_adapters(kimi_auth=self._kimi_auth)
+            self._gateway = build_app(adapters)
+            self._ollama_runtime = ollama_runtime or build_ollama_runtime()
+            adapters["ollama"] = self._ollama_runtime.adapter
+        else:
+            self._gateway = gateway
+            self._ollama_runtime = ollama_runtime
         self._legacy_app = legacy_app
 
     async def close(self) -> None:
         """Close shared provider lifecycle resources before process shutdown."""
-        if self._kimi_login is not None:
-            await self._kimi_login.close()
+        async with self._close_lock:
+            if self._closed:
+                return
+            self._accepting_http = False
+            await self._http_quiesced.wait()
+            if self._ollama_runtime is not None:
+                await self._ollama_runtime.close()
+            if self._kimi_login is not None:
+                await self._kimi_login.close()
+            self._closed = True
+
+    def _admit_http(self) -> asyncio.Task[Any] | None:
+        if not self._accepting_http:
+            return None
+        task = asyncio.current_task()
+        if task is None:
+            return None
+        self._active_http.add(task)
+        self._http_quiesced.clear()
+        return task
+
+    def _release_http(self, task: asyncio.Task[Any]) -> None:
+        self._active_http.discard(task)
+        if not self._active_http:
+            self._http_quiesced.set()
 
     def _resolve_legacy(self) -> Callable[[Scope, Receive, Send], Awaitable[None]]:
         if self._legacy_app is None:
@@ -282,6 +318,7 @@ class CompositionRoot:
                 if message_type != "lifespan.shutdown":
                     continue
 
+                self._accepting_http = False
                 await legacy_receives.put(message)
                 terminal = await self._legacy_lifespan_terminal(
                     legacy_sends,
@@ -290,11 +327,29 @@ class CompositionRoot:
                 )
                 legacy_failed = terminal != "lifespan.shutdown.complete"
                 cleanup_failed = False
+                if self._lifespan_close_task is None:
+                    self._lifespan_close_task = asyncio.create_task(self.close())
+                close_task = self._lifespan_close_task
                 try:
                     await asyncio.wait_for(
-                        self.close(),
+                        asyncio.shield(close_task),
                         timeout=self._lifespan_cleanup_timeout_seconds,
                     )
+                except TimeoutError:
+                    active_http = tuple(self._active_http)
+                    for task in active_http:
+                        task.cancel()
+                    try:
+                        await asyncio.wait_for(
+                            asyncio.gather(*active_http, return_exceptions=True),
+                            timeout=self._lifespan_cleanup_timeout_seconds,
+                        )
+                        await asyncio.wait_for(
+                            asyncio.shield(close_task),
+                            timeout=self._lifespan_cleanup_timeout_seconds,
+                        )
+                    except Exception:  # noqa: BLE001 - ASGI shutdown boundary
+                        cleanup_failed = True
                 except Exception:  # noqa: BLE001 - ASGI shutdown boundary
                     cleanup_failed = True
 
@@ -302,11 +357,11 @@ class CompositionRoot:
                     await send({"type": "lifespan.shutdown.complete"})
                 else:
                     if legacy_failed and cleanup_failed:
-                        failure = "legacy shutdown and Kimi login cleanup failed"
+                        failure = "legacy shutdown and provider cleanup failed"
                     elif legacy_failed:
                         failure = "legacy application shutdown failed"
                     else:
-                        failure = "Kimi login shutdown cleanup failed"
+                        failure = "provider shutdown cleanup failed"
                     await send(
                         {
                             "type": "lifespan.shutdown.failed",
@@ -323,6 +378,19 @@ class CompositionRoot:
         if scope.get("type") == "lifespan":
             await self._run_lifespan(scope, receive, send)
             return
+        admitted: asyncio.Task[Any] | None = None
+        if scope.get("type") == "http":
+            admitted = self._admit_http()
+            if admitted is None:
+                await _send_json(send, {"error": "gateway shutting down"}, status=503)
+                return
+        try:
+            await self._dispatch(scope, receive, send)
+        finally:
+            if admitted is not None:
+                self._release_http(admitted)
+
+    async def _dispatch(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope.get("type") == "http":
             path = str(scope.get("path", ""))
 

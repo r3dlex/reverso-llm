@@ -1,0 +1,51 @@
+{
+  "id": "OLLAMA-RP-G1",
+  "issue_ref": ".ai/work-intake/ollama-reverso-provider-g1-codex-responses.md",
+  "implementation_ready": true,
+  "context": "Deliver the approved G1 Codex Responses vertical for a composition-owned Ollama runtime without exposing an Anthropic Ollama route. Local Ollama models are discovered from /api/tags and current governed Cloud-eligible models share the isolated raw-id Codex catalog.",
+  "root_causes": [
+    "Ollama is absent from the Reverso Responses registry and composition lifecycle.",
+    "Codex convergence has no isolated Ollama provider profile or raw-id model catalog."
+  ],
+  "evidence": [
+    "docs/specifications/ACTIVE/ollama-reverso-provider.md G1 prerequisite state records Ollama as absent from all runtime and client registries.",
+    ".ai/work-intake/ollama-reverso-provider-g1-codex-responses.md is ready-for-agent and blocked by none."
+  ],
+  "solutions": [
+    "Add the composition-owned Ollama Responses runtime, adapter, catalog and response-store integration and register only /ollama/v1 Responses routes.",
+    "Extend Codex sync and supported client convergence with a raw-id-only Ollama profile and catalog populated from /api/tags local inventory plus governed Cloud eligibility.",
+    "Amend the repository ADR and active convergence specification for the G1 Responses-only authority."
+  ],
+  "acceptance_criteria": [
+    "The generated isolated Codex profile contains raw Ollama model ids only and reaches /ollama/v1/responses.",
+    "Embedded Headroom runs exactly once before Ollama dispatch and preserves supported structured inputs.",
+    "The runtime is composition-owned and closed exactly once.",
+    "No Ollama route is reachable on the Anthropic surface in this goal.",
+    "The goal verification commands and red-green evidence path in the consensus PRD are satisfied."
+  ],
+  "scope": [
+    "src/reverso/protocols/adapters/ollama/",
+    "src/reverso/protocols/responses_app.py",
+    "src/reverso/proxy/compose.py",
+    "src/reverso/protocols/model_exposure.py",
+    "src/reverso/codex_sync.py",
+    "config/supported-client-surfaces.json",
+    "tests/unit/test_ollama_adapter.py",
+    "tests/unit/test_ollama_responses.py",
+    "tests/integration/test_ollama_codex_profile.py",
+    "docs/architecture/adr/",
+    "docs/specifications/ACTIVE/"
+  ],
+  "verification": [
+    "uv run pytest tests/unit/test_ollama_adapter.py tests/unit/test_ollama_responses.py tests/unit/test_codex_sync.py tests/unit/test_client_convergence_contract.py -q",
+    "uv run pytest tests/integration/test_ollama_codex_profile.py -q",
+    "uv run pytest tests/unit/test_anthropic_provider_qualified.py tests/integration/test_anthropic_messages_parity.py -q",
+    "uv run pytest tests/ -v --ignore=tests/integration --tb=short",
+    "uv run ruff check .",
+    "uv run ruff format --check .",
+    "uvx prek run --all-files"
+  ],
+  "coverage_percent": 0,
+  "legacy_safe_tdd": true,
+  "legacy_risk_reason": "high coupling/composition blast radius"
+}

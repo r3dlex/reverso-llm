@@ -36,7 +36,7 @@
     "outcome_counts": ["compressed", "passed_through", "fail_open", "other"],
     "failure_reasons": ["worker_busy", "timeout", "exception", "inflation_guard", "retrieval_marker", "unsafe_output", "other"],
     "error_types": ["timeout", "worker_busy", "dependency_exception", "inflation_guard", "retrieval_marker", "unsafe_output", "other"],
-    "provider_counts": ["claude", "copilot", "auggie", "deepseek", "kimi", "codex-direct", "openai-pass-through", "other"],
+    "provider_counts": ["claude", "copilot", "auggie", "deepseek", "kimi", "ollama", "codex-direct", "openai-pass-through", "other"],
     "surface_counts": ["responses", "anthropic_messages", "other"]
   },
   "unknown_dimension_bucket": "other",

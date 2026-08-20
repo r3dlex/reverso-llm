@@ -59,7 +59,7 @@ logger = logging.getLogger(__name__)
 GATEWAY_BASE_URL = "http://127.0.0.1:64946"
 PROFILE_ARCHIVE_DIR = Path("Archive") / "reverso-codex-sync"
 PROFILE_MANAGED_MARKER = "# Managed by reverso-codex-sync."
-OPTIONAL_DISCOVERY_PREFIXES = frozenset({"codex-direct"})
+OPTIONAL_DISCOVERY_PREFIXES = frozenset({"codex-direct", "ollama"})
 MANAGED_REVERSO_PROFILE_PREFIXES = (
     *model_exposure.REVERSO_ROUTED_CODEX_PROFILE_PREFIXES,
     "codex-direct",
@@ -286,14 +286,6 @@ def _reverso_profile_path_for(config_dir: Path, prefix: str) -> Path:
     return config_dir / f"reverso-{prefix}.config.toml"
 
 
-def _provider_supports_feature(prefix: str, feature: str) -> bool:
-    """Return whether the governed parity surface supports one feature."""
-    return (
-        feature_policy.CAPABILITY_TABLES.get(prefix, {}).get(feature)
-        != feature_policy.UNSUPPORTED
-    )
-
-
 def _provider_applies_feature(prefix: str, feature: str) -> bool:
     """Return whether the provider actually applies a feature upstream.
 
@@ -427,6 +419,8 @@ def _catalog_display_name(entry: CatalogModelEntry) -> str:
 def _generate_catalog_json(provider: ProviderModels) -> str:
     """Generate Codex-compatible catalog JSON for one provider's models."""
     models: list[dict[str, t.Any]] = []
+    input_modalities = ["text"]
+    supports_parallel_tool_calls = provider.prefix != "ollama"
     # Advertise reasoning levels only where the provider actually forwards
     # effort upstream (native/translated). CLI-runner providers accept effort
     # as a no-op (partial) and must not advertise levels the model ignores.
@@ -480,13 +474,13 @@ def _generate_catalog_json(provider: ProviderModels) -> str:
                 "apply_patch_tool_type": "freeform",
                 "web_search_tool_type": "text_and_image",
                 "truncation_policy": {"mode": "tokens", "limit": 10000},
-                "supports_parallel_tool_calls": True,
+                "supports_parallel_tool_calls": supports_parallel_tool_calls,
                 "supports_image_detail_original": False,
                 "context_window": context_window,
                 "max_context_window": context_window,
                 "effective_context_window_percent": 95,
                 "experimental_supported_tools": [],
-                "input_modalities": ["text"],
+                "input_modalities": input_modalities,
                 "supports_search_tool": False,
                 "use_responses_lite": False,
             }

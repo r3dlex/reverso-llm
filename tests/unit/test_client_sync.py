@@ -94,6 +94,7 @@ def test_supported_surface_manifest_matches_runtime_authorities() -> None:
         "auggie",
         "deepseek",
         "kimi",
+        "ollama",
     ]
     assert manifest["external_catalogs"]["agy"]["runtime_route"] is False
 
@@ -2396,6 +2397,7 @@ def test_refresh_status_record_has_exact_governed_schema() -> None:
         "auggie": "skipped",
         "deepseek": "skipped",
         "kimi": "skipped",
+        "ollama": "skipped",
     }
     assert status["error_codes"] == ["provider_stale"]
 

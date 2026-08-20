@@ -45,7 +45,7 @@ RESPONSES_PROVIDERS = sorted(APP_PROVIDER_PREFIXES)
 # surface (they are Anthropic-surface-only, ADR 0007).
 _GPT_MODELS = list(CODEX_BUILTIN_MODELS)
 _CODEX_KEY = "codex"
-_OPTIONAL_DEFAULT_OFF_KEYS = {"openai", "openai-pass-through"}
+_OPTIONAL_DEFAULT_OFF_KEYS = {"ollama", "openai", "openai-pass-through"}
 
 
 def _responses_client() -> httpx.AsyncClient:

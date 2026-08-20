@@ -937,12 +937,12 @@ async def test_lifespan_waits_for_kimi_cleanup_before_one_shutdown_completion() 
         (
             "lifespan.shutdown.complete",
             RuntimeError("private-cleanup-detail"),
-            "Kimi login shutdown cleanup failed",
+            "provider shutdown cleanup failed",
         ),
         (
             "lifespan.shutdown.failed",
             RuntimeError("private-cleanup-detail"),
-            "legacy shutdown and Kimi login cleanup failed",
+            "legacy shutdown and provider cleanup failed",
         ),
     ],
     ids=["legacy-failure", "cleanup-failure", "combined-failure"],
@@ -1210,7 +1210,7 @@ async def test_lifespan_reports_prior_fatal_kimi_cleanup_failure(
         {"type": "lifespan.startup.complete"},
         {
             "type": "lifespan.shutdown.failed",
-            "message": "Kimi login shutdown cleanup failed",
+            "message": "provider shutdown cleanup failed",
         },
     ]
 
@@ -1267,7 +1267,7 @@ async def test_lifespan_timeout_does_not_cancel_active_kimi_cleanup(
         {"type": "lifespan.startup.complete"},
         {
             "type": "lifespan.shutdown.failed",
-            "message": "Kimi login shutdown cleanup failed",
+            "message": "provider shutdown cleanup failed",
         },
     ]
     close_task = coordinator._close_task
@@ -1284,7 +1284,7 @@ async def test_lifespan_timeout_does_not_cancel_active_kimi_cleanup(
 
 
 @pytest.mark.asyncio
-async def test_lifespan_bounds_kimi_cleanup_before_shutdown_failure() -> None:
+async def test_lifespan_reports_bounded_failure_without_abandoning_cleanup() -> None:
     events = iter(
         [
             {"type": "lifespan.startup"},
@@ -1327,11 +1327,17 @@ async def test_lifespan_bounds_kimi_cleanup_before_shutdown_failure() -> None:
         timeout=0.1,
     )
 
-    assert cleanup_cancelled.is_set()
+    assert not cleanup_cancelled.is_set()
     assert sent == [
         {"type": "lifespan.startup.complete"},
         {
             "type": "lifespan.shutdown.failed",
-            "message": "Kimi login shutdown cleanup failed",
+            "message": "provider shutdown cleanup failed",
         },
     ]
+    close_task = root._lifespan_close_task
+    assert close_task is not None
+    assert not close_task.done()
+    close_task.cancel()
+    await asyncio.gather(close_task, return_exceptions=True)
+    assert cleanup_cancelled.is_set()

@@ -93,6 +93,7 @@ def test_model_exposure_owns_codex_profile_sync_prefixes() -> None:
         "auggie",
         "deepseek",
         "kimi",
+        "ollama",
         "codex-direct",
     )
     assert reverso_routed_codex_profile_prefixes(
@@ -104,6 +105,7 @@ def test_model_exposure_owns_codex_profile_sync_prefixes() -> None:
         "auggie",
         "deepseek",
         "kimi",
+        "ollama",
     )
     assert reverso_routed_codex_profile_prefixes({REVERSO_HOST_ENV: "0.0.0.0"}) == (
         "claude",
@@ -111,6 +113,7 @@ def test_model_exposure_owns_codex_profile_sync_prefixes() -> None:
         "auggie",
         "deepseek",
         "kimi",
+        "ollama",
     )
     assert reverso_routed_codex_profile_prefixes(
         {REVERSO_HOST_ENV: "0.0.0.0", CODEX_DIRECT_BACKEND_ENV: "1"}
@@ -120,6 +123,7 @@ def test_model_exposure_owns_codex_profile_sync_prefixes() -> None:
         "auggie",
         "deepseek",
         "kimi",
+        "ollama",
     )
     assert reverso_routed_codex_profile_prefixes({CODEX_DIRECT_BACKEND_ENV: "1"}) == (
         "claude",
@@ -127,6 +131,7 @@ def test_model_exposure_owns_codex_profile_sync_prefixes() -> None:
         "auggie",
         "deepseek",
         "kimi",
+        "ollama",
         "codex-direct",
     )
     assert reverso_routed_codex_profile_prefixes({OPENAI_BACKEND_ENV: "1"}) == (
@@ -135,6 +140,7 @@ def test_model_exposure_owns_codex_profile_sync_prefixes() -> None:
         "auggie",
         "deepseek",
         "kimi",
+        "ollama",
         "codex-direct",
         "openai-pass-through",
     )
@@ -146,6 +152,7 @@ def test_model_exposure_owns_codex_profile_sync_prefixes() -> None:
         "auggie",
         "deepseek",
         "kimi",
+        "ollama",
     )
     direct = {spec.prefix: spec for spec in direct_codex_profile_specs()}
     assert direct_codex_profile_specs() == DIRECT_CODEX_PROFILE_SPECS
@@ -237,6 +244,7 @@ def test_model_exposure_owns_codex_catalog_and_stale_profile_policy() -> None:
     assert codex_catalog_context_window("claude", "claude-500k") == 500000
     assert codex_catalog_context_window("kimi", "kimi-k3") == 1048576
     assert codex_catalog_context_window("copilot", "kimi-k3") == 128000
+    assert codex_catalog_context_window("ollama", "unknown-500k-model") == 2048
     assert stale_codex_variant_profile_stems() == STALE_CODEX_VARIANT_PROFILE_STEMS
     assert "deepseek-gpt54" in stale_codex_variant_profile_stems()
     assert "minimax-spark" in stale_codex_variant_profile_stems()

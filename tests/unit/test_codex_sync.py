@@ -2491,6 +2491,21 @@ def test_generate_catalog_json_shape_dedup_and_context_window() -> None:
         assert model["visibility"] == "list"
         assert model["default_reasoning_level"] == "medium"
         assert model["supported_reasoning_levels"]
+        assert model["supports_parallel_tool_calls"] is True
+        assert model["input_modalities"] == ["text"]
+
+
+@pytest.mark.parametrize("prefix", ["claude", "auggie", "deepseek", "kimi"])
+def test_catalog_keeps_text_only_metadata_for_non_image_providers(prefix: str) -> None:
+    payload = json.loads(
+        codex_sync._generate_catalog_json(
+            codex_sync.ProviderModels(prefix, ("provider-model",))
+        )
+    )
+
+    model = payload["models"][0]
+    assert model["supports_parallel_tool_calls"] is True
+    assert model["input_modalities"] == ["text"]
 
 
 @pytest.mark.parametrize("prefix", ["claude", "auggie"])
