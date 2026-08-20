@@ -37,13 +37,7 @@
     "docs/specifications/ACTIVE/"
   ],
   "verification": [
-    "uv run pytest tests/unit/test_ollama_adapter.py tests/unit/test_ollama_responses.py tests/unit/test_codex_sync.py tests/unit/test_client_convergence_contract.py -q",
-    "uv run pytest tests/integration/test_ollama_codex_profile.py -q",
-    "uv run pytest tests/unit/test_anthropic_provider_qualified.py tests/integration/test_anthropic_messages_parity.py -q",
-    "uv run pytest tests/ -v --ignore=tests/integration --tb=short",
-    "uv run ruff check .",
-    "uv run ruff format --check .",
-    "uvx prek run --all-files"
+    "bash tests/verify_ollama_g1.sh"
   ],
   "coverage_percent": 0,
   "legacy_safe_tdd": true,

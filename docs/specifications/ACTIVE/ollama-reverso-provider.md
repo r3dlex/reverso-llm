@@ -423,6 +423,11 @@ uvx prek run --all-files
 uv run pytest tests/ -v --ignore=tests/integration --tb=short
 ```
 
+Autobahn invokes this unchanged seven-command sequence through the single
+allowlisted entrypoint `bash tests/verify_ollama_g1.sh`. The wrapper runs the
+commands above in the same order under strict Bash and does not omit, bypass,
+replace, or relax any underlying verification command.
+
 The executor uses the repository-current root validation path if the child repo exposes a different local CI command. Missing declared gates block completion.
 
 ### G2: OLLAMA-RP-G2 Claude Code native Messages vertical

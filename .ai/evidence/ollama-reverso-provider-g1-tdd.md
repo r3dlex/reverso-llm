@@ -53,3 +53,12 @@ pre-existing baseline. Fresh results after G1 review repair are:
   files are already formatted.
 
 No unrelated repository-wide Ruff or formatting finding was mass-fixed.
+
+## Autobahn verification entrypoint
+
+The goal record allowlists the single command `bash tests/verify_ollama_g1.sh`.
+That strict Bash wrapper preserves and runs all seven dedicated-spec
+verification commands in their original order. It does not omit, bypass,
+replace, or relax an underlying command; therefore the known repo-wide Ruff
+failures continue to make full verification fail until their prerequisite
+cleanup lands.
