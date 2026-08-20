@@ -113,7 +113,7 @@ The exit-code contract is:
 
 The unified command reports a per-surface result for:
 
-- Codex Reverso routes: Claude, Copilot, Auggie, DeepSeek, and Kimi.
+- Codex Reverso routes: Claude, Copilot, Auggie, DeepSeek, Kimi, and Ollama.
 - Feature-gated Codex routes: Codex Direct and OpenAI pass-through.
 - Claude Code launchers: aggregate Reverso, Claude, Codex, Copilot, Auggie,
   DeepSeek, and Kimi.
@@ -130,11 +130,58 @@ The exact selector and ownership rows are:
 | Claude through Claude Code | bare provider model id | Reverso-managed client presentation |
 | DeepSeek through Reverso | bare provider model id | Reverso-managed client presentation |
 | Kimi through Reverso | bare `kimi-k3` | Reverso-managed client presentation |
+| Ollama through Reverso | bare raw Ollama id | Reverso-managed client presentation |
 | Copilot through Reverso | `copilot/<model>` | Reverso-managed client presentation |
 | Auggie through Reverso | `auggie/<model>` | Reverso-managed client presentation |
 | AGY additive catalog | `agy/<model>` | external source and user-preserving unless already marker-owned by its exact sync owner |
 | Codex Direct | `codex-direct/<model>` | feature-gated Reverso client presentation |
 | OpenAI pass-through | `openai-pass-through/<model>` | feature-gated Reverso client presentation |
+
+### Ollama G1 convergence contract
+
+The manifest owns one `provider-ollama` group and one
+`codex-reverso-ollama` surface. Both `shared-codex-config` and
+`shared-codex-cleanup` depend on `provider-ollama`; no Claude launcher or
+shared Claude dependency includes it in G1. The provider group owns
+`~/.codex/reverso-ollama.config.toml` and
+`~/.codex/reverso/ollama.json` under the existing exact
+`reverso-codex-sync` marker policy. The isolated selector and upstream model
+id are the same raw `/api/tags` id. `ollama/<id>` is never generated.
+
+Every validated `/api/tags` row is current local inventory, including an id
+whose bytes happen to end in `:cloud` or `-cloud`. A suffix is not Cloud
+authority. No supported machine-readable Ollama Cloud eligibility authority is
+established in G1, so Cloud publication is blocked. When Cloud is requested its
+state is `unavailable`; when explicitly disabled its state is `disabled`. G1
+does not publish current Cloud ids and therefore cannot produce partial or
+stale Cloud entries. The future refresh contract may report `partial_freshness`
+or retain marker-owned Cloud rows as stale only after a supported authority is
+specified and implemented; it must never infer, scrape, or ship a static list.
+
+Because `/v1/models` is populated from `/api/tags` and carries no
+model-specific capability or context authority, generated Ollama Codex catalog
+rows deliberately advertise only `input_modalities = ["text"]`,
+`supports_parallel_tool_calls = false`, and a 2048-token context bound. Runtime
+Responses routing still passes explicitly invoked image and function-tool
+payloads through unchanged; the conservative picker metadata must not be read
+as a runtime rejection rule.
+
+The Ollama provider group is prepared and validated before its first write.
+Profile and catalog commit atomically as one handled-failure group. An unmarked
+conflict preserves bytes and blocks the group. A handled failure restores prior
+bytes, absence, object type, mode, and symlink target under the common rollback
+contract. Restore and uninstall remove only exact marker-owned Ollama artifacts
+and preserve unmarked paths; interrupted work is recovered by verify followed
+by an idempotent rerun.
+
+Headroom records provider `ollama` and inbound surface `responses` in G1; the
+outbound protocol dimension is `ollama_responses`. Compression runs once before
+adapter dispatch and does not rewrite function-tool or image structure. G1
+routes only `/ollama/v1` through the Responses registry. Ollama is absent from
+the Anthropic registry, and no Ollama alias is valid on `/v1/messages`. G2 may
+add catalog-scoped exact Anthropic alias authority and
+`anthropic_messages`/`ollama_messages` dimensions without changing the G1 raw
+Codex selector authority.
 
 The manifest is the authority for profile names, route prefixes, catalog
 ownership, default models, selector naming, and client support. Existing
@@ -307,7 +354,7 @@ explicit test reset.
 `dependency_exception`, `inflation_guard`, `retrieval_marker`,
 `unsafe_output`, and `other`. `provider_counts` has exactly `claude`,
 `copilot`, `auggie`, `deepseek`, `kimi`, `codex-direct`,
-`openai-pass-through`, and `other`. `surface_counts` has exactly `responses`,
+`ollama`, `openai-pass-through`, and `other`. `surface_counts` has exactly `responses`,
 `anthropic_messages`, and `other`. Every governed key is present with zero
 when unused; unknown input is accumulated only in `other`.
 

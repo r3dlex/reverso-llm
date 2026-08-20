@@ -238,9 +238,9 @@ def test_capability_tables_match_research_json() -> None:
         / "data"
         / "responses_parity_surface.json"
     )
-    assert (
-        research_path.read_bytes() == package_path.read_bytes()
-    ), "package parity surface mirror must match .omc/research/ source"
+    mirrors_match = research_path.read_bytes() == package_path.read_bytes()
+    message = "package parity surface mirror must match .omc/research/ source"
+    assert mirrors_match, message
 
 
 def test_capability_tables_cover_all_providers_and_features() -> None:
@@ -258,9 +258,24 @@ def test_capability_tables_cover_all_providers_and_features() -> None:
         "deepseek",
         "codex",
         "kimi",
+        "ollama",
     }
     for provider in PROVIDERS:
         assert set(CAPABILITY_TABLES[provider].keys()) == set(FEATURES)
+
+
+def test_ollama_parity_covers_responses_endpoints_and_passthrough_events() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    payload = json.loads(
+        (
+            repo_root / "src/reverso/protocols/data/responses_parity_surface.json"
+        ).read_text(encoding="utf-8")
+    )
+
+    assert all("ollama" in providers for providers in payload["endpoints"].values())
+    assert all(
+        "ollama" in providers for providers in payload["events_emitted"].values()
+    )
 
 
 def test_kimi_capabilities_match_deepseek_translation_ceiling() -> None:

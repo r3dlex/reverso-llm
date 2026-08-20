@@ -230,3 +230,62 @@ async def test_feature_gate_runs_before_headroom(
     assert calls == 0
     assert adapter.create_requests == []
     assert adapter.stream_requests == []
+
+
+@pytest.mark.asyncio
+async def test_ollama_headroom_runs_once_and_preserves_tools_and_image(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = SpyAdapter()
+    calls = 0
+
+    async def fake_compress(
+        request: ResponsesRequest, *, provider: str, surface: str
+    ) -> HeadroomCompressionOutcome:
+        nonlocal calls
+        calls += 1
+        assert (provider, surface) == ("ollama", "responses")
+        return HeadroomCompressionOutcome(
+            request=replace(request, instructions="compressed instructions"),
+            compressed=True,
+            reason="compressed",
+        )
+
+    monkeypatch.setattr(responses_app, "compress_responses_request", fake_compress)
+    image = {
+        "type": "input_image",
+        "image_url": "data:image/png;base64,AA==",
+    }
+    tool = {
+        "type": "function",
+        "name": "lookup",
+        "description": "Lookup a value",
+        "parameters": {"type": "object", "properties": {}},
+    }
+
+    async with _client({"ollama": adapter}) as client:
+        response = await client.post(
+            "/ollama/v1/responses",
+            json={
+                "model": "qwen3:8b",
+                "instructions": "original instructions",
+                "input": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "input_text", "text": "describe"},
+                            image,
+                        ],
+                    }
+                ],
+                "tools": [tool],
+                "tool_choice": "auto",
+            },
+        )
+
+    assert response.status_code == 200
+    assert calls == 1
+    dispatched = adapter.create_requests[0]
+    assert dispatched.instructions == "compressed instructions"
+    assert dispatched.tools == [tool]
+    assert dispatched.input[0]["content"][1] == image

@@ -5,7 +5,8 @@
     "copilot",
     "auggie",
     "deepseek",
-    "kimi"
+    "kimi",
+    "ollama"
   ],
   "feature_gated_routes": {
     "codex-direct": "REVERSO_CODEX_DIRECT_BACKEND",
@@ -100,6 +101,11 @@
       "dependencies": []
     },
     {
+      "id": "provider-ollama",
+      "kind": "provider",
+      "dependencies": []
+    },
+    {
       "id": "rtk",
       "kind": "prerequisite",
       "dependencies": []
@@ -119,6 +125,7 @@
         "provider-copilot",
         "provider-deepseek",
         "provider-kimi",
+        "provider-ollama",
         "provider-openai-pass-through"
       ]
     },
@@ -132,6 +139,7 @@
         "provider-copilot",
         "provider-deepseek",
         "provider-kimi",
+        "provider-ollama",
         "provider-openai-pass-through"
       ]
     },
@@ -334,6 +342,17 @@
       "ownership": "reverso_managed",
       "runtime_authority": "reverso",
       "path_template": "<codex_config_dir>/reverso-kimi.config.toml",
+      "feature_gate": null
+    },
+    {
+      "id": "codex-reverso-ollama",
+      "kind": "reverso_route",
+      "group": "provider-ollama",
+      "selector_template": "<raw-model-id>",
+      "default_model_authority": "runtime",
+      "ownership": "reverso_managed",
+      "runtime_authority": "reverso",
+      "path_template": "<codex_config_dir>/reverso-ollama.config.toml",
       "feature_gate": null
     }
   ]

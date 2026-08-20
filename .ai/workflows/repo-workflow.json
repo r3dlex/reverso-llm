@@ -133,6 +133,11 @@
       "id": "northstar-handoff-reverso-install-profile-catalog-headroom-convergence",
       "enabled_when": "northstar_handoff_present",
       "status": "available"
+    },
+    {
+      "id": "northstar-handoff-ollama-reverso-provider",
+      "enabled_when": "northstar_handoff_present",
+      "status": "available"
     }
   ],
   "handoff": ".ai/handoff/init-ai-repo-handoff.md",

@@ -149,7 +149,7 @@ def test_client_sync_exact_status_and_exit_contract_is_frozen() -> None:
     }
 
 
-def test_exact_ten_selector_and_ownership_rows_are_frozen() -> None:
+def test_exact_eleven_selector_and_ownership_rows_are_frozen() -> None:
     rows = _load_fixture("client_sync_contract.json")["selector_rows"]
 
     assert [(row["surface"], row["selector"], row["ownership"]) for row in rows] == [
@@ -176,6 +176,11 @@ def test_exact_ten_selector_and_ownership_rows_are_frozen() -> None:
         (
             "Kimi through Reverso",
             "bare kimi-k3",
+            "Reverso-managed client presentation",
+        ),
+        (
+            "Ollama through Reverso",
+            "bare raw Ollama id",
             "Reverso-managed client presentation",
         ),
         (
@@ -220,7 +225,7 @@ def test_exact_ten_selector_and_ownership_rows_are_frozen() -> None:
         minimax_spec.prefix not in model_exposure.REVERSO_ROUTED_CODEX_PROFILE_PREFIXES
     )
 
-    agy = rows[7]
+    agy = rows[8]
     assert agy["runtime_authority"] == "external"
     assert agy["reverso_runtime_route"] is False
     assert agy["reverso_gateway_fetch"] is False
@@ -494,6 +499,7 @@ def test_headroom_v2_governed_maps_are_exact() -> None:
             "auggie",
             "deepseek",
             "kimi",
+            "ollama",
             "codex-direct",
             "openai-pass-through",
             "other",

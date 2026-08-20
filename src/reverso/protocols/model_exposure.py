@@ -52,6 +52,7 @@ REVERSO_ROUTED_CODEX_PROFILE_PREFIXES: tuple[str, ...] = (
     "auggie",
     "deepseek",
     "kimi",
+    "ollama",
 )
 CODEX_DIRECT_BACKEND_ENV = "REVERSO_CODEX_DIRECT_BACKEND"
 OPENAI_BACKEND_ENV = "REVERSO_OPENAI_BACKEND"
@@ -185,6 +186,8 @@ def provider_scoped_catalog_slug(prefix: str, model_id: str) -> str:
 
 def codex_catalog_context_window(prefix: str, model_id: str) -> int:
     """Return provider-scoped Codex catalog context metadata for a model id."""
+    if prefix == "ollama":
+        return 2048
     if prefix == "kimi" and model_id == KIMI_CODEX_MODEL:
         return KIMI_CODEX_CONTEXT_WINDOW
     if "500k" in model_id.lower():

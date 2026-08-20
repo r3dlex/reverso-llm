@@ -23,7 +23,7 @@ reverso-client-sync = "reverso.client_sync:main"
 reverso-catalog-refresh = "reverso.catalog_refresh:main"
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "ruff==0.6.0"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -31,6 +31,9 @@ testpaths = ["tests"]
 markers = [
     "integration: marks tests as integration tests (deselect with -m 'not integration')",
 ]
+
+[tool.ruff.lint.per-file-ignores]
+"src/reverso/proxy/app.py" = ["E402"]
 
 [build-system]
 requires = ["hatchling"]

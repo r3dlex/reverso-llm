@@ -54,6 +54,7 @@ _PROVIDER_KEYS = (
     "auggie",
     "deepseek",
     "kimi",
+    "ollama",
     "codex-direct",
     "openai-pass-through",
     "other",
