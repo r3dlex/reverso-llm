@@ -13,8 +13,8 @@ from typing import Any
 
 import httpx
 import pytest
-
 from conftest import FixtureAdapter
+
 from reverso.protocols.anthropic_app import build_anthropic_app
 from reverso.protocols.responses_app import build_app
 from reverso.proxy.compose import CompositionRoot

@@ -28,8 +28,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import subprocess
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from pathlib import Path
-from typing import AsyncIterator, Callable, Mapping, Sequence
 
 from reverso.protocols.auth import redact_secret
 
@@ -178,7 +178,7 @@ async def stream_bounded_cli(
                 line = await asyncio.wait_for(
                     process.stdout.readline(), timeout=remaining
                 )
-            except (asyncio.TimeoutError, TimeoutError):
+            except TimeoutError:
                 raise BoundedCliStreamFailure(f"{cli_label} timed out") from None
             if not line:
                 break
@@ -190,7 +190,7 @@ async def stream_bounded_cli(
         remaining = max(deadline - loop.time(), 0.001)
         try:
             returncode = await asyncio.wait_for(process.wait(), timeout=remaining)
-        except (asyncio.TimeoutError, TimeoutError):
+        except TimeoutError:
             raise BoundedCliStreamFailure(f"{cli_label} timed out") from None
         if returncode:
             stderr_text = await _read_stderr(process)
@@ -213,7 +213,7 @@ async def stream_bounded_cli(
                 pass
             try:
                 await process.wait()
-            except Exception:  # noqa: BLE001 - defensive cleanup
+            except Exception:  # noqa: BLE001, S110 - defensive cleanup
                 pass
 
 

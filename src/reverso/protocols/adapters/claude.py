@@ -26,8 +26,9 @@ import logging
 import os
 import subprocess
 import time
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
-from typing import Any, AsyncIterator, Callable
+from typing import Any
 
 import httpx
 

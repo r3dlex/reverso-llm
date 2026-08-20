@@ -58,7 +58,8 @@ header must not be committed before that exception surfaces to the caller.
 from __future__ import annotations
 
 import logging
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
 from reverso.protocols.adapter import SSEEvent
 from reverso.protocols.anthropic_translate import map_stop_reason
@@ -162,15 +163,15 @@ class _StreamState:
     """
 
     __slots__ = (
-        "model",
-        "message_id",
         "_block_index",
         "_open_kind",
-        "_stop_reason",
         "_output_tokens",
+        "_stop_reason",
         "completed",
         "failed",
         "failure_message",
+        "message_id",
+        "model",
     )
 
     def __init__(self, *, model: str, message_id: str) -> None:

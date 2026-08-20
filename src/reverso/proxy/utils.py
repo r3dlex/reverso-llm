@@ -5,8 +5,9 @@ from __future__ import annotations
 import os
 import re
 import shutil
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 import httpx
 import yaml
@@ -28,7 +29,7 @@ def daemon_sock_path() -> str:
             with _CONFIG_PATH.open() as fh:
                 cfg = yaml.safe_load(fh) or {}
             return str(Path(cfg.get("daemon_socket", _DEFAULT_SOCK)).expanduser())
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 - optional config falls back to default
         pass
     return str(Path(_DEFAULT_SOCK).expanduser())
 
@@ -73,10 +74,11 @@ def stream_daemon(
 ) -> Iterator[dict[str, Any]]:
     """POST /session/turn/stream on the daemon over UDS and yield NDJSON events."""
     transport = httpx.HTTPTransport(uds=sock_path)
-    with httpx.Client(
-        transport=transport, base_url="http://daemon", timeout=timeout
-    ) as client:
-        with client.stream(
+    with (
+        httpx.Client(
+            transport=transport, base_url="http://daemon", timeout=timeout
+        ) as client,
+        client.stream(
             "POST",
             "/session/turn/stream",
             json={
@@ -85,12 +87,13 @@ def stream_daemon(
                 "user_message": user_message,
                 "model": model,
             },
-        ) as resp:
-            resp.raise_for_status()
-            for line in resp.iter_lines():
-                if not line:
-                    continue
-                yield json_loads(line)
+        ) as resp,
+    ):
+        resp.raise_for_status()
+        for line in resp.iter_lines():
+            if not line:
+                continue
+            yield json_loads(line)
 
 
 def json_loads(value: str | bytes) -> dict[str, Any]:
@@ -101,7 +104,9 @@ def json_loads(value: str | bytes) -> dict[str, Any]:
         value = value.decode("utf-8", errors="replace")
     parsed = json.loads(value)
     if not isinstance(parsed, dict):
-        raise ValueError("daemon stream event is not an object")
+        raise ValueError(  # noqa: TRY004 - preserve JSON decoding error contract
+            "daemon stream event is not an object"
+        )
     return parsed
 
 

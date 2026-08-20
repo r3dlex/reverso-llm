@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import json
 import asyncio
-from datetime import datetime, timezone
-from typing import Any, AsyncIterator
+import json
+from collections.abc import AsyncIterator
+from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 
@@ -51,7 +52,7 @@ async def test_codex_turn_uses_explicit_skip_git_repo_check(
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
     monkeypatch.setattr(session_daemon, "CodexCLIParser", FakeCodexParser)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     session = Session(
         key=("local", "/tmp", "openai"),
         process=_Proc(),
@@ -82,7 +83,7 @@ async def test_stream_claude_turn_emits_incremental_deltas(
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
     monkeypatch.setattr(session_daemon, "_aiter_lines", lambda stream: _lines())
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     session = Session(
         key=("local", "/tmp", "anthropic"),
         process=_Proc(),
@@ -162,7 +163,7 @@ async def test_stream_claude_turn_preserves_specific_observation_types(
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
     monkeypatch.setattr(session_daemon, "_aiter_lines", lambda stream: _tool_lines())
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     session = Session(
         key=("local", "/tmp", "anthropic"),
         process=_Proc(),

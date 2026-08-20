@@ -28,8 +28,8 @@ from __future__ import annotations
 
 import httpx
 import pytest
-
 from conftest import FixtureAdapter
+
 from reverso.protocols.model_exposure import CODEX_BUILTIN_MODELS
 from reverso.protocols.responses_app import (
     APP_PROVIDER_PREFIXES,
@@ -39,7 +39,7 @@ from reverso.protocols.responses_app import (
 from reverso.proxy.compose import build_adapters
 
 # The Responses-surface providers (claude is Responses-only here; codex is NOT).
-RESPONSES_PROVIDERS = list(sorted(APP_PROVIDER_PREFIXES))
+RESPONSES_PROVIDERS = sorted(APP_PROVIDER_PREFIXES)
 
 # The five gpt ids and the codex backend key that must NEVER be on the Responses
 # surface (they are Anthropic-surface-only, ADR 0007).

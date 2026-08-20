@@ -132,15 +132,17 @@ async def test_copilot_claude_streaming_routes_to_chat_completions() -> None:
         )
 
     client, captured = _build_client(handler)
-    async with client:
-        async with client.stream(
+    async with (
+        client,
+        client.stream(
             "POST",
             "/v1/messages",
             json=_messages_body("copilot/claude-sonnet-4", "Say hi.", stream=True),
-        ) as resp:
-            assert resp.status_code == 200, resp.text
-            assert "text/event-stream" in resp.headers["content-type"]
-            text = "".join([chunk async for chunk in resp.aiter_text()])
+        ) as resp,
+    ):
+        assert resp.status_code == 200, resp.text
+        assert "text/event-stream" in resp.headers["content-type"]
+        text = "".join([chunk async for chunk in resp.aiter_text()])
 
     types = [event["type"] for event in _parse_sse(text)]
     assert types[0] == "message_start"

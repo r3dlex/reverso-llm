@@ -14,7 +14,6 @@ from __future__ import annotations
 
 from typing import Any
 
-
 _MODEL_TO_PROVIDER: dict[str, str] = {
     "claude-opus-4-8": "anthropic",
     "claude-sonnet-4-6": "anthropic",
@@ -90,5 +89,5 @@ def success_callback(
     # attribute so custom code reading the object directly sees it.
     try:
         response_obj.x_gateway = x_gw
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 - third-party response objects vary
         pass

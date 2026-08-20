@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, Mapping
 from dataclasses import replace
-from typing import Any, AsyncIterator, Mapping, cast
+from typing import Any, cast
 
 import httpx
 import pytest
 
-import reverso.protocols.responses_app as responses_app
+from reverso.protocols import responses_app
 from reverso.protocols.adapter import (
     InputItemList,
     ModelList,

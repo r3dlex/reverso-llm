@@ -341,7 +341,9 @@ def test_extract_deeply_nested_tool_result_does_not_raise() -> None:
     extract_anthropic_features must return cleanly regardless of nesting depth
     beyond the cap.
     """
-    from reverso.protocols.anthropic_feature_gate import _MAX_BLOCK_DEPTH  # noqa: PLC0415
+    from reverso.protocols.anthropic_feature_gate import (
+        _MAX_BLOCK_DEPTH,
+    )
 
     # One level beyond the cap is sufficient to exercise the depth guard.
     payload = _deeply_nested_tool_result(_MAX_BLOCK_DEPTH + 1)
@@ -351,7 +353,9 @@ def test_extract_deeply_nested_tool_result_does_not_raise() -> None:
 
 def test_gate_deeply_nested_tool_result_does_not_raise() -> None:
     """gate_anthropic_features must not raise RecursionError on a deeply nested payload."""
-    from reverso.protocols.anthropic_feature_gate import _MAX_BLOCK_DEPTH  # noqa: PLC0415
+    from reverso.protocols.anthropic_feature_gate import (
+        _MAX_BLOCK_DEPTH,
+    )
 
     payload = _deeply_nested_tool_result(_MAX_BLOCK_DEPTH + 1)
     # No gated features in a plain text payload: gate passes without raising.
@@ -378,7 +382,9 @@ def test_cap_feature_at_depth_within_cap_is_detected() -> None:
     This pins the lower boundary of the cap: the scanner must reach depth
     _MAX_BLOCK_DEPTH and find the feature there.
     """
-    from reverso.protocols.anthropic_feature_gate import _MAX_BLOCK_DEPTH  # noqa: PLC0415
+    from reverso.protocols.anthropic_feature_gate import (
+        _MAX_BLOCK_DEPTH,
+    )
 
     image_block = {"type": "image", "source": {"type": "base64", "data": "x"}}
     payload = _tool_result_with_feature_at_depth(_MAX_BLOCK_DEPTH, image_block)
@@ -393,7 +399,9 @@ def test_cap_feature_at_depth_beyond_cap_is_not_detected() -> None:
     scan before reaching depth _MAX_BLOCK_DEPTH + 1.  Removing or raising the cap
     would cause this test to fail (the feature would be found).
     """
-    from reverso.protocols.anthropic_feature_gate import _MAX_BLOCK_DEPTH  # noqa: PLC0415
+    from reverso.protocols.anthropic_feature_gate import (
+        _MAX_BLOCK_DEPTH,
+    )
 
     image_block = {"type": "image", "source": {"type": "base64", "data": "x"}}
     payload = _tool_result_with_feature_at_depth(_MAX_BLOCK_DEPTH + 1, image_block)
@@ -509,7 +517,9 @@ def test_strip_is_depth_capped_does_not_raise() -> None:
     Mirrors the scanner's depth guard so a crafted deep payload cannot exhaust
     the Python call stack via the strip traversal.
     """
-    from reverso.protocols.anthropic_feature_gate import _MAX_BLOCK_DEPTH  # noqa: PLC0415
+    from reverso.protocols.anthropic_feature_gate import (
+        _MAX_BLOCK_DEPTH,
+    )
 
     payload = _tool_result_with_feature_at_depth(
         _MAX_BLOCK_DEPTH + 5,

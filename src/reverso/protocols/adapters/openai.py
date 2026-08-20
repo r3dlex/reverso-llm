@@ -184,21 +184,23 @@ class HttpOpenAIUpstream:
     async def stream_response(
         self, *, token: str, body: dict[str, Any]
     ) -> AsyncIterator[dict[str, Any]]:
-        async with self._client_factory() as client:
-            async with client.stream(
+        async with (
+            self._client_factory() as client,
+            client.stream(
                 "POST",
                 f"{self._api_base}/responses",
                 headers=self._headers(token),
                 json=body,
-            ) as response:
-                if response.status_code >= 400:
-                    raise _http_error(response)
-                parser = _SSEParser()
-                async for line in response.aiter_lines():
-                    for event in parser.feed(line):
-                        yield event
-                for event in parser.close():
+            ) as response,
+        ):
+            if response.status_code >= 400:
+                raise _http_error(response)
+            parser = _SSEParser()
+            async for line in response.aiter_lines():
+                for event in parser.feed(line):
                     yield event
+            for event in parser.close():
+                yield event
 
     async def list_models(self, *, token: str) -> dict[str, Any]:
         async with self._client_factory() as client:
@@ -238,7 +240,7 @@ class OpenAIPassThroughAdapter:
             if inspect.isawaitable(token):
                 token = await token
             token = str(token).strip()
-        except Exception as exc:  # noqa: BLE001 - keep provider failure secret-free.
+        except Exception as exc:
             raise OpenAIPassThroughError(
                 f"openai bearer token unavailable: {type(exc).__name__}"
             ) from exc

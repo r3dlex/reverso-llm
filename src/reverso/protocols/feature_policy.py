@@ -21,19 +21,20 @@ to a request shape that the tables have not yet enumerated.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from importlib import resources
-from typing import Any, Iterable
+from typing import Any
 
 from reverso.protocols.adapter import ResponsesRequest
 
 __all__ = [
-    "UnsupportedFeature",
     "CAPABILITY_TABLES",
     "FEATURES",
     "PROVIDERS",
-    "extract_features",
-    "check_features",
+    "UnsupportedFeature",
     "build_unsupported_payload",
+    "check_features",
+    "extract_features",
 ]
 
 UNSUPPORTED = "unsupported"
@@ -54,7 +55,7 @@ class UnsupportedFeature(Exception):
     having to reconstruct them.
     """
 
-    __slots__ = ("provider", "feature")
+    __slots__ = ("feature", "provider")
 
     def __init__(self, provider: str, feature: str) -> None:
         super().__init__(f"{provider} does not support {feature}")
@@ -70,7 +71,9 @@ def _load_parity_surface() -> dict[str, Any]:
     )
     payload = json.loads(raw)
     if not isinstance(payload, dict):
-        raise RuntimeError("responses_parity_surface.json must be a JSON object")
+        raise RuntimeError(  # noqa: TRY004 - invalid packaged configuration
+            "responses_parity_surface.json must be a JSON object"
+        )
     return payload
 
 
@@ -89,7 +92,7 @@ def _build_capability_tables(
     features: list[str] = []
     for feature, per_provider in features_raw.items():
         if not isinstance(per_provider, dict):
-            raise RuntimeError(
+            raise RuntimeError(  # noqa: TRY004 - invalid packaged configuration
                 f"parity surface: feature {feature!r} must map provider to classification"
             )
         features.append(str(feature))
@@ -201,9 +204,8 @@ def _tool_choice_feature(tool_choice: Any) -> str | None:
         if tool_choice == "none":
             return "tool_choice.none"
         return None
-    if isinstance(tool_choice, dict):
-        if tool_choice.get("type") == "function":
-            return "tool_choice.named"
+    if isinstance(tool_choice, dict) and tool_choice.get("type") == "function":
+        return "tool_choice.named"
     return None
 
 

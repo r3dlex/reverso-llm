@@ -36,7 +36,7 @@ def _load_sock_path() -> str:
                 cfg = yaml.safe_load(fh) or {}
             sock = cfg.get("daemon_socket", _DEFAULT_SOCK_PATH)
             return str(Path(sock).expanduser())
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - malformed config must fall back safely
         logger.warning("Could not read config.yaml (%s); using default sock path", exc)
 
     return str(Path(_DEFAULT_SOCK_PATH).expanduser())
@@ -45,8 +45,8 @@ def _load_sock_path() -> str:
 async def _run_daemon(sock_path: str) -> None:
     """Start the FastAPI app on a UDS and run the recycle sweeper."""
     # Import here so module-level table is shared with the FastAPI app.
-    from reverso.daemon.session_daemon import app, _session_table
     from reverso.daemon.recycler import RecycleSweeper
+    from reverso.daemon.session_daemon import _session_table, app
 
     sock_file = Path(sock_path)
     sock_file.parent.mkdir(parents=True, exist_ok=True)

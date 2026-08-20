@@ -26,7 +26,8 @@ chunk dicts that helper consumes.
 from __future__ import annotations
 
 import json
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
 from reverso.protocols.replay import (
     flatten_input,

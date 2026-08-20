@@ -14,7 +14,13 @@ Coverage:
 from __future__ import annotations
 
 import asyncio
+
+# ---------------------------------------------------------------------------
+# Helpers shared with test_codex_adapter.py pattern
+# ---------------------------------------------------------------------------
+import base64
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -22,10 +28,6 @@ import pytest
 
 from reverso.protocols.adapter import ResponsesRequest
 from reverso.protocols.adapters import codex_usage_store
-from reverso.protocols.headroom_compression import (
-    DEFAULT_HEADROOM_METRICS,
-    HeadroomCompressionOutcome,
-)
 from reverso.protocols.adapters.codex import (
     CodexAdapter,
     CodexOAuthAuth,
@@ -37,16 +39,12 @@ from reverso.protocols.adapters.codex_rollout import (
     _map_rate_limits,
     read_rate_limits,
 )
+from reverso.protocols.headroom_compression import (
+    DEFAULT_HEADROOM_METRICS,
+    HeadroomCompressionOutcome,
+)
 from reverso.protocols.model_exposure import codex_usage_context_window
 from reverso.protocols.replay import estimate_usage
-
-
-# ---------------------------------------------------------------------------
-# Helpers shared with test_codex_adapter.py pattern
-# ---------------------------------------------------------------------------
-
-import base64
-import time
 
 
 def _jwt(exp_seconds: int) -> str:
@@ -554,8 +552,8 @@ async def _asgi_get_usage(root, path: str = "/usage") -> dict[str, Any]:
 @pytest.mark.asyncio
 async def test_get_usage_empty_store_returns_null_rate_limits(monkeypatch) -> None:
     """GET /usage with no codex turn yet → 200, rate_limits null, no 5xx."""
-    from reverso.proxy.compose import CompositionRoot
     import reverso.protocols.adapters.codex_usage_store as store_mod
+    from reverso.proxy.compose import CompositionRoot
 
     # Clear the store.
     monkeypatch.setattr(store_mod, "_latest", None)
@@ -586,8 +584,8 @@ async def test_get_usage_empty_store_returns_null_rate_limits(monkeypatch) -> No
 @pytest.mark.asyncio
 async def test_get_usage_populated_store_returns_snapshot(monkeypatch) -> None:
     """GET /usage with a real snapshot returns the full contract shape."""
-    from reverso.proxy.compose import CompositionRoot
     import reverso.protocols.adapters.codex_usage_store as store_mod
+    from reverso.proxy.compose import CompositionRoot
 
     snapshot = codex_usage_store.build_snapshot(
         model_id="gpt-5.5",
@@ -813,8 +811,9 @@ async def test_get_usage_headroom_disabled_reflects_config(monkeypatch) -> None:
 async def test_get_usage_does_not_invoke_subprocess(monkeypatch) -> None:
     """INV-2: GET /usage reads the store only - no subprocess.run/Popen."""
     import subprocess as subprocess_mod
-    from reverso.proxy.compose import CompositionRoot
+
     import reverso.protocols.adapters.codex_usage_store as store_mod
+    from reverso.proxy.compose import CompositionRoot
 
     monkeypatch.setattr(store_mod, "_latest", None)
 
@@ -841,6 +840,7 @@ async def test_get_usage_does_not_invoke_subprocess(monkeypatch) -> None:
 async def test_get_usage_headroom_does_not_invoke_subprocess(monkeypatch) -> None:
     """INV-2: GET /usage/headroom reads local metrics only, no subprocess."""
     import subprocess as subprocess_mod
+
     from reverso.proxy.compose import CompositionRoot
 
     DEFAULT_HEADROOM_METRICS.reset()

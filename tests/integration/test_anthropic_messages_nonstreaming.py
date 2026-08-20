@@ -11,12 +11,13 @@ secret-free Anthropic error envelope.
 
 from __future__ import annotations
 
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
 import httpx
 import pytest
-
 from conftest import FixtureAdapter
+
 from reverso.protocols.adapter import (
     InputItemList,
     ModelList,
@@ -138,8 +139,9 @@ async def test_stream_true_returns_event_stream_not_501() -> None:
     # SSE response. The detailed streaming contract lives in
     # test_anthropic_messages_streaming.py; here we only pin that the stub is
     # gone (200 text/event-stream, never the old 501 not_implemented).
-    async with _build_client() as client:
-        async with client.stream(
+    async with (
+        _build_client() as client,
+        client.stream(
             "POST",
             _prefix("deepseek"),
             json={
@@ -148,11 +150,12 @@ async def test_stream_true_returns_event_stream_not_501() -> None:
                 "stream": True,
                 "messages": [{"role": "user", "content": "hello"}],
             },
-        ) as resp:
-            assert resp.status_code == 200
-            assert "text/event-stream" in resp.headers["content-type"]
-            async for _ in resp.aiter_text():
-                pass
+        ) as resp,
+    ):
+        assert resp.status_code == 200
+        assert "text/event-stream" in resp.headers["content-type"]
+        async for _ in resp.aiter_text():
+            pass
 
 
 class _FailingAdapter:

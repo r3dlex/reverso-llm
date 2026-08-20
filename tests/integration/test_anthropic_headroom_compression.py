@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from dataclasses import replace
-from typing import Any, AsyncIterator, cast
+from typing import Any, cast
 
 import httpx
 import pytest
 
-import reverso.protocols.anthropic_app as anthropic_app
+from reverso.protocols import anthropic_app
 from reverso.protocols.adapter import (
     InputItemList,
     ModelList,
@@ -253,8 +254,9 @@ async def test_messages_streaming_dispatches_compressed_request_for_each_backend
 
     monkeypatch.setattr(anthropic_app, "compress_responses_request", fake_compress)
 
-    async with _client({backend: adapter}) as client:
-        async with client.stream(
+    async with (
+        _client({backend: adapter}) as client,
+        client.stream(
             "POST",
             f"/{backend}/v1/messages",
             json={
@@ -263,9 +265,10 @@ async def test_messages_streaming_dispatches_compressed_request_for_each_backend
                 "stream": True,
                 "messages": [{"role": "user", "content": "original stream text"}],
             },
-        ) as resp:
-            assert resp.status_code == 200
-            body = "".join([chunk async for chunk in resp.aiter_text()])
+        ) as resp,
+    ):
+        assert resp.status_code == 200
+        body = "".join([chunk async for chunk in resp.aiter_text()])
 
     assert "message_start" in body
     assert "content_block_delta" in body

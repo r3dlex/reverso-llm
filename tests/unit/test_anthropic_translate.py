@@ -22,7 +22,6 @@ from reverso.protocols.anthropic_translate import (
     responses_envelope_to_anthropic,
 )
 
-
 # --- system -> instructions -------------------------------------------------
 
 

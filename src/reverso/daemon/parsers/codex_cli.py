@@ -9,8 +9,8 @@ See docs/spike-notes.md for the confirmed event format.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 
 
 class CodexCLIParser:
@@ -80,7 +80,7 @@ class CodexCLIParser:
                         "args": {"command": command},
                         "is_error": is_error,
                         "result_summary": result_summary,
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "timestamp": datetime.now(UTC).isoformat(),
                     }
                     observations.append(obs)
 

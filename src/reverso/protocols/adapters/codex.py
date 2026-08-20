@@ -52,8 +52,9 @@ import json
 import logging
 import subprocess
 import time
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
-from typing import Any, AsyncIterator, Callable, NamedTuple
+from typing import Any, NamedTuple
 
 from reverso.protocols.adapter import (
     InputItemList,
@@ -62,13 +63,13 @@ from reverso.protocols.adapter import (
     ResponsesRequest,
     SSEEvent,
 )
+from reverso.protocols.adapters import codex_usage_store
 from reverso.protocols.adapters.cli_spine import (
     BoundedCliStreamFailure,
     run_bounded_cli,
     stream_bounded_cli,
 )
 from reverso.protocols.adapters.codex_rollout import read_rate_limits
-from reverso.protocols.adapters import codex_usage_store
 from reverso.protocols.auth import (
     AuthResolution,
     redact_mapping,

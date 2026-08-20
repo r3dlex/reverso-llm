@@ -21,13 +21,13 @@ end to end and assert on the runtime id rather than the fixture placeholder.
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Self
 
 import httpx
 import pytest
-
 from conftest import load_fixture
-from reverso.protocols.adapters.claude import ClaudeAdapter, OAUTH_METHOD
+
+from reverso.protocols.adapters.claude import OAUTH_METHOD, ClaudeAdapter
 from reverso.protocols.adapters.copilot import CopilotAdapter
 from reverso.protocols.auth import AuthResolution
 from reverso.protocols.responses_app import build_app
@@ -108,7 +108,7 @@ def _sse_bytes_from_fixture(events: list[dict[str, Any]]) -> bytes:
     out = b""
     for event in events:
         payload = json.dumps(event, separators=(",", ":"))
-        out += f"event: {event['type']}\ndata: {payload}\n\n".encode("utf-8")
+        out += f"event: {event['type']}\ndata: {payload}\n\n".encode()
     out += b"data: [DONE]\n\n"
     return out
 
@@ -124,10 +124,10 @@ class _FakeStreamResponse:
     async def aiter_bytes(self):
         yield self._body
 
-    async def __aenter__(self) -> "_FakeStreamResponse":
+    async def __aenter__(self) -> Self:
         return self
 
-    async def __aexit__(self, *exc: Any) -> None:
+    async def __aexit__(self, *exc: object) -> None:
         return None
 
 
@@ -145,10 +145,10 @@ class _FakeCopilotClient:
         self._tools = load_fixture("tools_function_call.json")
         self._chain = load_fixture("previous_response_id_chain.json")
 
-    async def __aenter__(self) -> "_FakeCopilotClient":
+    async def __aenter__(self) -> Self:
         return self
 
-    async def __aexit__(self, *exc: Any) -> None:
+    async def __aexit__(self, *exc: object) -> None:
         return None
 
     def _select_body(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -284,15 +284,17 @@ async def test_real_create_response_nonstreaming(provider: str) -> None:
 async def test_real_create_response_streaming(provider: str) -> None:
     fixture = load_fixture("create_response_streaming.json")
     asserts = fixture["assertions"]
-    async with _build_client() as client:
-        async with client.stream(
+    async with (
+        _build_client() as client,
+        client.stream(
             "POST",
             f"{_prefix(provider)}/responses",
             json=fixture["request"]["body"],
-        ) as resp:
-            assert resp.status_code == asserts["status"]
-            assert "text/event-stream" in resp.headers["content-type"]
-            text = "".join([chunk async for chunk in resp.aiter_text()])
+        ) as resp,
+    ):
+        assert resp.status_code == asserts["status"]
+        assert "text/event-stream" in resp.headers["content-type"]
+        text = "".join([chunk async for chunk in resp.aiter_text()])
     events, saw_done = _parse_sse(text)
     types = [event["type"] for event in events]
     # Real adapters may chunk output_text.delta differently (one delta vs many);

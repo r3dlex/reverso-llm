@@ -18,7 +18,8 @@ from __future__ import annotations
 
 import json
 import threading
-from typing import Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from reverso.protocols.adapter import (
     InputItemList,
@@ -82,7 +83,7 @@ _DONE_EVENT = b"data: [DONE]\n\n"
 class RoutedPath:
     """A request split into its provider prefix and provider-local path."""
 
-    __slots__ = ("provider", "path")
+    __slots__ = ("path", "provider")
 
     def __init__(self, provider: str, path: str) -> None:
         self.provider = provider

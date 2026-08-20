@@ -283,7 +283,7 @@ async def test_direct_codex_reserved_route_fails_closed_before_legacy(
     monkeypatch.setenv(compose.CODEX_DIRECT_BACKEND_ENV, "0")
     legacy_calls: list[str] = []
 
-    async def legacy_app(scope, receive, send):  # noqa: ANN001
+    async def legacy_app(scope, receive, send):
         legacy_calls.append(str(scope.get("path", "")))
         await send({"type": "http.response.start", "status": 599, "headers": []})
         await send({"type": "http.response.body", "body": b"legacy"})

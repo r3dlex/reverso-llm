@@ -7,22 +7,22 @@ Reports intentionally contain only public shape metadata.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
-from typing import Any
 import asyncio
 import inspect
 import json
 import os
 import subprocess
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
+from typing import Any
 
 from reverso.protocols.adapter import ResponsesRequest
-from reverso.protocols.auth import ProviderAuth, redact_mapping
 from reverso.protocols.adapters.codex import CodexOAuthAuth
 from reverso.protocols.adapters.codex_direct import (
     CodexDirectUpstream,
     experimental_http_codex_direct_adapter,
 )
+from reverso.protocols.auth import ProviderAuth, redact_mapping
 
 LIVE_PROOF_ENV = "REVERSO_CODEX_LIVE_PROOF"
 OFFICIAL_LIVE_PROOF_ENV = "REVERSO_CODEX_OFFICIAL_LIVE_PROOF"
@@ -131,7 +131,7 @@ def _public_source(details: Mapping[str, Any]) -> str | None:
 
 def _shape_keys(payload: Any) -> list[str]:
     if isinstance(payload, dict):
-        return sorted(str(key) for key in payload.keys())
+        return sorted(str(key) for key in payload)
     return []
 
 
@@ -211,7 +211,7 @@ def run_official_cli_live_proof(
         lane="official",
         status=status,
         model=_first_string(parsed, "model"),
-        response_shape_keys=sorted({key for item in parsed for key in item.keys()}),
+        response_shape_keys=sorted({key for item in parsed for key in item}),
         usage_present=any(isinstance(item.get("usage"), dict) for item in parsed),
         rate_limit_present=any("rate_limits" in item for item in parsed),
         error_type=None if result.returncode == 0 else "CodexCliNonZero",

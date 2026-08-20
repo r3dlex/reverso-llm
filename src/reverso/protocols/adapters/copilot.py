@@ -20,8 +20,9 @@ import logging
 import platform
 import subprocess
 import time
+from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any
 
 import httpx
 
@@ -483,29 +484,31 @@ class CopilotAdapter:
         bearer = await self._auth.bearer_token()
         api_base = await self._api_base_for_auth()
         body = self._request_body(request, stream=True)
-        async with self._client_factory() as client:
-            async with client.stream(
+        async with (
+            self._client_factory() as client,
+            client.stream(
                 "POST",
                 f"{api_base}/responses",
                 headers=_forward_headers(bearer),
                 content=body,
-            ) as response:
-                if response.status_code >= 400:
-                    await response.aread()
-                _raise_for_upstream_status(response)
-                buffer = b""
-                async for chunk in response.aiter_bytes():
-                    buffer += chunk
-                    while b"\n\n" in buffer:
-                        block, buffer = buffer.split(b"\n\n", 1)
-                        event = self._parse_sse_block(block)
-                        if event is not None:
-                            yield event
-                tail = buffer.strip()
-                if tail:
-                    event = self._parse_sse_block(tail)
+            ) as response,
+        ):
+            if response.status_code >= 400:
+                await response.aread()
+            _raise_for_upstream_status(response)
+            buffer = b""
+            async for chunk in response.aiter_bytes():
+                buffer += chunk
+                while b"\n\n" in buffer:
+                    block, buffer = buffer.split(b"\n\n", 1)
+                    event = self._parse_sse_block(block)
                     if event is not None:
                         yield event
+            tail = buffer.strip()
+            if tail:
+                event = self._parse_sse_block(tail)
+                if event is not None:
+                    yield event
 
     # --- chat/completions path (claude-*/gemini-*, ADR 0011) -----------------
 
@@ -600,47 +603,49 @@ class CopilotAdapter:
         CopilotUpstreamError so the pre-emission contract holds (the gateway
         synthesises a structured 502 instead of a truncated 200 stream).
         """
-        async with self._client_factory() as client:
-            async with client.stream(
+        async with (
+            self._client_factory() as client,
+            client.stream(
                 "POST",
                 f"{api_base}/chat/completions",
                 headers=_forward_headers(bearer),
                 content=json.dumps(body).encode("utf-8"),
-            ) as response:
-                if response.status_code >= 400:
-                    await response.aread()
-                    _raise_for_upstream_status(response)
-                pending = b""
-                async for raw in response.aiter_bytes():
-                    if not raw:
+            ) as response,
+        ):
+            if response.status_code >= 400:
+                await response.aread()
+                _raise_for_upstream_status(response)
+            pending = b""
+            async for raw in response.aiter_bytes():
+                if not raw:
+                    continue
+                pending += raw
+                while b"\n" in pending:
+                    line, pending = pending.split(b"\n", 1)
+                    line = line.strip()
+                    if not line or not line.startswith(b"data:"):
                         continue
-                    pending += raw
-                    while b"\n" in pending:
-                        line, pending = pending.split(b"\n", 1)
-                        line = line.strip()
-                        if not line or not line.startswith(b"data:"):
-                            continue
-                        payload = line[len(b"data:") :].strip()
-                        if not payload:
-                            continue
-                        if payload == b"[DONE]":
-                            yield {
-                                "text": "",
-                                "reasoning_text": "",
-                                "tool_calls": [],
-                                "usage": None,
-                                "done": True,
-                            }
+                    payload = line[len(b"data:") :].strip()
+                    if not payload:
+                        continue
+                    if payload == b"[DONE]":
+                        yield {
+                            "text": "",
+                            "reasoning_text": "",
+                            "tool_calls": [],
+                            "usage": None,
+                            "done": True,
+                        }
+                        return
+                    try:
+                        event = json.loads(payload)
+                    except json.JSONDecodeError:
+                        continue
+                    parsed = parse_stream_event(event)
+                    if parsed is not None:
+                        yield parsed
+                        if parsed.get("done"):
                             return
-                        try:
-                            event = json.loads(payload)
-                        except json.JSONDecodeError:
-                            continue
-                        parsed = parse_stream_event(event)
-                        if parsed is not None:
-                            yield parsed
-                            if parsed.get("done"):
-                                return
 
     def _finalize_chat_envelope(
         self,

@@ -4,7 +4,6 @@ from pathlib import Path
 
 import yaml
 
-
 CONFIG_PATH = Path(__file__).parents[2] / "config" / "litellm_config.yaml"
 MODELS_PATH = Path(__file__).parents[2] / "config" / "models.yaml"
 

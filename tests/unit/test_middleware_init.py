@@ -2,7 +2,7 @@
 
 
 def test_middleware_exports_x_gateway_callback():
-    import reverso.middleware as middleware
+    from reverso import middleware
 
     assert callable(middleware.x_gateway_callback)
 

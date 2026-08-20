@@ -13,7 +13,8 @@ from __future__ import annotations
 
 import subprocess
 import sys
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
 import pytest
 
@@ -93,7 +94,7 @@ async def test_litellm_proxy_app_not_invoked_during_provider_handling(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """RUNTIME: litellm.proxy.proxy_server.app is never called for claude/copilot."""
-    import litellm.proxy.proxy_server as proxy_server
+    from litellm.proxy import proxy_server
 
     calls: list[tuple[Any, ...]] = []
 
@@ -157,6 +158,7 @@ def test_responses_app_import_graph_excludes_legacy_proxy_app() -> None:
         [sys.executable, "-c", code],
         capture_output=True,
         text=True,
+        check=False,
     )
     assert (
         result.returncode == 0
@@ -199,6 +201,7 @@ def test_anthropic_surface_import_graph_excludes_legacy_proxy_app() -> None:
         [sys.executable, "-c", code],
         capture_output=True,
         text=True,
+        check=False,
     )
     assert (
         result.returncode == 0

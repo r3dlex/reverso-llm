@@ -15,12 +15,13 @@ across backends without changing the frozen adapters or the parity harness.
 from __future__ import annotations
 
 import json
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
 import httpx
 import pytest
-
 from conftest import FixtureAdapter
+
 from reverso.protocols.adapter import (
     InputItemList,
     ModelList,
@@ -83,8 +84,9 @@ def _collapse_repeated_deltas(types: list[str]) -> list[str]:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("backend", ANTHROPIC_BACKENDS)
 async def test_streaming_valid_anthropic_event_order(backend: str) -> None:
-    async with _build_client() as client:
-        async with client.stream(
+    async with (
+        _build_client() as client,
+        client.stream(
             "POST",
             _prefix(backend),
             json={
@@ -93,11 +95,12 @@ async def test_streaming_valid_anthropic_event_order(backend: str) -> None:
                 "stream": True,
                 "messages": [{"role": "user", "content": "hello"}],
             },
-        ) as resp:
-            assert resp.status_code == 200
-            assert "text/event-stream" in resp.headers["content-type"]
-            assert resp.headers["anthropic-version"] == "2023-06-01"
-            text = "".join([chunk async for chunk in resp.aiter_text()])
+        ) as resp,
+    ):
+        assert resp.status_code == 200
+        assert "text/event-stream" in resp.headers["content-type"]
+        assert resp.headers["anthropic-version"] == "2023-06-01"
+        text = "".join([chunk async for chunk in resp.aiter_text()])
 
     events = _parse_anthropic_sse(text)
     types = [event["type"] for event in events]
@@ -120,8 +123,9 @@ async def test_streaming_valid_anthropic_event_order(backend: str) -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("backend", ANTHROPIC_BACKENDS)
 async def test_streaming_concatenated_text_deltas_equal_full_text(backend: str) -> None:
-    async with _build_client() as client:
-        async with client.stream(
+    async with (
+        _build_client() as client,
+        client.stream(
             "POST",
             _prefix(backend),
             json={
@@ -130,8 +134,9 @@ async def test_streaming_concatenated_text_deltas_equal_full_text(backend: str) 
                 "stream": True,
                 "messages": [{"role": "user", "content": "hello"}],
             },
-        ) as resp:
-            text = "".join([chunk async for chunk in resp.aiter_text()])
+        ) as resp,
+    ):
+        text = "".join([chunk async for chunk in resp.aiter_text()])
 
     events = _parse_anthropic_sse(text)
     concatenated = "".join(
@@ -146,8 +151,9 @@ async def test_streaming_concatenated_text_deltas_equal_full_text(backend: str) 
 
 @pytest.mark.asyncio
 async def test_streaming_anthropic_version_echoed_from_header() -> None:
-    async with _build_client() as client:
-        async with client.stream(
+    async with (
+        _build_client() as client,
+        client.stream(
             "POST",
             _prefix("copilot"),
             headers={"anthropic-version": "2099-01-01"},
@@ -157,11 +163,12 @@ async def test_streaming_anthropic_version_echoed_from_header() -> None:
                 "stream": True,
                 "messages": [{"role": "user", "content": "hello"}],
             },
-        ) as resp:
-            assert resp.status_code == 200
-            assert resp.headers["anthropic-version"] == "2099-01-01"
-            async for _ in resp.aiter_text():
-                pass
+        ) as resp,
+    ):
+        assert resp.status_code == 200
+        assert resp.headers["anthropic-version"] == "2099-01-01"
+        async for _ in resp.aiter_text():
+            pass
 
 
 # --- pre-stream failure -> 502 JSON (not a 200 event-stream) ----------------
@@ -280,7 +287,9 @@ async def test_deeply_nested_payload_nonstreaming_returns_400_not_500() -> None:
     giving a clean 400. The nesting depth exercises the cap and proves no
     RecursionError escapes as an unhandled 500.
     """
-    from reverso.protocols.anthropic_feature_gate import _MAX_BLOCK_DEPTH  # noqa: PLC0415
+    from reverso.protocols.anthropic_feature_gate import (
+        _MAX_BLOCK_DEPTH,
+    )
 
     depth = _MAX_BLOCK_DEPTH + 5
     async with _build_client() as client:
@@ -301,7 +310,9 @@ async def test_deeply_nested_payload_streaming_returns_400_not_200_stream() -> N
     """Finding 1: a deeply-nested payload with stream=true must return a 400 JSON
     body (NOT a 200 text/event-stream) because gating runs before the 200 header.
     """
-    from reverso.protocols.anthropic_feature_gate import _MAX_BLOCK_DEPTH  # noqa: PLC0415
+    from reverso.protocols.anthropic_feature_gate import (
+        _MAX_BLOCK_DEPTH,
+    )
 
     depth = _MAX_BLOCK_DEPTH + 5
     async with _build_client() as client:
@@ -322,7 +333,7 @@ async def test_oversized_body_returns_structured_error() -> None:
     """Finding 2: a body exceeding _MAX_BODY_BYTES must return a structured 413
     Anthropic error envelope, not an unhandled crash or silent buffering.
     """
-    from reverso.protocols.anthropic_app import _MAX_BODY_BYTES  # noqa: PLC0415
+    from reverso.protocols.anthropic_app import _MAX_BODY_BYTES
 
     oversized_body = b'{"model":"' + b"x" * (_MAX_BODY_BYTES + 1) + b'"}'
     async with _build_client() as client:

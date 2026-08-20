@@ -16,9 +16,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone
+from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
@@ -167,7 +168,7 @@ async def _run_claude_turn(
             assistant_text, observations = await asyncio.wait_for(
                 parse_task, timeout=timeout
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             proc.kill()
             await proc.wait()
             raise RuntimeError(f"Claude turn timed out after {timeout}s")
@@ -187,7 +188,7 @@ async def _run_claude_turn(
             proc.kill()
             try:
                 await asyncio.wait_for(proc.wait(), timeout=5)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
 
     return assistant_text, observations, cli_session_id
@@ -249,7 +250,7 @@ async def _run_codex_turn(
             assistant_text, observations = await asyncio.wait_for(
                 parse_task, timeout=timeout
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             proc.kill()
             await proc.wait()
             raise RuntimeError(f"Codex turn timed out after {timeout}s")
@@ -267,7 +268,7 @@ async def _run_codex_turn(
             proc.kill()
             try:
                 await asyncio.wait_for(proc.wait(), timeout=5)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
 
     return assistant_text, observations, thread_id
@@ -355,7 +356,7 @@ async def _stream_claude_turn(
                             pending[tool_id] = {
                                 "tool_name": content_item.get("name", ""),
                                 "args": content_item.get("input", {}),
-                                "timestamp": datetime.now(timezone.utc).isoformat(),
+                                "timestamp": datetime.now(UTC).isoformat(),
                             }
                 elif event_type == "user":
                     msg = event.get("message", {})
@@ -384,7 +385,7 @@ async def _stream_claude_turn(
                             {
                                 "tool_name": "",
                                 "args": {},
-                                "timestamp": datetime.now(timezone.utc).isoformat(),
+                                "timestamp": datetime.now(UTC).isoformat(),
                             },
                         )
                         tool_name = str(pending_item["tool_name"])
@@ -428,7 +429,7 @@ async def _stream_claude_turn(
             proc.kill()
             try:
                 await asyncio.wait_for(proc.wait(), timeout=5)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
 
     yield {
@@ -460,7 +461,7 @@ async def _stream_turn_events(req: TurnRequest) -> AsyncIterator[str]:
     session = await _session_table.get_or_create(workspace, provider, spawn_fn)
 
     async with session.lock:
-        session.last_request_at = datetime.now(timezone.utc)
+        session.last_request_at = datetime.now(UTC)
         try:
             if provider == "anthropic":
                 async for event in _stream_claude_turn(
@@ -561,7 +562,7 @@ async def session_turn(req: TurnRequest) -> TurnResponse:
 
     async with session.lock:
         # Update last_request_at under the session lock to avoid races.
-        session.last_request_at = datetime.now(timezone.utc)
+        session.last_request_at = datetime.now(UTC)
 
         try:
             if provider == "anthropic":

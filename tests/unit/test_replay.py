@@ -13,9 +13,9 @@ import pytest
 
 from reverso.protocols.adapter import ResponseEnvelope, ResponsesRequest
 from reverso.protocols.adapters.claude import (
+    OAUTH_METHOD,
     ClaudeAdapter,
     ClaudeAuthError,
-    OAUTH_METHOD,
 )
 from reverso.protocols.auth import AuthResolution
 from reverso.protocols.replay import (
@@ -285,20 +285,16 @@ def test_flatten_input_handles_string_items_and_parts() -> None:
     """
     assert flatten_input(None) == ""
     assert flatten_input("plain") == "plain"
-    assert flatten_input(
-        [
-            "bare string",
-            {"content": "dict content"},
-            {"content": [{"text": "part text"}, "part string"]},
-            {"text": "fallback text"},
-        ]
-    ) == "\n\n".join(
-        [
-            "bare string",
-            "dict content",
-            "part text\npart string",
-            "fallback text",
-        ]
+    assert (
+        flatten_input(
+            [
+                "bare string",
+                {"content": "dict content"},
+                {"content": [{"text": "part text"}, "part string"]},
+                {"text": "fallback text"},
+            ]
+        )
+        == "bare string\n\ndict content\n\npart text\npart string\n\nfallback text"
     )
 
 

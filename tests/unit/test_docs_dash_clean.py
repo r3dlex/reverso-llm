@@ -20,7 +20,7 @@ FORBIDDEN = (EM_DASH, EN_DASH)
 
 
 def _iter_targets() -> list[Path]:
-    repo_root = Path(".").resolve()
+    repo_root = Path.cwd()
     targets: list[Path] = []
     docs_dir = repo_root / "docs"
     if docs_dir.is_dir():

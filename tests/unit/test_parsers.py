@@ -1,7 +1,9 @@
 """Unit tests for daemon parsers."""
 
 import json
+
 import pytest
+
 from reverso.daemon.parsers.claude_code import ClaudeCodeParser
 from reverso.daemon.parsers.codex_cli import CodexCLIParser
 

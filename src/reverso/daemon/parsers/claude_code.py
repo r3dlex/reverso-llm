@@ -9,8 +9,8 @@ See docs/spike-notes.md for the confirmed event format.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 
 
 def _obs_type_for_tool(name: str) -> str:
@@ -89,7 +89,7 @@ class ClaudeCodeParser:
                         pending[tool_id] = {
                             "tool_name": tool_name,
                             "args": tool_input,
-                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                            "timestamp": datetime.now(UTC).isoformat(),
                         }
                 # capture session_id from assistant events too
                 if not session_id:
@@ -144,7 +144,7 @@ class ClaudeCodeParser:
                                 "args": {},
                                 "is_error": is_error,
                                 "result_summary": result_summary,
-                                "timestamp": datetime.now(timezone.utc).isoformat(),
+                                "timestamp": datetime.now(UTC).isoformat(),
                             }
                             observations.append(obs)
 
