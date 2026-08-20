@@ -23,7 +23,7 @@ reverso-client-sync = "reverso.client_sync:main"
 reverso-catalog-refresh = "reverso.catalog_refresh:main"
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "ruff==0.6.0"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

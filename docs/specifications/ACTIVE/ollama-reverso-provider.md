@@ -428,6 +428,11 @@ allowlisted entrypoint `bash tests/verify_ollama_g1.sh`. The wrapper runs the
 commands above in the same order under strict Bash and does not omit, bypass,
 replace, or relax any underlying verification command.
 
+The `dev` optional dependency pins Ruff 0.6.0, matching the version already
+pinned by `prek.toml`. Consequently both `uv run ruff` commands and the
+`uvx prek` Ruff hooks enforce one declared tool version rather than divergent
+formatter behavior.
+
 The executor uses the repository-current root validation path if the child repo exposes a different local CI command. Missing declared gates block completion.
 
 ### G2: OLLAMA-RP-G2 Claude Code native Messages vertical

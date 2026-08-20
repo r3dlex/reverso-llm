@@ -42,23 +42,16 @@ Additional verification:
   was updated for composition injection.
 - `uvx prek run --all-files`: exit 0, all hooks passed.
 
-## Known repository-wide lint baseline
+## Unified Ruff policy
 
-The declared repo-wide Ruff gates are not satisfied and remain red from the
-pre-existing baseline. Fresh results after G1 review repair are:
-
-- `uv run ruff check .`: exit 1, 187 errors (160 fixable; 7 additional unsafe
-  fixes hidden).
-- `uv run ruff format --check .`: exit 1, 11 files would be reformatted and 284
-  files are already formatted.
-
-No unrelated repository-wide Ruff or formatting finding was mass-fixed.
+The `dev` optional dependency pins Ruff 0.6.0, the same version already pinned
+by `prek.toml`. `uv run ruff` and the `uvx prek` Ruff hooks therefore execute
+one declared checker/formatter version. This formalizes the existing lint tool
+without adding, omitting, or relaxing a lint policy.
 
 ## Autobahn verification entrypoint
 
 The goal record allowlists the single command `bash tests/verify_ollama_g1.sh`.
 That strict Bash wrapper preserves and runs all seven dedicated-spec
 verification commands in their original order. It does not omit, bypass,
-replace, or relax an underlying command; therefore the known repo-wide Ruff
-failures continue to make full verification fail until their prerequisite
-cleanup lands.
+replace, or relax an underlying command.
