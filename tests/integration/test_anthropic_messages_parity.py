@@ -51,8 +51,8 @@ from typing import Any
 
 import httpx
 import pytest
-
 from conftest import FixtureAdapter
+
 from reverso.protocols.anthropic_app import build_anthropic_app
 from reverso.protocols.model_exposure import CODEX_BUILTIN_MODELS
 
@@ -207,15 +207,17 @@ async def test_nonstreaming_message_body_shape(provider: str) -> None:
 @pytest.mark.parametrize("provider", PROVIDERS)
 async def test_streaming_event_order_and_text(provider: str) -> None:
     """POST /v1/messages stream=true -> valid Anthropic event order; text concatenates."""
-    async with _build_client() as client:
-        async with client.stream(
+    async with (
+        _build_client() as client,
+        client.stream(
             "POST",
             f"{_prefix(provider)}/messages",
             json=_messages_body(provider, "Say hi.", stream=True),
-        ) as resp:
-            assert resp.status_code == 200
-            assert "text/event-stream" in resp.headers["content-type"]
-            text = "".join([chunk async for chunk in resp.aiter_text()])
+        ) as resp,
+    ):
+        assert resp.status_code == 200
+        assert "text/event-stream" in resp.headers["content-type"]
+        text = "".join([chunk async for chunk in resp.aiter_text()])
 
     events = _parse_sse(text)
     types = [event["type"] for event in events]

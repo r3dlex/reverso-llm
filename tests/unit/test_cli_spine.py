@@ -109,7 +109,9 @@ def test_nonzero_exit_uses_custom_failure_message() -> None:
 
 def test_nonzero_exit_logs_redacted_stderr_only(caplog) -> None:
     secret = "token=SECRET-spine-log-1234567890"
-    with caplog.at_level("WARNING", logger="reverso.protocols.adapters.cli_spine"):
+    with caplog.at_level(  # noqa: SIM117 - exception scope is intentionally nested
+        "WARNING", logger="reverso.protocols.adapters.cli_spine"
+    ):
         with pytest.raises(_SpineError):
             run_bounded_cli(
                 [
@@ -189,7 +191,9 @@ async def test_stream_nonzero_exit_sets_returncode_and_redacts(caplog) -> None:
         f"print({secret!r}, file=sys.stderr); sys.exit(3)"
     )
     seen: list[str] = []
-    with caplog.at_level("WARNING", logger="reverso.protocols.adapters.cli_spine"):
+    with caplog.at_level(  # noqa: SIM117 - exception scope is intentionally nested
+        "WARNING", logger="reverso.protocols.adapters.cli_spine"
+    ):
         with pytest.raises(BoundedCliStreamFailure) as excinfo:
             async for line in stream_bounded_cli(
                 [sys.executable, "-c", script], cli_label="fake CLI"

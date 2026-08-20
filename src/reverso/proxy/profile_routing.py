@@ -7,9 +7,10 @@ profile-local aliases to concrete provider model ids before LiteLLM routing.
 from __future__ import annotations
 
 import json
+from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 from reverso.protocols.model_exposure import (
     CODEX_BUILTIN_MODELS,

@@ -43,7 +43,6 @@ from __future__ import annotations
 import datetime
 from typing import Any
 
-
 # The single latest Codex usage snapshot.  None until the first codex turn
 # completes.  Written by CodexAdapter.finalize(); read by GET /usage.
 _latest: dict[str, Any] | None = None
@@ -94,7 +93,7 @@ def empty_response(model_id: str | None = None) -> dict[str, Any]:
             "used_percent": 0.0,
         },
         "rate_limits": None,
-        "updated_at": datetime.datetime.now(tz=datetime.timezone.utc).isoformat(),
+        "updated_at": datetime.datetime.now(tz=datetime.UTC).isoformat(),
     }
 
 
@@ -144,5 +143,5 @@ def build_snapshot(
             "used_percent": used_percent,
         },
         "rate_limits": rate_limits,
-        "updated_at": datetime.datetime.now(tz=datetime.timezone.utc).isoformat(),
+        "updated_at": datetime.datetime.now(tz=datetime.UTC).isoformat(),
     }

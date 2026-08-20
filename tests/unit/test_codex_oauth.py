@@ -291,7 +291,7 @@ def test_jwt_exp_non_finite_does_not_crash() -> None:
         # Must NOT raise; must return a structured AuthResolution.
         try:
             resolution = auth.resolve()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise AssertionError(
                 f"resolve() raised {type(exc).__name__} for exp={label!r}: {exc}"
             ) from exc
@@ -365,6 +365,7 @@ def test_import_does_not_pull_legacy_app_or_litellm() -> None:
         [sys.executable, "-c", code],
         capture_output=True,
         text=True,
+        check=False,
     )
     assert (
         result.returncode == 0

@@ -10,13 +10,21 @@ register_litellm_extensions()
 
 from litellm.proxy.proxy_server import app as litellm_app  # noqa: E402
 
-from reverso.middleware.codex_models_compat import CodexModelsCompatMiddleware  # noqa: E402
+from reverso.middleware.codex_models_compat import (  # noqa: E402
+    CodexModelsCompatMiddleware,
+)
 from reverso.middleware.codex_responses_normalizer import (  # noqa: E402
     CodexResponsesNormalizerMiddleware,
 )
-from reverso.middleware.responses_sse_completion import ResponsesSSECompletionMiddleware  # noqa: E402
-from reverso.middleware.responses_think_stripper import ResponsesThinkStripperMiddleware  # noqa: E402
-from reverso.middleware.x_gateway_error_envelope import XGatewayErrorEnvelopeMiddleware  # noqa: E402
+from reverso.middleware.responses_sse_completion import (  # noqa: E402
+    ResponsesSSECompletionMiddleware,
+)
+from reverso.middleware.responses_think_stripper import (  # noqa: E402
+    ResponsesThinkStripperMiddleware,
+)
+from reverso.middleware.x_gateway_error_envelope import (  # noqa: E402
+    XGatewayErrorEnvelopeMiddleware,
+)
 from reverso.proxy.profile_routing import ProfileRoutingMiddleware  # noqa: E402
 
 app = XGatewayErrorEnvelopeMiddleware(

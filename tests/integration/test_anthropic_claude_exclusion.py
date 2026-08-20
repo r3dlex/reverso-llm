@@ -26,8 +26,8 @@ from typing import Any
 
 import httpx
 import pytest
-
 from conftest import FixtureAdapter
+
 from reverso.protocols.anthropic_app import (
     AnthropicMessagesApp,
     build_anthropic_adapters,

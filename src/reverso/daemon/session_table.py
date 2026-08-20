@@ -8,10 +8,9 @@ from __future__ import annotations
 
 import asyncio
 import platform
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Awaitable, Callable
-
+from datetime import UTC, datetime
 
 # Session key: (machine_id, workspace_abs_path, provider_name)
 SessionKey = tuple[str, str, str]
@@ -75,7 +74,7 @@ class SessionTable:
             if key in self._sessions:
                 return self._sessions[key]
             process = await spawn_fn(workspace, provider)
-            now = datetime.utcnow()
+            now = datetime.now(UTC)
             session = Session(
                 key=key,
                 process=process,

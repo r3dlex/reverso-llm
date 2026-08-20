@@ -8,7 +8,9 @@ assert the gateway translates the failure and never leaks the exception payload.
 
 from __future__ import annotations
 
-from typing import Any, AsyncIterator
+import json as _json
+from collections.abc import AsyncIterator
+from typing import Any
 
 import httpx
 import pytest
@@ -20,6 +22,7 @@ from reverso.protocols.adapter import (
     ResponsesRequest,
     SSEEvent,
 )
+from reverso.protocols.adapters.deepseek import DeepSeekAdapter
 from reverso.protocols.responses_app import build_app
 
 BASE_URL = "http://127.0.0.1:64946"
@@ -130,10 +133,6 @@ async def test_midstream_failure_emits_terminal_event_and_done():
 
 
 # --- D1: pre-emission vs post-emission split on the streaming transport ---
-
-import json as _json  # noqa: E402
-
-from reverso.protocols.adapters.deepseek import DeepSeekAdapter  # noqa: E402
 
 
 def _deepseek_client(handler) -> httpx.AsyncClient:

@@ -6,8 +6,8 @@ import asyncio
 import json
 
 from reverso.middleware.responses_think_stripper import (
-    _strip_sse_payload,
     ResponsesThinkStripperMiddleware,
+    _strip_sse_payload,
 )
 
 

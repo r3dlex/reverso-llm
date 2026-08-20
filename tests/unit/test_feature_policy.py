@@ -20,8 +20,9 @@ section B1:
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any
 
 import httpx
 import pytest
@@ -187,13 +188,15 @@ async def test_matching_catalog_model_prefix_is_stripped_before_dispatch(
     provider: str, qualified_model: str, bare_model: str, stream: bool
 ) -> None:
     adapter = _RecordingAdapter()
-    async with _client(adapter, provider) as client:
-        async with client.stream(
+    async with (
+        _client(adapter, provider) as client,
+        client.stream(
             "POST",
             f"/{provider}/v1/responses",
             json={"model": qualified_model, "input": "hi", "stream": stream},
-        ) as response:
-            await response.aread()
+        ) as response,
+    ):
+        await response.aread()
 
     assert response.status_code == 200
     requests = adapter.stream_requests if stream else adapter.create_requests

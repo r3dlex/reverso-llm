@@ -13,9 +13,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
-from datetime import datetime, timezone
+from collections.abc import Callable
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Callable
 
 import psutil
 
@@ -80,9 +80,9 @@ def _has_live_descendants(pid: int) -> bool:
 
 def _minutes_since(dt: datetime) -> float:
     """Return elapsed minutes since *dt* (assumed UTC naive or UTC aware)."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
     return (now - dt).total_seconds() / 60.0
 
 
@@ -116,7 +116,7 @@ async def _terminate_session(session: Session) -> None:
     try:
         await asyncio.wait_for(proc.wait(), timeout=_SIGTERM_GRACE_SECONDS)
         logger.debug("Session %s pid %d exited after SIGTERM", session.key, pid)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning(
             "Session %s pid %d did not exit after SIGTERM; sending SIGKILL",
             session.key,
@@ -128,7 +128,7 @@ async def _terminate_session(session: Session) -> None:
             pass
         try:
             await asyncio.wait_for(proc.wait(), timeout=5)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error(
                 "Session %s pid %d did not exit after SIGKILL", session.key, pid
             )
@@ -172,8 +172,8 @@ class RecycleSweeper:
             except asyncio.CancelledError:
                 logger.info("RecycleSweeper cancelled, stopping")
                 raise
-            except Exception as exc:
-                logger.exception("RecycleSweeper sweep failed: %s", exc)
+            except Exception:
+                logger.exception("RecycleSweeper sweep failed")
 
     async def _sweep(self) -> None:
         """One sweep pass: observe each session, ask the policy, then act."""

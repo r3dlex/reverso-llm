@@ -11,12 +11,12 @@ from __future__ import annotations
 
 import asyncio
 import signal
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import psutil
 import pytest
 
-import reverso.daemon.recycler as recycler
+from reverso.daemon import recycler
 from reverso.daemon.recycler import (
     RecycleDecision,
     RecycleSweeper,
@@ -65,7 +65,7 @@ class _GoneProcess(_FakeProcess):
 def _session(
     process: _FakeProcess, *, idle_minutes: float, name: str = "ws"
 ) -> Session:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return Session(
         key=("machine", f"/tmp/{name}", "claude"),
         process=process,  # type: ignore[arg-type]
@@ -135,8 +135,8 @@ def test_decide_recycle_idle_and_quiet_recycles() -> None:
 
 
 def test_minutes_since_handles_naive_and_aware() -> None:
-    # SessionTable records naive UTC timestamps; both forms must measure alike.
-    aware = datetime.now(timezone.utc) - timedelta(minutes=10)
+    # New sessions use aware UTC; legacy naive UTC values remain compatible.
+    aware = datetime.now(UTC) - timedelta(minutes=10)
     naive = aware.replace(tzinfo=None)
     assert _minutes_since(aware) == pytest.approx(10.0, abs=0.1)
     assert _minutes_since(naive) == pytest.approx(10.0, abs=0.1)

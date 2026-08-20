@@ -17,9 +17,9 @@ from reverso.middleware.codex_responses_normalizer import (
     normalize_codex_responses_payload,
 )
 from reverso.middleware.responses_sse_completion import (
+    _DONE_EVENT,
     _append_completion_before_done,
     _completion_event,
-    _DONE_EVENT,
     _has_completed_marker,
     _has_done_marker,
 )
@@ -30,11 +30,11 @@ from reverso.middleware.responses_think_stripper import (
 from reverso.proxy.utils import StreamingThinkStripper
 
 __all__ = [
+    "ensure_sse_completion",
+    "models_with_codex_refresh",
     "normalize_request_payload",
     "strip_think_json",
     "strip_think_sse_stream",
-    "ensure_sse_completion",
-    "models_with_codex_refresh",
 ]
 
 

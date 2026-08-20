@@ -19,26 +19,27 @@ import json
 import logging
 import subprocess
 import time
+from collections.abc import AsyncIterator, Iterator
 from contextvars import copy_context
 from pathlib import Path
-from typing import Any, AsyncIterator, Iterator
+from typing import Any
 
 import httpx
 from litellm import ModelResponse
 from litellm.llms.custom_llm import CustomLLM
 from litellm.types.utils import Choices, GenericStreamingChunk, Message
 
+from reverso.proxy.profile_routing import CURRENT_PROFILE_WORKSPACE
 from reverso.proxy.utils import (
+    StreamingThinkStripper,
     call_daemon,
-    stream_daemon,
     daemon_available,
     daemon_sock_path,
     last_user_message,
     resolve_cli_command,
+    stream_daemon,
     strip_think_blocks,
-    StreamingThinkStripper,
 )
-from reverso.proxy.profile_routing import CURRENT_PROFILE_WORKSPACE
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +93,7 @@ def _invoke_claude(
     ]
     try:
         proc = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout, cwd=cwd
+            cmd, capture_output=True, text=True, timeout=timeout, cwd=cwd, check=False
         )
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError(f"claude CLI timed out after {timeout}s") from exc
@@ -320,7 +321,7 @@ class AnthropicCLIProvider(CustomLLM):
             try:
                 for chunk in self.streaming(*args, **kwargs):
                     loop.call_soon_threadsafe(queue.put_nowait, chunk)
-            except BaseException as exc:
+            except BaseException as exc:  # noqa: BLE001 - tunnel worker termination
                 loop.call_soon_threadsafe(queue.put_nowait, exc)
             finally:
                 loop.call_soon_threadsafe(queue.put_nowait, None)

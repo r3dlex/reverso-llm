@@ -36,7 +36,8 @@ blocks verbatim and never buffers a full turn.
 from __future__ import annotations
 
 import uuid
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
 from reverso.protocols.adapter import ResponseEnvelope, ResponsesRequest, SSEEvent
 from reverso.protocols.store import ResponseStore

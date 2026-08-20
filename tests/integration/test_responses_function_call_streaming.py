@@ -176,7 +176,9 @@ async def test_streamed_deepseek_function_call_emits_canonical_item_events(
         ],
     }
 
-    async with httpx.AsyncClient(transport=transport, base_url=BASE_URL) as client:
+    async with httpx.AsyncClient(  # noqa: SIM117 - stream depends on live client
+        transport=transport, base_url=BASE_URL
+    ) as client:
         async with client.stream(
             "POST", "/deepseek/v1/responses", json=payload
         ) as resp:
@@ -335,7 +337,9 @@ async def test_second_leg_request_translates_tool_result_into_chat_messages(
         ],
     }
 
-    async with httpx.AsyncClient(transport=transport, base_url=BASE_URL) as client:
+    async with httpx.AsyncClient(  # noqa: SIM117 - stream depends on live client
+        transport=transport, base_url=BASE_URL
+    ) as client:
         async with client.stream(
             "POST", "/deepseek/v1/responses", json=payload
         ) as resp:

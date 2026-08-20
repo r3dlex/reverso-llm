@@ -26,7 +26,7 @@ from __future__ import annotations
 import base64
 import json
 import time
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 
 import pytest
 
@@ -34,10 +34,10 @@ from reverso.protocols.adapter import ResponsesRequest
 from reverso.protocols.adapters.cli_spine import BoundedCliStreamFailure
 from reverso.protocols.adapters.codex import (
     _DEFAULT_CODEX_MODEL_FLAG,
-    _codex_model_flag,
     CodexAdapter,
     CodexAuthError,
     CodexOAuthAuth,
+    _codex_model_flag,
     _parse_codex_lines,
 )
 

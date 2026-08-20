@@ -47,11 +47,11 @@ from typing import Any
 from reverso.protocols.feature_policy import CAPABILITY_TABLES, UNSUPPORTED
 
 __all__ = [
-    "AnthropicFeatureRejected",
+    "FEATURE_CACHE_CONTROL",
     "FEATURE_IMAGE",
     "FEATURE_THINKING",
-    "FEATURE_CACHE_CONTROL",
     "FEATURE_TOOLS",
+    "AnthropicFeatureRejected",
     "extract_anthropic_features",
     "gate_anthropic_features",
     "strip_degradable_features",
@@ -74,7 +74,7 @@ class AnthropicFeatureRejected(Exception):
     name only).
     """
 
-    __slots__ = ("feature", "backend")
+    __slots__ = ("backend", "feature")
 
     def __init__(self, feature: str, backend: str) -> None:
         super().__init__(f"feature {feature} is not supported on the {backend} backend")

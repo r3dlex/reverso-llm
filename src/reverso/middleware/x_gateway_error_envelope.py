@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from reverso.middleware.x_gateway_callback import _infer_provider
 from reverso.proxy.profile_routing import split_profile_path

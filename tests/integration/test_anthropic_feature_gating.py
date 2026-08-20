@@ -18,8 +18,8 @@ from typing import Any
 
 import httpx
 import pytest
-
 from conftest import FixtureAdapter
+
 from reverso.protocols.anthropic_app import AnthropicMessagesApp
 
 ANTHROPIC_BACKENDS = ["copilot", "deepseek", "auggie"]
@@ -427,8 +427,9 @@ async def test_streaming_cache_control_degraded_emits_event_stream() -> None:
     """cache_control is degraded (stripped), so a streaming request with it
     produces a 200 text/event-stream (NOT a JSON 400) just like a request
     without cache_control."""
-    async with _build_client() as client:
-        async with client.stream(
+    async with (
+        _build_client() as client,
+        client.stream(
             "POST",
             _prefix("deepseek"),
             json={
@@ -448,11 +449,12 @@ async def test_streaming_cache_control_degraded_emits_event_stream() -> None:
                     }
                 ],
             },
-        ) as resp:
-            assert resp.status_code == 200
-            assert "text/event-stream" in resp.headers["content-type"]
-            async for _ in resp.aiter_text():
-                pass
+        ) as resp,
+    ):
+        assert resp.status_code == 200
+        assert "text/event-stream" in resp.headers["content-type"]
+        async for _ in resp.aiter_text():
+            pass
 
 
 @pytest.mark.asyncio
@@ -483,8 +485,9 @@ async def test_streaming_thinking_degraded_opens_event_stream(
     """thinking degrades on the streaming path too: the stream opens (200) rather
     than the pre-stream 400 it used to raise. The streaming gate still rejects a
     genuinely unsupported feature (image) -- see the image streaming test above."""
-    async with _build_client() as client:
-        async with client.stream(
+    async with (
+        _build_client() as client,
+        client.stream(
             "POST",
             _prefix(backend),
             json={
@@ -494,18 +497,20 @@ async def test_streaming_thinking_degraded_opens_event_stream(
                 "thinking": {"type": "enabled", "budget_tokens": 1024},
                 "messages": [{"role": "user", "content": "think hard"}],
             },
-        ) as resp:
-            assert resp.status_code == 200, await resp.aread()
-            assert "text/event-stream" in resp.headers["content-type"]
-            async for _ in resp.aiter_text():
-                pass
+        ) as resp,
+    ):
+        assert resp.status_code == 200, await resp.aread()
+        assert "text/event-stream" in resp.headers["content-type"]
+        async for _ in resp.aiter_text():
+            pass
 
 
 @pytest.mark.asyncio
 async def test_streaming_image_on_copilot_not_rejected() -> None:
     """Positive streaming case: image on copilot must NOT be gated (no false rejection)."""
-    async with _build_client() as client:
-        async with client.stream(
+    async with (
+        _build_client() as client,
+        client.stream(
             "POST",
             _prefix("copilot"),
             json={
@@ -514,8 +519,9 @@ async def test_streaming_image_on_copilot_not_rejected() -> None:
                 "stream": True,
                 "messages": [{"role": "user", "content": [_image_block()]}],
             },
-        ) as resp:
-            assert resp.status_code == 200
-            assert "text/event-stream" in resp.headers["content-type"]
-            async for _ in resp.aiter_text():
-                pass
+        ) as resp,
+    ):
+        assert resp.status_code == 200
+        assert "text/event-stream" in resp.headers["content-type"]
+        async for _ in resp.aiter_text():
+            pass

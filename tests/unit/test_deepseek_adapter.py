@@ -595,9 +595,8 @@ async def test_secret_never_leaks_on_error(monkeypatch, caplog):
     adapter = _adapter(handler)
     request = ResponsesRequest.from_payload({"model": "deepseek-chat", "input": "hi"})
 
-    with caplog.at_level(logging.DEBUG):
-        with pytest.raises(DeepSeekError) as excinfo:
-            await adapter.create_response(request)
+    with caplog.at_level(logging.DEBUG), pytest.raises(DeepSeekError) as excinfo:
+        await adapter.create_response(request)
 
     assert API_KEY_SENTINEL not in caplog.text
     assert API_KEY_SENTINEL not in str(excinfo.value)

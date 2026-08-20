@@ -113,7 +113,7 @@ def _epoch_to_iso(resets_at: Any) -> str | None:
         return None
     try:
         ts = float(resets_at)
-        dt = datetime.datetime.fromtimestamp(ts, tz=datetime.timezone.utc)
+        dt = datetime.datetime.fromtimestamp(ts, tz=datetime.UTC)
         return dt.isoformat().replace("+00:00", "Z")
     except (TypeError, ValueError, OSError, OverflowError):
         return None

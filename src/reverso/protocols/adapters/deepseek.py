@@ -24,7 +24,8 @@ import json
 import logging
 import os
 import time
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
 import httpx
 
@@ -306,53 +307,55 @@ class DeepSeekAdapter:
         """
         headers = self._headers()
         try:
-            async with self._client_factory() as client:
-                async with client.stream(
+            async with (
+                self._client_factory() as client,
+                client.stream(
                     "POST",
                     f"{self._api_base}/chat/completions",
                     headers=headers,
                     content=json.dumps(body).encode("utf-8"),
-                ) as response:
-                    if response.status_code < 200 or response.status_code >= 300:
-                        logger.warning(
-                            "deepseek upstream returned %s", response.status_code
-                        )
-                        raise DeepSeekError(
-                            f"deepseek upstream returned status {response.status_code}"
-                        )
-                    pending = b""
-                    async for raw in response.aiter_bytes():
-                        if not raw:
+                ) as response,
+            ):
+                if response.status_code < 200 or response.status_code >= 300:
+                    logger.warning(
+                        "deepseek upstream returned %s", response.status_code
+                    )
+                    raise DeepSeekError(
+                        f"deepseek upstream returned status {response.status_code}"
+                    )
+                pending = b""
+                async for raw in response.aiter_bytes():
+                    if not raw:
+                        continue
+                    pending += raw
+                    while b"\n" in pending:
+                        line, pending = pending.split(b"\n", 1)
+                        line = line.strip()
+                        if not line:
                             continue
-                        pending += raw
-                        while b"\n" in pending:
-                            line, pending = pending.split(b"\n", 1)
-                            line = line.strip()
-                            if not line:
-                                continue
-                            if not line.startswith(b"data:"):
-                                continue
-                            payload = line[len(b"data:") :].strip()
-                            if not payload:
-                                continue
-                            if payload == b"[DONE]":
-                                yield {
-                                    "text": "",
-                                    "reasoning_text": "",
-                                    "tool_calls": [],
-                                    "usage": None,
-                                    "done": True,
-                                }
+                        if not line.startswith(b"data:"):
+                            continue
+                        payload = line[len(b"data:") :].strip()
+                        if not payload:
+                            continue
+                        if payload == b"[DONE]":
+                            yield {
+                                "text": "",
+                                "reasoning_text": "",
+                                "tool_calls": [],
+                                "usage": None,
+                                "done": True,
+                            }
+                            return
+                        try:
+                            event = json.loads(payload)
+                        except json.JSONDecodeError:
+                            continue
+                        parsed = _parse_stream_event(event)
+                        if parsed is not None:
+                            yield parsed
+                            if parsed.get("done"):
                                 return
-                            try:
-                                event = json.loads(payload)
-                            except json.JSONDecodeError:
-                                continue
-                            parsed = _parse_stream_event(event)
-                            if parsed is not None:
-                                yield parsed
-                                if parsed.get("done"):
-                                    return
         except DeepSeekError:
             raise
         except httpx.HTTPError as exc:

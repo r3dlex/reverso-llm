@@ -10,8 +10,9 @@ keys are carried in ``extra`` rather than typed exhaustively.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 
 @dataclass
@@ -35,7 +36,7 @@ class ResponsesRequest:
     extra: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_payload(cls, payload: dict[str, Any]) -> "ResponsesRequest":
+    def from_payload(cls, payload: dict[str, Any]) -> ResponsesRequest:
         """Build a request from a raw Responses POST body."""
         known = {
             "model",

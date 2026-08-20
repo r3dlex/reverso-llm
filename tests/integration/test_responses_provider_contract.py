@@ -14,12 +14,13 @@ isolates which provider broke contract parity.
 from __future__ import annotations
 
 import json
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
 import httpx
 import pytest
-
 from conftest import FixtureAdapter, load_fixture
+
 from reverso.protocols.adapter import ResponseEnvelope, ResponsesRequest, SSEEvent
 from reverso.protocols.responses_app import build_app
 
@@ -358,15 +359,17 @@ async def test_create_response_nonstreaming(provider: str) -> None:
 async def test_create_response_streaming(provider: str) -> None:
     fixture = load_fixture("create_response_streaming.json")
     asserts = fixture["assertions"]
-    async with _build_client() as client:
-        async with client.stream(
+    async with (
+        _build_client() as client,
+        client.stream(
             "POST",
             f"{_prefix(provider)}/responses",
             json=fixture["request"]["body"],
-        ) as resp:
-            assert resp.status_code == asserts["status"]
-            assert "text/event-stream" in resp.headers["content-type"]
-            text = "".join([chunk async for chunk in resp.aiter_text()])
+        ) as resp,
+    ):
+        assert resp.status_code == asserts["status"]
+        assert "text/event-stream" in resp.headers["content-type"]
+        text = "".join([chunk async for chunk in resp.aiter_text()])
 
     events, saw_done = _parse_sse(text)
     types = [event["type"] for event in events]

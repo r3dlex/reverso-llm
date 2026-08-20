@@ -1,9 +1,9 @@
 """Unit tests for reverso.proxy.utils."""
 
 from reverso.proxy.utils import (
-    strip_think_blocks,
-    last_user_message,
     StreamingThinkStripper,
+    last_user_message,
+    strip_think_blocks,
 )
 
 

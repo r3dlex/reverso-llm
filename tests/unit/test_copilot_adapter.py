@@ -7,15 +7,14 @@ contract surface, timeout handling, and that no token substring is ever logged.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
 import json
 import logging
 import time
+from collections.abc import AsyncIterator
 
 import httpx
 import pytest
 
-from reverso.protocols.feature_policy import UnsupportedFeature
 from reverso.protocols.adapter import (
     InputItemList,
     ModelList,
@@ -24,13 +23,14 @@ from reverso.protocols.adapter import (
     ResponsesRequest,
 )
 from reverso.protocols.adapters.copilot import (
+    GITHUB_TOKEN_URL,
     CopilotAdapter,
     CopilotAuth,
     CopilotUpstreamError,
-    GITHUB_TOKEN_URL,
     _raise_for_upstream_status,
 )
 from reverso.protocols.copilot_models import canonical_copilot_responses_model
+from reverso.protocols.feature_policy import UnsupportedFeature
 
 FAKE_OAUTH_TOKEN = "gho_FAKEoauthTOKENvalue1234567890"
 FAKE_BEARER_TOKEN = "tid=FAKEbearerTOKENvalue0987654321"

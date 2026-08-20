@@ -11,12 +11,12 @@ behind an explicit experimental flag until a follow-up ADR accepts the risk.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Callable
-from typing import Any, Protocol
 import inspect
 import json
 import time
 import uuid
+from collections.abc import AsyncIterator, Callable
+from typing import Any, Protocol
 
 import httpx
 
@@ -110,23 +110,25 @@ class HttpCodexDirectUpstream:
     ) -> AsyncIterator[dict[str, Any]]:
         payload = dict(body)
         payload["stream"] = True
-        async with self._client_factory() as client:
-            async with client.stream(
+        async with (
+            self._client_factory() as client,
+            client.stream(
                 "POST",
                 f"{self._api_base}/responses",
                 headers=self._headers(token),
                 json=payload,
-            ) as response:
-                if response.status_code >= 400:
-                    raise CodexDirectError(
-                        f"codex direct upstream HTTP {response.status_code}"
-                    )
-                parser = _SSEParser()
-                async for line in response.aiter_lines():
-                    for chunk in parser.feed(line):
-                        yield chunk
-                for chunk in parser.close():
+            ) as response,
+        ):
+            if response.status_code >= 400:
+                raise CodexDirectError(
+                    f"codex direct upstream HTTP {response.status_code}"
+                )
+            parser = _SSEParser()
+            async for line in response.aiter_lines():
+                for chunk in parser.feed(line):
                     yield chunk
+            for chunk in parser.close():
+                yield chunk
 
     async def list_models(self, *, token: str) -> list[dict[str, Any]]:
         async with self._client_factory() as client:
@@ -176,7 +178,7 @@ class CodexDirectAdapter:
             token = self._auth.bearer_token()
             if inspect.isawaitable(token):
                 token = await token
-        except Exception as exc:  # noqa: BLE001 - keep auth failure secret-free.
+        except Exception as exc:
             raise CodexDirectError(
                 f"codex direct auth token unavailable: {type(exc).__name__}"
             ) from exc
