@@ -336,10 +336,12 @@ def test_check_features_passes_when_codex_default_surface_partial() -> None:
     The capability table reclassifies parallel_tool_calls, tool_choice.auto,
     tools.function and tools.web_search so codex turns can complete on every
     first-party provider: `partial` on claude/auggie (CLI runners ignore the
-    fields) and `partial` on deepseek for tools.web_search (`_chat_tools`
-    drops it before the upstream chat call); deepseek translates the other
-    three. This test pins down that the gate does NOT reject any of these
-    features for any non-copilot provider.
+    fields), `partial` on Ollama for parallel_tool_calls, store, and
+    tools.web_search (the shared Codex normalizer drops them), and `partial` on
+    deepseek for tools.web_search
+    (`_chat_tools` drops it before the upstream chat call); deepseek translates
+    the other three. This test pins down that the gate does NOT reject any of
+    these features for any non-copilot provider.
     """
     codex_default_features = {
         "input.message_list_text",
@@ -354,6 +356,9 @@ def test_check_features_passes_when_codex_default_surface_partial() -> None:
     check_features("claude", codex_default_features)
     check_features("auggie", codex_default_features)
     check_features("deepseek", codex_default_features)
+    check_features("ollama", codex_default_features)
+    for feature in ("parallel_tool_calls", "store", "tools.web_search"):
+        assert CAPABILITY_TABLES["ollama"][feature] == "partial"
 
 
 def test_claude_accepts_max_output_tokens_as_best_effort() -> None:

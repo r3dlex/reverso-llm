@@ -71,7 +71,7 @@
       "deepseek": "native",
       "kimi": "native",
       "codex": "native",
-      "ollama": "unsupported"
+      "ollama": "partial"
     },
     "stream": {
       "claude": "translated",
@@ -107,7 +107,7 @@
       "deepseek": "partial",
       "kimi": "partial",
       "codex": "partial",
-      "ollama": "unsupported"
+      "ollama": "partial"
     },
     "tools.file_search": {
       "claude": "unsupported",
@@ -179,7 +179,7 @@
       "deepseek": "translated",
       "kimi": "translated",
       "codex": "partial",
-      "ollama": "unsupported"
+      "ollama": "partial"
     },
     "reasoning.effort": {
       "claude": "partial",
