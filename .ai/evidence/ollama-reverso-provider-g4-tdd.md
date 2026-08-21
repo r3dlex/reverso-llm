@@ -27,9 +27,9 @@ exist. This is the required harness gap and does not depend on credentials.
 
 ## Green
 
-The exact targeted command exited 0 with 5 passed. The focused integration and
-unit selection exited 0 with 21 passed. Repository regression evidence is 1207
-unit tests passed and 546 integration tests passed with 6 skipped. Ruff, Ruff
+The exact targeted command exited 0 with 9 passed. The focused integration and
+unit selection exited 0 with 26 passed. Repository regression evidence is 1211
+unit tests passed and 547 integration tests passed with 6 skipped. Ruff, Ruff
 format, prek, compileall, rules validation, and structural archgate also passed.
 
 The attended proof then exposed a hardcoded account name in the deployment
@@ -59,5 +59,5 @@ The clean governed checkout ran both production gates. Deployment drift exited
 2 because unrelated live Kimi discovery returned a fallback source rather than
 a live source. Convergence exited 2 because the dry run could not discover the
 unrelated Codex direct provider. The exact non-integration regression command
-completed with 1207 passed. These external provider failures did not weaken the
+completed with 1211 passed. These external provider failures did not weaken the
 deterministic G4 gates or trigger a model request.

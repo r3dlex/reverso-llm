@@ -111,6 +111,9 @@ Every result is one JSON object with these fields:
 - `lanes`: ordered objects containing only `model`, `surface`, `protocol`,
   `status`, and `duration_ms`.
 - `duration_ms`: total non-secret elapsed milliseconds.
+- `source_commit` and `deployed_commit`: exact 40-character Git commits for a
+  `run`; both must match the governed deployment provenance before any proof
+  subprocess runs.
 
 Protocols are derived from the fixed surface contract, not subprocess output:
 Codex records `ollama_responses` and Claude records `ollama_messages`. Public

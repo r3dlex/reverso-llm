@@ -219,7 +219,10 @@ def _invalid_paths(
         "claude_launcher": inputs.claude_launcher,
         "client_sync_executable": inputs.client_sync_executable,
     }
-    invalid = [name for name, path in paths.items() if not executable_validator(path)]
+    invalid = [] if inputs.inventory_path.is_absolute() else ["inventory_path"]
+    invalid.extend(
+        name for name, path in paths.items() if not executable_validator(path)
+    )
     if "claude_launcher" not in invalid and not launcher_marker_validator(
         inputs.claude_launcher
     ):
@@ -256,10 +259,11 @@ def _version(
     if not value:
         raise OSError("version probe returned no version")
     version = value[0][:_VERSION_LIMIT]
+    version_token = r"[0-9]+(?:\.[0-9]+){1,3}(?:[-+][0-9A-Za-z.-]+)?"
     patterns = {
-        "ollama": r"^ollama version is \S+",
-        "codex": r"^codex-cli \S+",
-        "claude": r"^\S+ \(Claude Code\)$",
+        "ollama": rf"^ollama version is {version_token}$",
+        "codex": rf"^codex-cli {version_token}$",
+        "claude": rf"^{version_token} \(Claude Code\)$",
     }
     if re.fullmatch(patterns[name], version) is None:
         raise OSError("unexpected tool identity")

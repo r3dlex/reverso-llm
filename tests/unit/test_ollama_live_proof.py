@@ -84,6 +84,30 @@ def test_relative_executable_is_invalid_without_effects() -> None:
     assert touched is False
 
 
+def test_relative_inventory_is_invalid_without_effects() -> None:
+    touched = False
+
+    def loader(_: Path) -> InventorySnapshot:
+        nonlocal touched
+        touched = True
+        raise AssertionError
+
+    report = run_proof(
+        _inputs(inventory_path=Path("relative-inventory.json")),
+        runner=_version_runner,
+        inventory_loader=loader,
+        clock=Clock(),
+        stdin_isatty=lambda: True,
+        stdout_isatty=lambda: True,
+        env={},
+        executable_validator=_valid_path,
+        launcher_marker_validator=_valid_path,
+    )
+
+    assert report["exit_code"] == 64
+    assert touched is False
+
+
 def test_missing_or_unmarked_executables_cannot_pass(tmp_path: Path) -> None:
     executable = tmp_path / "tool"
     executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
@@ -108,11 +132,20 @@ def test_missing_or_unmarked_executables_cannot_pass(tmp_path: Path) -> None:
     assert report["status"] == "invalid"
 
 
-def test_unexpected_tool_identity_cannot_pass() -> None:
+@pytest.mark.parametrize(
+    "unsafe_version",
+    (
+        "echo 1.0",
+        "ollama version is https://enroll.invalid/?token=secret",
+        "codex-cli sk-secret-token",
+        "https://secret.invalid/token (Claude Code)",
+    ),
+)
+def test_unexpected_or_unsafe_tool_identity_cannot_pass(unsafe_version: str) -> None:
     report = run_proof(
         _inputs(),
         runner=lambda argv, **_: subprocess.CompletedProcess(
-            argv, 0, stdout="echo 1.0"
+            argv, 0, stdout=unsafe_version
         ),
         inventory_loader=lambda _: _snapshot(
             InventoryEntry("local", True, False, False),

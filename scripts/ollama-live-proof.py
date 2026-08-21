@@ -6,6 +6,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import pwd
+import re
 import stat
 import subprocess
 import sys
@@ -15,6 +17,8 @@ from pathlib import Path
 
 from reverso.ollama_convergence import default_inventory_path, load_inventory
 from reverso.ollama_live_proof import INVALID_INPUT, ProofInputs, run_proof
+
+_COMMIT_RE = re.compile(r"[0-9a-f]{40}")
 
 
 def _invalid_report(code: str) -> dict[str, object]:
@@ -65,6 +69,53 @@ def _write_evidence(path: Path, encoded: str) -> None:
         temporary_path.unlink(missing_ok=True)
 
 
+def _deployment_attestation() -> tuple[str, str] | None:
+    repo_root = Path(__file__).resolve().parents[1]
+    try:
+        completed = subprocess.run(
+            ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
+            shell=False,
+            env={key: os.environ[key] for key in ("PATH",) if key in os.environ},
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        source_commit = completed.stdout.strip()
+        account_home = Path(pwd.getpwuid(os.getuid()).pw_dir)
+        provenance_path = (
+            account_home
+            / "Library"
+            / "Application Support"
+            / "reverso"
+            / "deployment-provenance.json"
+        )
+        provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+        deployed_commit = provenance.get("commit")
+        canonical_checkout = Path(provenance.get("canonical_checkout", ""))
+        if (
+            completed.returncode != 0
+            or _COMMIT_RE.fullmatch(source_commit) is None
+            or not isinstance(deployed_commit, str)
+            or _COMMIT_RE.fullmatch(deployed_commit) is None
+            or source_commit != deployed_commit
+            or canonical_checkout.resolve(strict=True) != repo_root.resolve(strict=True)
+        ):
+            return None
+        return source_commit, deployed_commit
+    except (
+        json.JSONDecodeError,
+        KeyError,
+        OSError,
+        RuntimeError,
+        subprocess.TimeoutExpired,
+        TypeError,
+    ):
+        return None
+
+
 class _Parser(argparse.ArgumentParser):
     def error(self, message: str) -> None:
         payload = _invalid_report("invalid_invocation")
@@ -94,6 +145,14 @@ def main(argv: list[str] | None = None) -> int:
         report = _invalid_report("invalid_evidence_path")
         print(json.dumps(report, sort_keys=True))
         return INVALID_INPUT
+    attestation = _deployment_attestation() if args.mode == "run" else None
+    if args.mode == "run" and attestation is None:
+        report = _invalid_report("exact_head_deployment_required")
+        report["mode"] = "run"
+        report["status"] = "external_prerequisite"
+        report["exit_code"] = 2
+        print(json.dumps(report, sort_keys=True))
+        return 2
     report = run_proof(
         ProofInputs(
             mode=args.mode,
@@ -113,6 +172,8 @@ def main(argv: list[str] | None = None) -> int:
         env=os.environ,
         timeout=args.timeout,
     )
+    if attestation is not None:
+        report["source_commit"], report["deployed_commit"] = attestation
     encoded = json.dumps(report, sort_keys=True) + "\n"
     if args.evidence is not None:
         try:

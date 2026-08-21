@@ -191,6 +191,28 @@ def test_cli_json_and_evidence_are_exact_same_public_report(
     assert stat.S_IMODE(evidence.stat().st_mode) == 0o600
 
 
+def test_cli_run_requires_exact_deployment_before_proof(
+    tmp_path: Path, monkeypatch: Any, capsys: Any
+) -> None:
+    module = _cli_module()
+    touched = False
+
+    def tripwire(*_args: Any, **_kwargs: Any) -> dict[str, object]:
+        nonlocal touched
+        touched = True
+        raise AssertionError
+
+    monkeypatch.setattr(module, "_deployment_attestation", lambda: None)
+    monkeypatch.setattr(module, "run_proof", tripwire)
+    args = _cli_args(tmp_path / "proof.json")
+    args[0] = "run"
+
+    assert module.main(args) == 2
+    assert touched is False
+    report = json.loads(capsys.readouterr().out)
+    assert report["prerequisites"] == ["exact_head_deployment_required"]
+
+
 def test_cli_rejects_unsafe_evidence_path_before_proof(
     tmp_path: Path, monkeypatch: Any, capsys: Any
 ) -> None:
