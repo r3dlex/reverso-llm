@@ -540,11 +540,26 @@ uv run reverso-client-sync apply --json
 uv run reverso-client-sync refresh --json
 uv run reverso-client-sync verify --json
 ./scripts/convergence-acceptance.sh
-uv run python scripts/check-deployment-drift.py --phase acceptance
+uv run python tests/helpers/verify_isolated_convergence.py --home "${VERIFY_HOME}" --rtk-bin "${FAKE_BIN}/rtk"
 uv run pytest tests/ -v --ignore=tests/integration --tb=short
 ```
 
 Use isolated temporary homes for write-capable verification until the attended G4 target proof.
+
+#### G3 implementation record
+
+G3 adds the marker-owned shared inventory snapshot and includes it with the
+Codex profile, Codex catalog, and Claude launcher in one `provider-ollama`
+rollback group. Background refresh is prompt-free. Cloud opt-out is local-only,
+and failed Cloud discovery retains only prior marker-owned Cloud rows as stale.
+Scoped Claude publication reads the snapshot while Responses model listing
+remains live, so refresh never rereads its output. Total discovery failure
+preserves the full group. Marker-safe `uninstall-ollama` and idempotent
+`restore` provide deterministic removal and repair. The isolated verification
+wrapper supplies temporary homes and fake executable and gateway seams through
+an explicit test-only verifier, so it never uses operator credentials or
+client state and cannot bypass production deployment drift. G4 target proof
+still runs the production deployment-drift command.
 
 ### G4: OLLAMA-RP-G4 attended proof and hardening
 

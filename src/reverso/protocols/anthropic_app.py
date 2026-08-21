@@ -54,7 +54,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 from reverso.protocols.adapter import ProviderAdapter
-from reverso.protocols.anthropic_native import AnthropicNativeAdapter
+from reverso.protocols.anthropic_native import (
+    AnthropicModelCatalogAdapter,
+    AnthropicNativeAdapter,
+)
 from reverso.protocols.anthropic_feature_gate import AnthropicFeatureRejected
 from reverso.protocols.anthropic_stream import responses_sse_to_anthropic
 from reverso.protocols.anthropic_translate import (
@@ -437,6 +440,24 @@ def _safe_backend_error_message(exc: Exception) -> str:
     return f"upstream backend error ({type(exc).__name__})"
 
 
+def _provider_backend_error(exc: Exception) -> tuple[int, str, str] | None:
+    """Return a provider-curated Anthropic error without exposing internals."""
+    status_code = getattr(exc, "status_code", None)
+    payload = getattr(exc, "payload", None)
+    error = payload.get("error") if isinstance(payload, dict) else None
+    code = error.get("code") if isinstance(error, dict) else None
+    if (
+        not isinstance(status_code, int)
+        or not 400 <= status_code <= 599
+        or code not in {"auth_required", "model_not_current"}
+    ):
+        return None
+    error_type = (
+        "authentication_error" if code == "auth_required" else "not_found_error"
+    )
+    return status_code, error_type, code
+
+
 class AnthropicMessagesApp:
     """ASGI app routing first-party Anthropic Messages traffic (G002 skeleton).
 
@@ -717,6 +738,17 @@ class AnthropicMessagesApp:
             logger.warning(
                 "anthropic backend %s create failed: %s", backend, type(exc).__name__
             )
+            provider_error = _provider_backend_error(exc)
+            if provider_error is not None:
+                status_code, error_type, message = provider_error
+                await _send_error(
+                    send,
+                    status_code,
+                    error_type,
+                    message,
+                    anthropic_version=anthropic_version,
+                )
+                return
             await _send_error(
                 send,
                 502,
@@ -868,6 +900,17 @@ class AnthropicMessagesApp:
                 "anthropic native stream %s failed: %s", backend, type(exc).__name__
             )
             if not started:
+                provider_error = _provider_backend_error(exc)
+                if provider_error is not None:
+                    status_code, error_type, message = provider_error
+                    await _send_error(
+                        send,
+                        status_code,
+                        error_type,
+                        message,
+                        anthropic_version=anthropic_version,
+                    )
+                    return
                 await _send_error(
                     send,
                     502,
@@ -953,7 +996,11 @@ class AnthropicMessagesApp:
 
             async def list_models(adapter: ProviderAdapter) -> Any:
                 return await asyncio.wait_for(
-                    adapter.list_models(),
+                    (
+                        adapter.list_anthropic_models()
+                        if isinstance(adapter, AnthropicModelCatalogAdapter)
+                        else adapter.list_models()
+                    ),
                     timeout=_MODEL_LIST_TIMEOUT_SECONDS,
                 )
 

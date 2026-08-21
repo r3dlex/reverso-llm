@@ -265,6 +265,20 @@ Security boundaries:
 - Auggie runs in an ephemeral sandbox workspace because a global indexing hard-disable has not been proven. Do not treat indexing as disabled.
 - Prompt content may be retained in process memory for response chaining. Reverso does not intentionally persist prompt or compressed text to disk or metrics, but provider CLIs and upstream services retain their own behavior and terms.
 
+## Ollama inventory refresh and opt-out
+
+Ollama uses one prompt-free inventory snapshot for the generated Codex profile,
+Codex catalog, and Claude Code launcher. The `provider-ollama` group commits
+those marker-owned paths atomically. Background refresh never signs in, reads
+Ollama device identity or API keys, manages the Ollama daemon, or pulls models.
+An authentication failure, timeout, or malformed Cloud result keeps only prior
+marker-owned Cloud rows as stale Cloud state and reports partial freshness.
+
+Use `REVERSO_OLLAMA_CLOUD=0` or `OLLAMA_NO_CLOUD=1` for absolute Cloud opt-out.
+This produces current local-only inventory and performs no Cloud discovery. See
+[the client convergence guide](docs/client-sync.md) for restore and uninstall
+boundaries.
+
 ## Update, stop, and uninstall
 
 Update the checkout and refresh dependencies, services, and generated model catalogs:

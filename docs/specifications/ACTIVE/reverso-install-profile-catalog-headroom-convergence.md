@@ -183,6 +183,35 @@ add catalog-scoped exact Anthropic alias authority and
 `anthropic_messages`/`ollama_messages` dimensions without changing the G1 raw
 Codex selector authority.
 
+### Ollama G3 refresh and cross-client atomicity contract
+
+The complete `provider-ollama` mutation group owns the shared marker-owned
+inventory snapshot, isolated Codex profile and catalog, and Claude launcher. A
+single gateway discovery feeds one candidate for both clients. Validation
+precedes every write and handled failure restores all paths in the group.
+Unrelated provider groups and user-owned files retain their exact hashes.
+
+Background refresh is prompt-free. Current local rows replace prior local rows.
+An `auth_required`, timeout, or malformed Cloud result retains only Cloud rows
+from the exact prior marker-owned snapshot, marks them stale, and reports
+partial freshness. The rows are not current routing eligibility. An unmarked or
+invalid snapshot is never retention authority. Cloud opt-out through
+`REVERSO_OLLAMA_CLOUD=0` or `OLLAMA_NO_CLOUD=1` performs no Cloud probe or
+sign-in and produces current local-only state.
+
+Scoped Claude publication reads the strict marker-owned snapshot. Responses
+`/ollama/v1/models` stays live, so refresh does not reread its own publication.
+Total Ollama discovery failure preserves the complete existing group and
+reports partial freshness. A valid empty HTTP listing remains a current empty
+inventory.
+
+No background path invokes `ollama signin`, sources shell profiles, reads device
+identity or API keys, manages the Ollama daemon, or pulls models. Verify exposes
+snapshot freshness and ownership drift without writing. `restore` is an
+explicit idempotent desired-state repair. `uninstall-ollama` removes the four
+exactly owned paths as one group; any unmarked, conflicting, or unrelated path
+is preserved and reported without a partial uninstall.
+
 ### Ollama G2 Claude Messages contract
 
 The manifest adds the marker-owned `claude-ollama` launcher to

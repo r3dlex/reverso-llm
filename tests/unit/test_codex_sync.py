@@ -2006,6 +2006,21 @@ def test_default_fetcher_rejects_malformed_model_listing(
         codex_sync._default_fetcher("http://127.0.0.1:64946")("copilot")
 
 
+def test_ollama_discovery_accepts_valid_empty_listing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def get(url: str, *, timeout: float) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"data": [], "model_discovery_source": "ollama-inventory-disabled"},
+            request=httpx.Request("GET", url),
+        )
+
+    monkeypatch.setattr(codex_sync.httpx, "get", get)
+
+    assert codex_sync.discover_provider_models("ollama").models == ()
+
+
 def test_fetch_all_dedupes_model_ids_per_prefix() -> None:
     def _dup_fetcher(prefix: str) -> list[str]:
         return ["a", "b", "a", "c", "b"]

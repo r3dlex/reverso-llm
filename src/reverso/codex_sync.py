@@ -113,6 +113,9 @@ class ProviderModels:
 
     prefix: str
     models: tuple[str, ...]
+    local_models: tuple[str, ...] = ()
+    cloud_models: tuple[str, ...] = ()
+    cloud_status: str = "unavailable"
 
 
 @dataclass(frozen=True)
@@ -235,10 +238,63 @@ def discover_provider_models(
     prefix: str,
     *,
     fetcher: ModelFetcher | None = None,
-    base_url: str = GATEWAY_BASE_URL,
+    base_url: str | None = None,
 ) -> ProviderModels:
     """Discover and validate one provider without preparing other surfaces."""
-    fetch = fetcher if fetcher is not None else _default_fetcher(base_url)
+    if prefix == "ollama" and fetcher is None:
+        url = f"{_resolve_base_url(base_url)}/ollama/v1/models"
+        try:
+            response = httpx.get(url, timeout=PROVIDER_DISCOVERY_TIMEOUT_SECONDS)
+            response.raise_for_status()
+            payload = response.json()
+            model_ids = _require_model_ids(payload)
+            source = payload.get("model_discovery_source")
+            if not isinstance(source, str) or not source.startswith(
+                "ollama-inventory-"
+            ):
+                raise ModelDiscoveryError("Ollama inventory provenance is missing")
+            cloud_status = source.removeprefix("ollama-inventory-")
+            if cloud_status not in {
+                "current",
+                "auth_required",
+                "timeout",
+                "invalid",
+                "disabled",
+                "unavailable",
+            }:
+                raise ModelDiscoveryError("Ollama Cloud status is invalid")
+            local: list[str] = []
+            cloud: list[str] = []
+            for row in payload["data"]:
+                raw_id = row["id"]
+                if row.get("ollama_local") is True:
+                    local.append(raw_id)
+                if row.get("ollama_cloud") is True:
+                    cloud.append(raw_id)
+                if (
+                    row.get("ollama_local") is not True
+                    and row.get("ollama_cloud") is not True
+                ):
+                    raise ModelDiscoveryError(
+                        "Ollama inventory row has no eligibility source"
+                    )
+            return ProviderModels(
+                prefix,
+                tuple(model_ids),
+                tuple(local),
+                tuple(cloud),
+                cloud_status,
+            )
+        except (httpx.HTTPError, TypeError, ValueError, ModelDiscoveryError) as exc:
+            logger.warning(
+                "Skipping reverso model sync for ollama: %s", type(exc).__name__
+            )
+            raise ModelDiscoveryError("Ollama model discovery failed") from exc
+    fetch = (
+        fetcher
+        if fetcher is not None
+        else _default_fetcher(_resolve_base_url(base_url))
+    )
     discovered = fetch_all((prefix,), fetch, skip_errors=fetcher is None)
     if not discovered:
         if prefix in OPTIONAL_DISCOVERY_PREFIXES:

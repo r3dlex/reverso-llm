@@ -5,10 +5,12 @@ from __future__ import annotations
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from pathlib import Path
 from urllib.parse import urlsplit
 
 import httpx
 
+from reverso.ollama_convergence import default_inventory_path
 from reverso.protocols.store import ResponseStore
 
 from .adapter import OllamaAdapter
@@ -70,13 +72,19 @@ def build_ollama_runtime(
     *,
     client: httpx.AsyncClient | None = None,
     auth: OllamaAuthState | None = None,
+    inventory_path: Path | None = None,
 ) -> OllamaRuntime:
     endpoint = validate_endpoint(endpoint)
     auth_state = auth or OllamaAuthState.from_env()
     store = ResponseStore()
     owned_client = client or httpx.AsyncClient(timeout=300.0)
     try:
-        catalog = OllamaCatalog(owned_client, endpoint, auth_state)
+        catalog = OllamaCatalog(
+            owned_client,
+            endpoint,
+            auth_state,
+            inventory_path or default_inventory_path(),
+        )
         responses_client = OllamaResponsesClient(owned_client, endpoint)
         messages_client = OllamaMessagesClient(owned_client, endpoint)
         adapter = OllamaAdapter(catalog, responses_client, store, messages_client)

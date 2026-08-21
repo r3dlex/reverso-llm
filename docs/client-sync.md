@@ -13,7 +13,7 @@ define runtime model routing.
 ## Syntax
 
 ```text
-reverso-client-sync {dry-run,apply,refresh,verify}
+reverso-client-sync {dry-run,apply,restore,refresh,verify,uninstall-ollama}
   [--codex-config PATH]
   [--claude-config-dir PATH]
   [--catalog-dir PATH]
@@ -28,9 +28,12 @@ A mode is required.
   acquiring the client sync lock.
 - `apply` validates, waits up to 30 seconds for the shared lock, and applies
   valid marker-owned groups.
+- `restore` is an idempotent desired-state repair alias for `apply`.
 - `refresh` validates and applies only when the shared lock is immediately
   available. Contention is a benign `lock_skipped` result.
 - `verify` validates and reports drift without writing or acquiring the lock.
+- `uninstall-ollama` atomically removes only the four exactly owned Ollama
+  client artifacts. Any ownership conflict fails closed without deleting them.
 
 `--json` writes exactly one result object to stdout. Human diagnostics go to
 stderr. The object contains `schema_version`, `command`, `mode`, `status`,
@@ -99,6 +102,44 @@ The scheduled stdout and stderr logs are under
 `.3`. A normal uninstall removes the scheduled job but preserves its lock,
 status, and logs. Use `scripts/uninstall-launchagents.sh --purge-state` only
 when those exact refresh artifacts should also be removed.
+
+## Ollama cross-client convergence
+
+The `provider-ollama` group owns the shared marker-owned inventory snapshot,
+the isolated Codex profile and catalog, and the `claude-ollama` launcher. The
+complete candidate is prepared before its first write. A handled failure
+restores every path in the group, so Codex and Claude Code never observe
+different Ollama inventories. Repeating `apply` is a byte-for-byte no-op.
+
+The prompt-free shared snapshot is stored at:
+
+```text
+~/Library/Application Support/reverso/ollama-inventory.json
+```
+
+Current local ids replace prior local rows. If bounded Cloud discovery reports
+`auth_required`, timeout, or invalid data, only Cloud rows from that exact
+marker-owned snapshot are retained and marked stale. This is partial freshness,
+not current Cloud eligibility. An unmarked or malformed snapshot is an
+ownership conflict and is never retention authority. Background refresh never
+runs `ollama signin`, reads `~/.ollama/id_ed25519`, sources a shell profile,
+manages the Ollama daemon, or pulls a model.
+
+Set `REVERSO_OLLAMA_CLOUD=0` or `OLLAMA_NO_CLOUD=1` for absolute Cloud opt-out.
+Opt-out performs no Cloud discovery or sign-in and writes current local-only
+state. Restore after an interrupted apply by running `verify`, reviewing the
+drift, and running `restore`; group rollback preserves the prior bytes, object
+type, mode, and symlink target. Scoped Claude catalog publication reads this
+marker-owned snapshot, while Responses `/ollama/v1/models` remains live and
+never rereads the snapshot during refresh. `uninstall-ollama` removes the
+inventory, exactly referenced Codex profile/catalog pair, and marked Claude
+launcher as one group. Any unowned path is preserved and reported as an
+ownership conflict. The refresh state remains in place by default.
+
+The hermetic G3 wrapper uses the explicit test-only
+`tests/helpers/verify_isolated_convergence.py` entrypoint. It cannot bypass the
+production deployment-drift command. Real target acceptance and G4 must still
+run `scripts/check-deployment-drift.py` against the governed account home.
 
 ## RTK prerequisite
 

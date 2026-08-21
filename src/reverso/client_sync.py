@@ -14,7 +14,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from reverso import claude_code_sync, codex_sync
+from reverso import claude_code_sync, codex_sync, ollama_convergence
 from reverso.client_sync_lock import (
     ClientSyncLockBusy,
     HeldClientSyncLock,
@@ -39,6 +39,7 @@ from reverso.client_sync_mutations import (
     validate_prepared_group,
 )
 from reverso.protocols import model_exposure
+from reverso.protocols.adapters.ollama.auth import OllamaAuthState
 
 COMMAND = "reverso-client-sync"
 SUPPORTED_SURFACE_MANIFEST = (
@@ -868,6 +869,8 @@ def _codex_mutation_group(
     ):
         return "codex-roots"
     archive_dir = target.parent / codex_sync.PROFILE_ARCHIVE_DIR
+    if archive_dir.is_relative_to(path):
+        return "codex-roots"
     if path == archive_dir or path.is_relative_to(archive_dir):
         return "shared-codex-cleanup"
     for direct in ("openai", "minimax"):
@@ -1142,9 +1145,24 @@ def _plan(
     active_prefixes = model_exposure.reverso_routed_codex_profile_prefixes()
     discovered: dict[str, codex_sync.ProviderModels] = {}
     provider_prepared: dict[str, codex_sync.PreparedCodexSync] = {}
+    ollama_inventory: ollama_convergence.InventoryPlan | None = None
     for prefix in active_prefixes:
         try:
             models = codex_sync.discover_provider_models(prefix)
+            if prefix == "ollama":
+                auth = OllamaAuthState.from_env()
+                ollama_inventory = ollama_convergence.plan_inventory_refresh(
+                    ollama_convergence.default_inventory_path(home),
+                    local_ids=models.local_models or models.models,
+                    cloud_ids=models.cloud_models,
+                    cloud_status=(
+                        "disabled" if not auth.cloud_requested else models.cloud_status
+                    ),
+                    observed_at=_timestamp(),
+                )
+                models = codex_sync.ProviderModels(
+                    prefix, ollama_inventory.eligible_model_ids
+                )
             prepared = codex_sync.prepare_provider_sync(
                 models,
                 target=codex_config,
@@ -1159,6 +1177,16 @@ def _plan(
             continue
         discovered[prefix] = models
         provider_prepared[prefix] = prepared
+
+    if ollama_inventory is not None:
+        _append_group_mutations(
+            group_mutations,
+            "provider-ollama",
+            [
+                *missing_parent_mutations((ollama_inventory.path,)),
+                ollama_inventory.mutation,
+            ],
+        )
 
     if provider_errors:
         prepared_candidates = [
@@ -1535,6 +1563,32 @@ def _apply_result(
     metadata = _manifest_group_metadata(plan.manifest)
     for group in plan.provider_errors:
         statuses[group] = "preserved"
+    if "provider-ollama" in plan.provider_errors:
+        for group, group_changed in changed.items():
+            if group_changed:
+                statuses[group] = "preserved"
+        return _result(
+            mode,
+            "partial_freshness",
+            4,
+            started_at,
+            groups=_group_records(plan.manifest, plan.paths, statuses),
+            surfaces=_surface_records(plan.manifest, statuses, plan.paths),
+            paths=_path_records(
+                plan.paths,
+                statuses,
+                mode=mode,
+                mutations=mutations,
+            ),
+            errors=[
+                {
+                    "code": "provider_stale",
+                    "group": "provider-ollama",
+                    "path": None,
+                    "message": plan.provider_errors["provider-ollama"],
+                }
+            ],
+        )
     for group, (_kind, dependencies) in metadata.items():
         if any(dependency in plan.provider_errors for dependency in dependencies):
             statuses[group] = "blocked_stale_dependency"
@@ -1543,6 +1597,7 @@ def _apply_result(
         plan.groups,
         key=lambda group: (
             kind_order[metadata.get(group, ("prerequisite", []))[0]],
+            0 if group == "provider-ollama" else 1,
             group,
         ),
     )
@@ -1792,7 +1847,14 @@ def _run_once(
     status_path: Path | None = None,
 ) -> dict[str, Any]:
     """Plan, verify, or apply all client convergence groups."""
-    if mode not in {"dry-run", "apply", "refresh", "verify"}:
+    if mode not in {
+        "dry-run",
+        "apply",
+        "restore",
+        "refresh",
+        "verify",
+        "uninstall-ollama",
+    }:
         raise ValueError(f"unsupported client sync mode: {mode}")
 
     started_at = _timestamp()
@@ -1806,6 +1868,48 @@ def _run_once(
     resolved_launchers = (
         launch_agent_dir or claude_code_sync.DEFAULT_LAUNCHER_DIR
     ).expanduser()
+
+    if mode == "uninstall-ollama":
+        try:
+            group = ollama_convergence.prepare_uninstall_group(
+                inventory_path=ollama_convergence.default_inventory_path(home),
+                profile_path=resolved_codex.parent / "reverso-ollama.config.toml",
+                catalog_path=resolved_catalog / "ollama.json",
+                launcher_path=resolved_launchers / "claude-ollama",
+                profile_marker=codex_sync.PROFILE_MANAGED_MARKER,
+                launcher_marker=claude_code_sync.LAUNCHER_MANAGED_MARKER,
+                catalog_owned=codex_sync._catalog_is_owned(
+                    resolved_catalog / "ollama.json",
+                    config_dir=resolved_codex.parent,
+                    prefix="ollama",
+                ),
+            )
+            with acquire_client_sync_lock(
+                path=lock_path,
+                token=lock_token,
+                blocking=True,
+                timeout_seconds=30.0,
+            ) as held_lock:
+                validate_client_sync_lock(held_lock)
+                apply_prepared_group(group)
+        except (OSError, RuntimeError) as exc:
+            return _validation_result(mode, started_at, exc)
+        changed = group.changed
+        return _result(
+            mode,
+            "success" if changed else "no_op",
+            0,
+            started_at,
+            groups=[
+                {
+                    "id": "provider-ollama",
+                    "kind": "provider",
+                    "status": "changed" if changed else "current",
+                    "dependencies": [],
+                    "paths": [str(mutation.path) for mutation in group.mutations],
+                }
+            ],
+        )
 
     def planned() -> _ConvergencePlan:
         return _plan(
@@ -1827,7 +1931,7 @@ def _run_once(
         with acquire_client_sync_lock(
             path=lock_path,
             token=lock_token,
-            blocking=mode == "apply",
+            blocking=mode in {"apply", "restore"},
             timeout_seconds=30.0,
         ) as held_lock:
             try:
@@ -1936,7 +2040,17 @@ def run(
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog=COMMAND)
-    parser.add_argument("mode", choices=("dry-run", "apply", "refresh", "verify"))
+    parser.add_argument(
+        "mode",
+        choices=(
+            "dry-run",
+            "apply",
+            "restore",
+            "refresh",
+            "verify",
+            "uninstall-ollama",
+        ),
+    )
     parser.add_argument("--codex-config", type=Path)
     parser.add_argument("--claude-config-dir", type=Path)
     parser.add_argument("--catalog-dir", type=Path)
