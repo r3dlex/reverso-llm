@@ -55,12 +55,9 @@ Claude runs with no tools and non-interactive permissions. Regression matrices
 lock every sign-in gate, unsafe evidence targets, identity substitution, and
 bounded timeout behavior.
 
-`./scripts/convergence-acceptance.sh` was not runnable in the requested
-uncommitted worktree because the script requires a clean checkout. It exited 1
-with `convergence-acceptance: checkout must be clean`; no live request or target
-state mutation was attempted.
-
-The production deployment-drift acceptance command was also inapplicable to
-this isolated worktree. It exited 1 because acceptance requires the canonical
-deployed checkout. The exact non-integration regression command still completed
-with 1199 passed.
+The clean governed checkout ran both production gates. Deployment drift exited
+2 because unrelated live Kimi discovery returned a fallback source rather than
+a live source. Convergence exited 2 because the dry run could not discover the
+unrelated Codex direct provider. The exact non-integration regression command
+completed with 1207 passed. These external provider failures did not weaken the
+deterministic G4 gates or trigger a model request.
