@@ -1,7 +1,7 @@
 ---
 title: OLLAMA-RP-G2: Claude Code native Messages vertical
-status: ready-for-agent
-state: ready-for-agent
+status: complete
+state: complete
 category: enhancement
 slug: ollama-reverso-provider-g2-claude-messages
 owner: unassigned
@@ -25,11 +25,11 @@ Extend the shared Ollama runtime with the native Messages client and optional in
 
 ## Acceptance criteria
 
-- [ ] `claude-ollama` reaches Ollama `/v1/messages` through Reverso.
-- [ ] Only header-bound exact aliases route Ollama; bare and generic qualified ids are rejected.
-- [ ] Exact raw model bytes are restored before Headroom and upstream dispatch.
-- [ ] Lossy projection shapes fail open atomically and existing providers remain unchanged.
-- [ ] The goal verification commands and red-green evidence path in the consensus PRD are satisfied.
+- [x] `claude-ollama` reaches Ollama `/v1/messages` through Reverso.
+- [x] Only header-bound exact aliases route Ollama; bare and generic qualified ids are rejected.
+- [x] Exact raw model bytes are restored before Headroom and upstream dispatch.
+- [x] Lossy projection shapes fail open atomically and existing providers remain unchanged.
+- [x] The goal verification commands and red-green evidence path in the consensus PRD are satisfied.
 
 ## Version impact
 
@@ -38,3 +38,8 @@ Additive routed-provider capability; no default-provider or frozen-interface cha
 ## Blocked by
 
 OLLAMA-RP-G1
+
+## Shipped via
+
+Completed in PR #118. Exact-head local and hosted gates passed, and the
+associated red-green evidence remains under `.ai/evidence/`.

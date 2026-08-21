@@ -1,7 +1,7 @@
 ---
 title: OLLAMA-RP-G3: Convergence, refresh, and docs
-status: ready-for-agent
-state: ready-for-agent
+status: complete
+state: complete
 category: enhancement
 slug: ollama-reverso-provider-g3-convergence-refresh-docs
 owner: unassigned
@@ -25,11 +25,11 @@ Complete prompt-free client convergence, catalog refresh and freshness semantics
 
 ## Acceptance criteria
 
-- [ ] Dry-run, apply twice, refresh, verify, restore, and uninstall are deterministic.
-- [ ] Background authentication failures never open a browser and preserve only valid marker-owned stale Cloud state.
-- [ ] Cloud opt-out produces current local-only state.
-- [ ] Ollama failures cannot change unrelated provider hashes.
-- [ ] The goal verification commands and red-green evidence path in the consensus PRD are satisfied.
+- [x] Dry-run, apply twice, refresh, verify, restore, and uninstall are deterministic.
+- [x] Background authentication failures never open a browser and preserve only valid marker-owned stale Cloud state.
+- [x] Cloud opt-out produces current local-only state.
+- [x] Ollama failures cannot change unrelated provider hashes.
+- [x] The goal verification commands and red-green evidence path in the consensus PRD are satisfied.
 
 ## Version impact
 
@@ -38,3 +38,8 @@ Additive routed-provider capability; no default-provider or frozen-interface cha
 ## Blocked by
 
 OLLAMA-RP-G2
+
+## Shipped via
+
+Completed in PR #119. Exact-head local and hosted gates passed, and the
+associated red-green evidence remains under `.ai/evidence/`.

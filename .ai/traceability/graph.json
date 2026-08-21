@@ -382,7 +382,7 @@
       "id": "prd:reverso-root:ollama-reverso-provider",
       "type": "prd",
       "title": "Reverso-routed Ollama provider",
-      "status": "active",
+      "status": "complete",
       "repo_id": "reverso-root",
       "path": "docs/specifications/ACTIVE/ollama-reverso-provider.md",
       "backlinks": []
@@ -391,7 +391,7 @@
       "id": "issue:reverso-root:ollama-reverso-provider",
       "type": "issue",
       "title": "northstar issue: ollama-reverso-provider",
-      "status": "ready-for-agent",
+      "status": "complete",
       "repo_id": "reverso-root",
       "path": ".ai/work-intake/ollama-reverso-provider.md",
       "backlinks": []
@@ -400,7 +400,7 @@
       "id": "issue:reverso-root:ollama-reverso-provider-g1-codex-responses",
       "type": "issue",
       "title": "OLLAMA-RP-G1 Codex Responses vertical",
-      "status": "ready-for-agent",
+      "status": "complete",
       "repo_id": "reverso-root",
       "path": ".ai/work-intake/ollama-reverso-provider-g1-codex-responses.md",
       "backlinks": [
@@ -412,7 +412,7 @@
       "id": "issue:reverso-root:ollama-reverso-provider-g2-claude-messages",
       "type": "issue",
       "title": "OLLAMA-RP-G2 Claude Messages vertical",
-      "status": "ready-for-agent",
+      "status": "complete",
       "repo_id": "reverso-root",
       "path": ".ai/work-intake/ollama-reverso-provider-g2-claude-messages.md",
       "backlinks": [
@@ -424,7 +424,7 @@
       "id": "issue:reverso-root:ollama-reverso-provider-g3-convergence-refresh-docs",
       "type": "issue",
       "title": "OLLAMA-RP-G3 convergence refresh docs",
-      "status": "ready-for-agent",
+      "status": "complete",
       "repo_id": "reverso-root",
       "path": ".ai/work-intake/ollama-reverso-provider-g3-convergence-refresh-docs.md",
       "backlinks": [
@@ -436,7 +436,7 @@
       "id": "issue:reverso-root:ollama-reverso-provider-g4-attended-proof-hardening",
       "type": "issue",
       "title": "OLLAMA-RP-G4 attended proof hardening",
-      "status": "ready-for-human",
+      "status": "complete",
       "repo_id": "reverso-root",
       "path": ".ai/work-intake/ollama-reverso-provider-g4-attended-proof-hardening.md",
       "backlinks": [
@@ -448,7 +448,7 @@
       "id": "plan:reverso-root:northstar-ollama-reverso-provider",
       "type": "plan",
       "title": "northstar sliced plan: ollama-reverso-provider",
-      "status": "active",
+      "status": "complete",
       "repo_id": "reverso-root",
       "path": ".ai/handoff/northstar-ollama-reverso-provider.md",
       "backlinks": [
@@ -459,7 +459,7 @@
       "id": "handoff:reverso-root:northstar-ollama-reverso-provider",
       "type": "handoff",
       "title": "northstar A to B handoff: ollama-reverso-provider",
-      "status": "active",
+      "status": "complete",
       "repo_id": "reverso-root",
       "path": ".ai/handoff/northstar-ollama-reverso-provider.md",
       "backlinks": [

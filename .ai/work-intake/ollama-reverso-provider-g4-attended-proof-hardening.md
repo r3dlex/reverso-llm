@@ -1,7 +1,7 @@
 ---
 title: OLLAMA-RP-G4: Attended proof and hardening
-status: ready-for-human
-state: ready-for-human
+status: complete
+state: complete
 category: enhancement
 slug: ollama-reverso-provider-g4-attended-proof-hardening
 owner: unassigned
@@ -25,11 +25,11 @@ Run bounded attended authentication recovery when required and prove one already
 
 ## Acceptance criteria
 
-- [ ] No model pull, daemon management, key read, secret persistence, direct client route, or extra port occurs.
-- [ ] Codex Responses and Claude Messages succeed for eligible local and Cloud models, or an exact external prerequisite is recorded.
-- [ ] Restore preserves unrelated-provider hashes.
-- [ ] All review comments and exact-head local and hosted gates are green.
-- [ ] The goal verification commands and red-green evidence path in the consensus PRD are satisfied.
+- [x] No model pull, daemon management, key read, secret persistence, direct client route, or extra port occurs.
+- [x] Codex Responses and Claude Messages succeed for eligible local and Cloud models, or an exact external prerequisite is recorded.
+- [x] Restore preserves unrelated-provider hashes.
+- [x] All review comments and exact-head local and hosted gates are green.
+- [x] The goal verification commands and red-green evidence path in the consensus PRD are satisfied.
 
 ## Version impact
 
@@ -38,3 +38,8 @@ Additive routed-provider capability; no default-provider or frozen-interface cha
 ## Blocked by
 
 OLLAMA-RP-G3
+
+## Shipped via
+
+Completed in PR #120. Exact-head local and hosted gates passed, and the
+associated red-green evidence remains under `.ai/evidence/`.
