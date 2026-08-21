@@ -36,11 +36,17 @@ Result: exit 0, 10 passed.
 
 `bash tests/verify_ollama_g2.sh` completed all eight commands in order:
 
-- G2 Messages, translation, stream, and Headroom unit set: 73 passed.
+- G2 Messages, translation, stream, and Headroom unit set: 74 passed.
 - Claude sync and convergence contract set: 41 passed.
 - Claude launcher and Anthropic integration set: 42 passed.
 - Frozen Responses and Codex Ollama regression set: 36 passed.
 - Ruff check: passed.
 - Ruff format check: 157 files formatted.
 - Prek: all hooks passed.
-- Full non-integration regression: 1171 passed.
+- Full non-integration regression: 1172 passed.
+
+Architect remediation added regression coverage for same-kind text leaf
+reordering and exact Ollama catalog header bytes. Swapped source text fails open
+atomically, while ordinary compressed replacements still project. Only the
+single exact header value `ollama` activates Ollama authority; normalized,
+whitespace-padded, uppercase, duplicate, and malformed values do not.

@@ -76,6 +76,7 @@ class AnthropicProjectionSource:
     native_json_pointer: tuple[int | str, ...]
     native_block_kind: str
     structural_fingerprint: str
+    source_text_fingerprint: str
 
 
 @dataclass(frozen=True)
@@ -179,12 +180,14 @@ def _record_source(
     native: tuple[int | str, ...],
     kind: str,
 ) -> None:
+    source_text = _get_at(payload, native)
     sources.append(
         AnthropicProjectionSource(
             response,
             native,
             kind,
             _native_fingerprint(payload, native, kind),
+            hashlib.sha256(source_text.encode("utf-8")).hexdigest(),
         )
     )
 
@@ -219,6 +222,27 @@ def project_compressed_request_to_anthropic_payload(
         return copy.deepcopy(prepared.payload)
     if original_shape != compressed_shape:
         return copy.deepcopy(prepared.payload)
+
+    source_by_text_fingerprint: dict[str, set[tuple[int | str, ...]]] = {}
+    for source in sources:
+        source_by_text_fingerprint.setdefault(
+            source.source_text_fingerprint, set()
+        ).add(source.response_address)
+    compressed_root = {
+        "instructions": compressed_request.instructions,
+        "input": compressed_request.input,
+    }
+    for source in sources:
+        compressed_text = _get_at(compressed_root, source.response_address)
+        compressed_fingerprint = hashlib.sha256(
+            compressed_text.encode("utf-8")
+        ).hexdigest()
+        original_addresses = source_by_text_fingerprint.get(compressed_fingerprint)
+        if (
+            original_addresses is not None
+            and source.response_address not in original_addresses
+        ):
+            return copy.deepcopy(prepared.payload)
 
     projected = copy.deepcopy(prepared.payload)
     try:

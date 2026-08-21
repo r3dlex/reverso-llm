@@ -121,6 +121,31 @@ def test_lossy_projection_fails_open_atomically() -> None:
     assert project_compressed_request_to_anthropic_payload(prepared, lossy) == payload
 
 
+def test_same_kind_text_reorder_fails_open_atomically() -> None:
+    payload = {
+        "model": "raw:latest",
+        "max_tokens": 8,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "first leaf"},
+                    {"type": "text", "text": "second leaf"},
+                ],
+            }
+        ],
+    }
+    prepared = prepare_anthropic_dispatch(copy.deepcopy(payload), "ollama")
+    reordered_input = copy.deepcopy(prepared.request.input)
+    parts = reordered_input[0]["content"]
+    parts[0]["text"], parts[1]["text"] = parts[1]["text"], parts[0]["text"]
+    reordered = replace(prepared.request, input=reordered_input)
+
+    assert (
+        project_compressed_request_to_anthropic_payload(prepared, reordered) == payload
+    )
+
+
 def test_ollama_adapter_exposes_internal_native_facet() -> None:
     from reverso.protocols.adapters.ollama.adapter import OllamaAdapter
 
@@ -236,6 +261,11 @@ async def test_exact_header_bound_alias_is_only_ollama_messages_authority(
             headers={"x-reverso-model-catalog": "ollama"},
             json={"model": alias.lower(), "max_tokens": 8, "messages": []},
         )
+        normalized_catalog = await client.post(
+            "/v1/messages",
+            headers={"x-reverso-model-catalog": " OLLAMA "},
+            json={"model": alias, "max_tokens": 8, "messages": []},
+        )
 
     assert listing.status_code == 200
     assert alias == "anthropic-ollama-MiXeD.Name:7B"
@@ -243,6 +273,7 @@ async def test_exact_header_bound_alias_is_only_ollama_messages_authority(
     assert compressed_models == ["MiXeD.Name:7B"]
     assert adapter.native_payloads[0]["model"] == "MiXeD.Name:7B"
     assert bare.status_code == qualified.status_code == wrong_case.status_code == 404
+    assert normalized_catalog.status_code == 400
 
 
 @pytest.mark.asyncio

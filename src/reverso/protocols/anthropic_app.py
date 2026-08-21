@@ -244,7 +244,12 @@ def _model_catalog_from_headers(
     if len(values) > 1:
         raise ValueError("invalid Reverso model catalog")
     for value in values:
-        catalog = value.decode("utf-8", "replace").strip().lower()
+        decoded = value.decode("utf-8", "replace")
+        if decoded == "ollama":
+            return "ollama"
+        catalog = decoded.strip().lower()
+        if catalog == "ollama":
+            raise ValueError("invalid Reverso model catalog")
         if catalog == "all":
             return None
         if catalog in _ANTHROPIC_SURFACE_BACKENDS:
