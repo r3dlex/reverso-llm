@@ -13,11 +13,11 @@
   "focused": {
     "command": "uv run pytest tests/integration/test_ollama_live_contract.py tests/unit/test_ollama_live_proof.py -q",
     "exit_code": 0,
-    "result": "10 passed"
+    "result": "21 passed"
   },
   "regression": {
-    "unit": "1199 passed",
-    "integration": "539 passed, 6 skipped",
+    "unit": "1207 passed",
+    "integration": "546 passed, 6 skipped",
     "static": "ruff check, ruff format check, prek, compileall, rules validation, and structural archgate passed",
     "account_authority_red": "2 failed in the deployment drift regression selection",
     "account_authority_green": "129 passed in tests/integration/test_deployment_drift.py"

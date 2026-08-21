@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import re
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -17,11 +19,26 @@ INVALID_INPUT = 64
 
 _PROOF_INSTRUCTION = "Reply with only the literal text: ok"
 _VERSION_LIMIT = 120
+_SAFE_ENV_KEYS = frozenset(
+    {
+        "COLORTERM",
+        "HOME",
+        "LANG",
+        "LC_ALL",
+        "LOGNAME",
+        "PATH",
+        "SHELL",
+        "TERM",
+        "TMPDIR",
+        "USER",
+    }
+)
 
 Runner = Callable[..., subprocess.CompletedProcess[Any]]
 InventoryLoader = Callable[[Path], InventorySnapshot]
 Clock = Callable[[], float]
 TtyProbe = Callable[[], bool]
+PathValidator = Callable[[Path], bool]
 
 
 @dataclass(frozen=True)
@@ -121,6 +138,10 @@ def build_lanes(inputs: ProofInputs, candidates: CandidateSet) -> tuple[Lane, ..
             str(inputs.codex_executable),
             "exec",
             "--skip-git-repo-check",
+            "--sandbox",
+            "read-only",
+            "-c",
+            'approval_policy="never"',
             "--profile",
             "reverso-ollama",
             "--model",
@@ -134,6 +155,10 @@ def build_lanes(inputs: ProofInputs, candidates: CandidateSet) -> tuple[Lane, ..
             "--print",
             "--model",
             f"anthropic-ollama-{model}",
+            "--tools",
+            "",
+            "--permission-mode",
+            "dontAsk",
             "--",
             _PROOF_INSTRUCTION,
         )
@@ -166,23 +191,48 @@ def build_lanes(inputs: ProofInputs, candidates: CandidateSet) -> tuple[Lane, ..
     )
 
 
-def _invalid_paths(inputs: ProofInputs) -> tuple[str, ...]:
+def _is_executable_file(path: Path) -> bool:
+    try:
+        resolved = path.resolve(strict=True)
+    except (OSError, RuntimeError):
+        return False
+    return path.is_absolute() and resolved.is_file() and os.access(resolved, os.X_OK)
+
+
+def _has_managed_launcher_marker(path: Path) -> bool:
+    try:
+        first_lines = path.read_text(encoding="utf-8").splitlines()[:3]
+    except (OSError, UnicodeError):
+        return False
+    return "# Managed by reverso-claude-code-sync." in first_lines
+
+
+def _invalid_paths(
+    inputs: ProofInputs,
+    *,
+    executable_validator: PathValidator,
+    launcher_marker_validator: PathValidator,
+) -> tuple[str, ...]:
     paths = {
         "ollama_executable": inputs.ollama_executable,
         "codex_executable": inputs.codex_executable,
         "claude_launcher": inputs.claude_launcher,
         "client_sync_executable": inputs.client_sync_executable,
     }
-    return tuple(name for name, path in paths.items() if not path.is_absolute())
+    invalid = [name for name, path in paths.items() if not executable_validator(path)]
+    if "claude_launcher" not in invalid and not launcher_marker_validator(
+        inputs.claude_launcher
+    ):
+        invalid.append("claude_launcher")
+    return tuple(invalid)
 
 
 def _safe_env(env: Mapping[str, str]) -> dict[str, str]:
-    child = dict(env)
-    child.pop("OLLAMA_API_KEY", None)
-    return child
+    return {key: value for key, value in env.items() if key in _SAFE_ENV_KEYS}
 
 
 def _version(
+    name: str,
     executable: Path,
     *,
     runner: Runner,
@@ -205,7 +255,15 @@ def _version(
     value = (completed.stdout or "").strip().splitlines()
     if not value:
         raise OSError("version probe returned no version")
-    return value[0][:_VERSION_LIMIT]
+    version = value[0][:_VERSION_LIMIT]
+    patterns = {
+        "ollama": r"^ollama version is \S+",
+        "codex": r"^codex-cli \S+",
+        "claude": r"^\S+ \(Claude Code\)$",
+    }
+    if re.fullmatch(patterns[name], version) is None:
+        raise OSError("unexpected tool identity")
+    return version
 
 
 def run_proof(
@@ -218,6 +276,8 @@ def run_proof(
     stdout_isatty: TtyProbe,
     env: Mapping[str, str],
     timeout: float = 180.0,
+    executable_validator: PathValidator = _is_executable_file,
+    launcher_marker_validator: PathValidator = _has_managed_launcher_marker,
 ) -> dict[str, object]:
     """Run preflight or the bounded four-lane proof using injected effects."""
     started = clock()
@@ -230,7 +290,11 @@ def run_proof(
             clock=clock,
             prerequisites=("invalid_input",),
         )
-    invalid_paths = _invalid_paths(inputs)
+    invalid_paths = _invalid_paths(
+        inputs,
+        executable_validator=executable_validator,
+        launcher_marker_validator=launcher_marker_validator,
+    )
     if invalid_paths:
         return _report(
             mode=inputs.mode,
@@ -251,10 +315,16 @@ def run_proof(
             ("claude", inputs.claude_launcher),
         ):
             versions[name] = _version(
-                executable, runner=runner, env=env, timeout=timeout
+                name, executable, runner=runner, env=env, timeout=timeout
             )
         snapshot = inventory_loader(inputs.inventory_path)
-    except (FileNotFoundError, OSError, RuntimeError, ValueError):
+    except (
+        FileNotFoundError,
+        OSError,
+        RuntimeError,
+        ValueError,
+        subprocess.TimeoutExpired,
+    ):
         return _report(
             mode=inputs.mode,
             status="external_prerequisite",

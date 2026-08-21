@@ -28,8 +28,8 @@ exist. This is the required harness gap and does not depend on credentials.
 ## Green
 
 The exact targeted command exited 0 with 5 passed. The focused integration and
-unit selection exited 0 with 10 passed. Repository regression evidence is 1199
-unit tests passed and 539 integration tests passed with 6 skipped. Ruff, Ruff
+unit selection exited 0 with 21 passed. Repository regression evidence is 1207
+unit tests passed and 546 integration tests passed with 6 skipped. Ruff, Ruff
 format, prek, compileall, rules validation, and structural archgate also passed.
 
 The attended proof then exposed a hardcoded account name in the deployment
@@ -37,6 +37,23 @@ authority. A regression selection covering installer ordering and canonical
 checkout derivation first exited 1 with 2 failures. After deriving the account
 home from the operating system password database, the full deployment drift
 integration module exited 0 with 129 passed.
+
+The governed checkout deployed the G4 implementation. The attended run selected
+the marker-owned local model `qwen3.8:27b-mlx` and
+exited 2 with the exact external prerequisite `cloud_model_required`. No model
+request ran because the current marker-owned inventory contained no Cloud
+candidate. The bounded evidence file was written with mode 0600. Production
+deployment drift remained blocked by unrelated live Kimi discovery returning a
+fallback source rather than a live source.
+
+Independent review found that absolute paths alone did not establish executable
+identity and that proof clients needed explicit tool restrictions. The repaired
+preflight requires executable files, the managed Claude launcher marker, and
+bounded product-specific version formats. Child environments now use a minimal
+non-credential allowlist. Codex runs read-only with approvals disabled, and
+Claude runs with no tools and non-interactive permissions. Regression matrices
+lock every sign-in gate, unsafe evidence targets, identity substitution, and
+bounded timeout behavior.
 
 `./scripts/convergence-acceptance.sh` was not runnable in the requested
 uncommitted worktree because the script requires a clean checkout. It exited 1

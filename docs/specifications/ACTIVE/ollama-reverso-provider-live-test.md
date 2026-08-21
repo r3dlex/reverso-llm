@@ -23,7 +23,11 @@ external prerequisite is absent.
 
 The command accepts absolute paths for the inventory, Ollama executable, Codex
 executable, Claude Ollama launcher, and `reverso-client-sync` executable.
-Relative executable paths and unsupported arguments are invalid input.
+Every executable must resolve to an executable regular file. The Claude
+launcher must carry the `reverso-claude-code-sync` managed marker. Ollama,
+Codex, and Claude version output must match their bounded product-specific
+formats; substituted executables are rejected. Relative or missing executable
+paths and unsupported arguments are invalid input.
 `--json` emits the bounded public report. `--evidence <path>` atomically writes
 the exact same JSON bytes to an absolute path whose parent directory already
 exists. The evidence target may be absent or an existing regular file; symlinks,
@@ -73,6 +77,9 @@ inventory exactly once. No retry or second sign-in occurs.
 
 The coordinator never reads credentials, sources shell exports, or invokes
 pull, run, serve, start, stop, or daemon operations.
+Every child receives only a minimal allowlist of terminal, account, locale,
+path, and temporary-directory environment variables. Credential and token
+variables are not inherited.
 
 ## Proof lanes
 
@@ -87,6 +94,8 @@ Codex uses the `reverso-ollama` profile. Claude uses the marker-owned
 `claude-ollama` launcher and the complete `anthropic-ollama-<raw-id>` selector.
 Each command receives a fixed non-secret proof instruction. Model request
 stdout and stderr go directly to the null device and are never captured.
+Codex runs with a read-only sandbox and approval policy `never`. Claude runs
+with an empty tool set and permission mode `dontAsk`.
 
 ## Public JSON schema
 

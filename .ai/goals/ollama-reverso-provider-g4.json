@@ -32,7 +32,7 @@
     ".ai/evidence/"
   ],
   "verification": [
-    "uv run pytest tests/integration/test_ollama_live_contract.py -q"
+    "pytest --override-ini pythonpath=src tests/integration/test_ollama_live_contract.py -q"
   ],
   "coverage_percent": 0,
   "legacy_safe_tdd": true,

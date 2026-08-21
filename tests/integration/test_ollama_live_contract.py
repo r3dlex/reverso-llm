@@ -8,6 +8,8 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+import pytest
+
 from reverso.ollama_convergence import InventoryEntry, InventorySnapshot
 from reverso.ollama_live_proof import ProofInputs, run_proof
 
@@ -46,12 +48,24 @@ def _snapshot(cloud_status: str = "current") -> InventorySnapshot:
     )
 
 
+def _version_output(executable: str) -> str:
+    return {
+        "ollama": "ollama version is 1.0",
+        "codex": "codex-cli 1.0",
+        "claude-ollama": "1.0 (Claude Code)",
+    }[Path(executable).name]
+
+
+def _valid_path(_: Path) -> bool:
+    return True
+
+
 def test_run_contract_is_four_sequential_secret_free_lanes() -> None:
     calls: list[tuple[list[str], dict[str, Any]]] = []
 
     def runner(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
         calls.append((argv, kwargs))
-        stdout = f"{Path(argv[0]).name} 1.0" if argv[-1] == "--version" else None
+        stdout = _version_output(argv[0]) if argv[-1] == "--version" else None
         return subprocess.CompletedProcess(argv, 0, stdout=stdout)
 
     report = run_proof(
@@ -62,6 +76,8 @@ def test_run_contract_is_four_sequential_secret_free_lanes() -> None:
         stdin_isatty=lambda: False,
         stdout_isatty=lambda: False,
         env={"OLLAMA_API_KEY": "canary", "PATH": "/usr/bin"},
+        executable_validator=_valid_path,
+        launcher_marker_validator=_valid_path,
     )
 
     assert report["exit_code"] == 0
@@ -83,6 +99,16 @@ def test_run_contract_is_four_sequential_secret_free_lanes() -> None:
     assert all(call[1]["stdout"] is subprocess.DEVNULL for call in proof_calls)
     assert all(call[1]["stderr"] is subprocess.DEVNULL for call in proof_calls)
     assert all("OLLAMA_API_KEY" not in call[1]["env"] for call in calls)
+    assert all(set(call[1]["env"]) <= {"PATH"} for call in calls)
+    assert all(
+        "--sandbox" in argv and "read-only" in argv for argv, _ in proof_calls[::2]
+    )
+    assert all('approval_policy="never"' in argv for argv, _ in proof_calls[::2])
+    assert all("--tools" in argv and "" in argv for argv, _ in proof_calls[1::2])
+    assert all(
+        "--permission-mode" in argv and "dontAsk" in argv
+        for argv, _ in proof_calls[1::2]
+    )
     assert "canary" not in repr(report)
     assert "Reply with" not in repr(report)
 
@@ -91,7 +117,7 @@ def test_preflight_records_exact_missing_external_prerequisites() -> None:
     snapshot = InventorySnapshot((), "now", "local_only", "required", "auth_required")
 
     def runner(argv: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
-        return subprocess.CompletedProcess(argv, 0, stdout="version 1")
+        return subprocess.CompletedProcess(argv, 0, stdout=_version_output(argv[0]))
 
     report = run_proof(
         _inputs("preflight"),
@@ -101,6 +127,8 @@ def test_preflight_records_exact_missing_external_prerequisites() -> None:
         stdin_isatty=lambda: True,
         stdout_isatty=lambda: True,
         env={},
+        executable_validator=_valid_path,
+        launcher_marker_validator=_valid_path,
     )
 
     assert report["exit_code"] == 2
@@ -182,6 +210,44 @@ def test_cli_rejects_unsafe_evidence_path_before_proof(
     assert json.loads(capsys.readouterr().out)["prerequisites"] == [
         "invalid_evidence_path"
     ]
+
+
+@pytest.mark.parametrize("case", ("relative", "symlink", "directory"))
+def test_cli_rejects_each_unsafe_evidence_target_without_mutation(
+    case: str, tmp_path: Path, monkeypatch: Any, capsys: Any
+) -> None:
+    module = _cli_module()
+    touched = False
+    referent = tmp_path / "referent.json"
+    if case == "relative":
+        target = Path("relative-proof.json")
+    elif case == "symlink":
+        referent.write_text("sentinel", encoding="utf-8")
+        target = tmp_path / "proof.json"
+        target.symlink_to(referent)
+    else:
+        target = tmp_path / "proof.json"
+        target.mkdir()
+
+    def tripwire(*_args: Any, **_kwargs: Any) -> dict[str, object]:
+        nonlocal touched
+        touched = True
+        raise AssertionError
+
+    monkeypatch.setattr(module, "run_proof", tripwire)
+
+    assert module.main(_cli_args(target)) == 64
+    assert touched is False
+    assert json.loads(capsys.readouterr().out)["prerequisites"] == [
+        "invalid_evidence_path"
+    ]
+    if case == "symlink":
+        assert target.is_symlink()
+        assert referent.read_text(encoding="utf-8") == "sentinel"
+    elif case == "directory":
+        assert target.is_dir()
+    else:
+        assert not target.exists()
 
 
 def test_cli_evidence_write_failure_is_bounded_failure(
