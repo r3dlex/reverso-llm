@@ -188,7 +188,7 @@
       "deepseek": "translated",
       "kimi": "translated",
       "codex": "unsupported",
-      "ollama": "unsupported"
+      "ollama": "partial"
     },
     "reasoning.summary": {
       "claude": "partial",
@@ -197,7 +197,7 @@
       "deepseek": "translated",
       "kimi": "translated",
       "codex": "unsupported",
-      "ollama": "unsupported"
+      "ollama": "partial"
     },
     "sampling.temperature": {
       "claude": "unsupported",
