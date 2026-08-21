@@ -260,7 +260,7 @@
       "deepseek": "partial",
       "kimi": "partial",
       "codex": "unsupported",
-      "ollama": "unsupported"
+      "ollama": "partial"
     },
     "background": {
       "claude": "unsupported",

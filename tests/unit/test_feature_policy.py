@@ -379,7 +379,14 @@ def test_cli_runner_providers_accept_reasoning_fields_as_noop() -> None:
 
 def test_encrypted_content_include_capability_matrix() -> None:
     feature = "include.reasoning.encrypted_content"
-    for provider in ("claude", "copilot", "auggie", "deepseek", "kimi"):
+    for provider in (
+        "claude",
+        "copilot",
+        "auggie",
+        "deepseek",
+        "kimi",
+        "ollama",
+    ):
         assert CAPABILITY_TABLES[provider][feature] == "partial"
         check_features(provider, {feature})
 
@@ -701,7 +708,9 @@ def test_strip_partial_features_drops_only_partial_reasoning_subkeys() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("provider", ["claude", "auggie", "deepseek", "kimi"])
+@pytest.mark.parametrize(
+    "provider", ["claude", "auggie", "deepseek", "kimi", "ollama"]
+)
 @pytest.mark.parametrize("stream", [False, True])
 @pytest.mark.parametrize(
     ("include_case", "include_value", "allowed"),
