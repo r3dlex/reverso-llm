@@ -14,6 +14,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from typing import Any, Callable
 
 from reverso.ollama_convergence import default_inventory_path, load_inventory
 from reverso.ollama_live_proof import INVALID_INPUT, ProofInputs, run_proof
@@ -69,10 +70,15 @@ def _write_evidence(path: Path, encoded: str) -> None:
         temporary_path.unlink(missing_ok=True)
 
 
-def _deployment_attestation() -> tuple[str, str] | None:
-    repo_root = Path(__file__).resolve().parents[1]
+def _deployment_attestation(
+    *,
+    repo_root: Path | None = None,
+    account_home: Path | None = None,
+    runner: Callable[..., subprocess.CompletedProcess[Any]] = subprocess.run,
+) -> tuple[str, str] | None:
+    repo_root = repo_root or Path(__file__).resolve().parents[1]
     try:
-        completed = subprocess.run(
+        completed = runner(
             ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
             shell=False,
             env={key: os.environ[key] for key in ("PATH",) if key in os.environ},
@@ -83,8 +89,26 @@ def _deployment_attestation() -> tuple[str, str] | None:
             timeout=10,
             check=False,
         )
+        status = runner(
+            [
+                "git",
+                "-C",
+                str(repo_root),
+                "status",
+                "--porcelain=v1",
+                "--untracked-files=all",
+            ],
+            shell=False,
+            env={key: os.environ[key] for key in ("PATH",) if key in os.environ},
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=10,
+            check=False,
+        )
         source_commit = completed.stdout.strip()
-        account_home = Path(pwd.getpwuid(os.getuid()).pw_dir)
+        account_home = account_home or Path(pwd.getpwuid(os.getuid()).pw_dir)
         provenance_path = (
             account_home
             / "Library"
@@ -97,6 +121,8 @@ def _deployment_attestation() -> tuple[str, str] | None:
         canonical_checkout = Path(provenance.get("canonical_checkout", ""))
         if (
             completed.returncode != 0
+            or status.returncode != 0
+            or status.stdout != ""
             or _COMMIT_RE.fullmatch(source_commit) is None
             or not isinstance(deployed_commit, str)
             or _COMMIT_RE.fullmatch(deployed_commit) is None

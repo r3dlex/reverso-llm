@@ -213,6 +213,42 @@ def test_cli_run_requires_exact_deployment_before_proof(
     assert report["prerequisites"] == ["exact_head_deployment_required"]
 
 
+@pytest.mark.parametrize("dirty_status", (" M tracked.py\n", "?? untracked.txt\n"))
+def test_deployment_attestation_rejects_tracked_or_untracked_changes(
+    tmp_path: Path, dirty_status: str
+) -> None:
+    module = _cli_module()
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    account_home = tmp_path / "home"
+    provenance = (
+        account_home
+        / "Library"
+        / "Application Support"
+        / "reverso"
+        / "deployment-provenance.json"
+    )
+    provenance.parent.mkdir(parents=True)
+    commit = "a" * 40
+    provenance.write_text(
+        json.dumps({"canonical_checkout": str(repo_root), "commit": commit}),
+        encoding="utf-8",
+    )
+
+    def runner(argv: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        stdout = commit + "\n" if "rev-parse" in argv else dirty_status
+        return subprocess.CompletedProcess(argv, 0, stdout=stdout)
+
+    assert (
+        module._deployment_attestation(
+            repo_root=repo_root,
+            account_home=account_home,
+            runner=runner,
+        )
+        is None
+    )
+
+
 def test_cli_rejects_unsafe_evidence_path_before_proof(
     tmp_path: Path, monkeypatch: Any, capsys: Any
 ) -> None:

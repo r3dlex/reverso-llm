@@ -27,9 +27,9 @@ exist. This is the required harness gap and does not depend on credentials.
 
 ## Green
 
-The exact targeted command exited 0 with 9 passed. The focused integration and
-unit selection exited 0 with 26 passed. Repository regression evidence is 1211
-unit tests passed and 547 integration tests passed with 6 skipped. Ruff, Ruff
+The exact targeted command exited 0 with 11 passed. The focused integration and
+unit selection exited 0 with 28 passed. Repository regression evidence is 1211
+unit tests passed and 549 integration tests passed with 6 skipped. Ruff, Ruff
 format, prek, compileall, rules validation, and structural archgate also passed.
 
 The attended proof then exposed a hardcoded account name in the deployment
