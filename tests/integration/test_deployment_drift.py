@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 import plistlib
 import subprocess
 from pathlib import Path
@@ -1619,8 +1620,10 @@ def test_installer_orders_all_drift_gates_around_launchctl() -> None:
 
     assert pre_install < write < pre_restart < launchctl < post_restart < done
     assert post_restart < scheduled_load < post_load < initial_refresh < done
-    assert str(CANONICAL_CHECKOUT) in script
-    assert 'CANONICAL_USER_HOME="/Users/andresilvaburgstahler"' in script
+    assert "pwd.getpwuid(os.getuid()).pw_dir" in script
+    assert (
+        'CANONICAL_REVERSO_DIR="${CANONICAL_USER_HOME}/.local/share/reverso"' in script
+    )
     assert '"${HOME}" != "${CANONICAL_USER_HOME}"' in script
     assert 'USER_HOME="${CANONICAL_USER_HOME}"' in script
     assert 'export REVERSO_UV_BIN="${UV_BIN}"' in script
@@ -1650,6 +1653,12 @@ def test_installer_orders_all_drift_gates_around_launchctl() -> None:
     )
     assert "<key>KIMI_CODE_HOME</key>" in proxy_template
     assert "KIMI_CODE_HOME" not in daemon_template
+
+
+def test_canonical_checkout_uses_the_governed_account_home() -> None:
+    account_home = Path(deployment_drift.pwd.getpwuid(os.getuid()).pw_dir)
+
+    assert CANONICAL_CHECKOUT == account_home / ".local" / "share" / "reverso"
 
 
 def test_drift_cli_is_available_and_rejects_this_arbitrary_checkout() -> None:

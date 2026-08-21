@@ -1,0 +1,31 @@
+{
+  "goal_id": "OLLAMA-RP-G4",
+  "red": {
+    "command": "uv run pytest tests/integration/test_ollama_live_contract.py -q",
+    "exit_code": 4,
+    "failure": "ERROR: file or directory not found: tests/integration/test_ollama_live_contract.py"
+  },
+  "green": {
+    "command": "uv run pytest tests/integration/test_ollama_live_contract.py -q",
+    "exit_code": 0,
+    "result": "5 passed"
+  },
+  "focused": {
+    "command": "uv run pytest tests/integration/test_ollama_live_contract.py tests/unit/test_ollama_live_proof.py -q",
+    "exit_code": 0,
+    "result": "10 passed"
+  },
+  "regression": {
+    "unit": "1199 passed",
+    "integration": "539 passed, 6 skipped",
+    "static": "ruff check, ruff format check, prek, compileall, rules validation, and structural archgate passed",
+    "account_authority_red": "2 failed in the deployment drift regression selection",
+    "account_authority_green": "129 passed in tests/integration/test_deployment_drift.py"
+  },
+  "blocked": {
+    "command": "./scripts/convergence-acceptance.sh",
+    "exit_code": 1,
+    "result": "checkout must be clean; the gate cannot run before the requested uncommitted implementation is committed",
+    "deployment_drift": "acceptance requires the canonical deployed checkout, not this isolated worktree"
+  }
+}
