@@ -28,7 +28,8 @@ from typing import Any
 
 from reverso.protocols.headroom_compression import HeadroomCompressionConfig
 
-CANONICAL_CHECKOUT = Path("/Users/andresilvaburgstahler/.local/share/reverso")
+CANONICAL_USER_HOME = Path(pwd.getpwuid(os.getuid()).pw_dir)
+CANONICAL_CHECKOUT = CANONICAL_USER_HOME / ".local" / "share" / "reverso"
 DEPLOYMENT_REPOSITORY = "git@github.com:r3dlex/reverso-llm.git"
 INSTALLER_IDENTITY = str(CANONICAL_CHECKOUT / "scripts/install-launchagents.sh")
 PROVENANCE_SCHEMA_VERSION = 2

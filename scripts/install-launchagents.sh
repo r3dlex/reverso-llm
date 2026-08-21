@@ -16,8 +16,8 @@
 set -euo pipefail
 
 REVERSO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CANONICAL_REVERSO_DIR="/Users/andresilvaburgstahler/.local/share/reverso"
-CANONICAL_USER_HOME="/Users/andresilvaburgstahler"
+CANONICAL_USER_HOME="$(python3 -c 'import os,pwd; print(pwd.getpwuid(os.getuid()).pw_dir)')"
+CANONICAL_REVERSO_DIR="${CANONICAL_USER_HOME}/.local/share/reverso"
 if [[ -z "${HOME:-}" || "${HOME}" != "${CANONICAL_USER_HOME}" ]]; then
     echo "ERROR: HOME must match canonical account home ${CANONICAL_USER_HOME}" >&2
     exit 1

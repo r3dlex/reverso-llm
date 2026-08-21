@@ -1,0 +1,40 @@
+{
+  "id": "OLLAMA-RP-G4",
+  "issue_ref": ".ai/work-intake/ollama-reverso-provider-g4-attended-proof-hardening.md",
+  "implementation_ready": true,
+  "context": "Add a deterministic contract and bounded attended proof for existing local and current Cloud Ollama models through both Reverso clients.",
+  "root_causes": [
+    "No deterministic harness locked the attended sign-in boundary or four client lanes.",
+    "G3 deliberately stopped before live target-machine proof."
+  ],
+  "evidence": [
+    "The approved active specification defines G4 scope, exit codes, and targeted TDD.",
+    "The targeted red command exited 4 because tests/integration/test_ollama_live_contract.py was absent."
+  ],
+  "solutions": [
+    "Specify the public evidence schema, candidate authority, and forbidden operations.",
+    "Implement one pure injected coordinator and a thin foreground CLI.",
+    "Prove sign-in, refresh, inventory reload, output discard, and lane ordering with fakes."
+  ],
+  "acceptance_criteria": [
+    "Preflight performs no sign-in or model request.",
+    "Only marker-owned local or current non-stale Cloud rows become candidates.",
+    "Attended sign-in runs at most once and is followed by one refresh and one reload.",
+    "Four sequential client lanes discard stdout and stderr and emit only public metadata.",
+    "Missing local or Cloud authority exits 2 with an exact prerequisite code."
+  ],
+  "scope": [
+    "docs/specifications/ACTIVE/ollama-reverso-provider-live-test.md",
+    "src/reverso/ollama_live_proof.py",
+    "scripts/ollama-live-proof.py",
+    "tests/integration/test_ollama_live_contract.py",
+    "tests/unit/test_ollama_live_proof.py",
+    ".ai/evidence/"
+  ],
+  "verification": [
+    "pytest --override-ini pythonpath=src tests/integration/test_ollama_live_contract.py -q"
+  ],
+  "coverage_percent": 0,
+  "legacy_safe_tdd": true,
+  "legacy_risk_reason": "foreground authentication and live client subprocess safety boundary"
+}

@@ -38,9 +38,10 @@ codex --version
 ### Install and start
 
 ```bash
+ACCOUNT_HOME="$(python3 -c 'import os,pwd; print(pwd.getpwuid(os.getuid()).pw_dir)')"
 git clone git@github.com:r3dlex/reverso-llm.git \
-  /Users/andresilvaburgstahler/.local/share/reverso
-cd /Users/andresilvaburgstahler/.local/share/reverso
+  "${ACCOUNT_HOME}/.local/share/reverso"
+cd "${ACCOUNT_HOME}/.local/share/reverso"
 ```
 
 Run the canonical sequence in the next section to install and start Reverso.
