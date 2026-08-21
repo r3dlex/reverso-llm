@@ -45,7 +45,7 @@ def test_acceptance_script_proves_the_complete_isolated_contract() -> None:
         Path("config/supported-client-surfaces.json").read_text(encoding="utf-8")
     )
 
-    assert len({surface["id"] for surface in manifest["surfaces"]}) == 17
+    assert len({surface["id"] for surface in manifest["surfaces"]}) == 19
     assert 'expected_surfaces = {item["id"] for item in manifest["surfaces"]}' in script
     assert script.index("run_sync dry-run") < script.index("run_sync apply")
     assert script.count("run_sync apply") == 2
@@ -496,17 +496,17 @@ def test_acceptance_executes_generated_clients_with_configured_profile(
     assert result.returncode == 0, result.stderr
     evidence = json.loads(result.stdout)
     assert evidence["headroom_profile"] == "agent-90"
-    assert evidence["codex_profiles_executed"] == 8
-    assert evidence["codex_reverso_profiles_executed"] == 5
+    assert evidence["codex_profiles_executed"] == 9
+    assert evidence["codex_reverso_profiles_executed"] == 6
     assert evidence["codex_direct_profiles_executed"] == 2
     assert evidence["codex_feature_gated_profiles_executed"] == 1
     assert evidence["codex_feature_gated_profiles_absent"] == 1
     assert evidence["codex_direct_profiles_preserved"] == 2
     assert evidence["external_catalogs_preserved"] == 1
-    assert evidence["claude_launchers_executed"] == 7
+    assert evidence["claude_launchers_executed"] == 8
     codex_calls = (tmp_path / "codex.log").read_text(encoding="utf-8").splitlines()
     claude_calls = (tmp_path / "claude.log").read_text(encoding="utf-8").splitlines()
-    assert len(codex_calls) == 8
+    assert len(codex_calls) == 9
     assert all("|debug models " in call for call in codex_calls)
     assert all("-c model=" in call for call in codex_calls)
     assert all("-c model_provider=" in call for call in codex_calls)
@@ -530,6 +530,7 @@ def test_acceptance_executes_generated_clients_with_configured_profile(
         "claude-auggie",
         "claude-deepseek",
         "claude-kimi",
+        "claude-ollama",
     }
     assert all(call.endswith("|--version") for call in claude_calls)
 
@@ -546,7 +547,7 @@ def test_acceptance_executes_all_enabled_feature_gated_profiles(
 
     assert result.returncode == 0, result.stderr
     evidence = json.loads(result.stdout)
-    assert evidence["codex_profiles_executed"] == 9
+    assert evidence["codex_profiles_executed"] == 10
     assert evidence["codex_feature_gated_profiles_executed"] == 2
     assert evidence["codex_feature_gated_profiles_absent"] == 0
     codex_calls = (tmp_path / "codex.log").read_text(encoding="utf-8").splitlines()
@@ -564,7 +565,7 @@ def test_acceptance_allows_enabled_feature_gate_without_live_profile(
 
     assert result.returncode == 0, result.stderr
     evidence = json.loads(result.stdout)
-    assert evidence["codex_profiles_executed"] == 7
+    assert evidence["codex_profiles_executed"] == 8
     assert evidence["codex_feature_gated_profiles_executed"] == 0
     assert evidence["codex_feature_gated_profiles_absent"] == 2
 

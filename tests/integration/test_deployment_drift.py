@@ -364,6 +364,7 @@ def _headroom_usage_payload() -> dict[str, Any]:
                 "auggie": 0,
                 "deepseek": 0,
                 "kimi": 0,
+                "ollama": 0,
                 "codex-direct": 0,
                 "openai-pass-through": 0,
                 "other": 0,
@@ -1738,3 +1739,35 @@ def test_main_rejects_symlinked_account_home_before_provenance_mutation(
         / "reverso"
         / "deployment-provenance.json"
     ).exists()
+
+
+@pytest.mark.parametrize("poisoned_home", ("/tmp/isolated", "/"))
+def test_isolated_verification_env_cannot_bypass_production_drift_check(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    poisoned_home: str,
+) -> None:
+    account_home = tmp_path / "account-home"
+    account_home.mkdir()
+    calls: list[tuple[str, Path, str]] = []
+    monkeypatch.setenv("REVERSO_ISOLATED_VERIFICATION_HOME", poisoned_home)
+    monkeypatch.setattr(deployment_drift, "_production_home", lambda: account_home)
+    monkeypatch.setattr(deployment_drift, "_selected_commit", lambda _env: COMMIT)
+
+    def check(
+        phase: str,
+        env: DriftEnvironment,
+        *,
+        selected_commit: str,
+    ) -> dict[str, str]:
+        calls.append((phase, env.home, selected_commit))
+        return {"phase": phase, "status": "passed", "provenance": "validated"}
+
+    monkeypatch.setattr(deployment_drift, "check_deployment_drift", check)
+
+    result = deployment_drift.main(["--phase", "acceptance"], repo_root=tmp_path)
+
+    assert result == 0
+    assert calls == [("acceptance", account_home, COMMIT)]
+    assert "isolated_convergence_verified" not in capsys.readouterr().out

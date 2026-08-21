@@ -4,8 +4,14 @@
     "label": "com.user.reverso-catalog-refresh",
     "path": "~/Library/LaunchAgents/com.user.reverso-catalog-refresh.plist",
     "start_calendar_interval": [
-      {"Hour": 6, "Minute": 0},
-      {"Hour": 18, "Minute": 0}
+      {
+        "Hour": 6,
+        "Minute": 0
+      },
+      {
+        "Hour": 18,
+        "Minute": 0
+      }
     ],
     "keep_alive": false,
     "listener": false,
@@ -48,18 +54,78 @@
     "provider_results",
     "error_codes"
   ],
-  "status_values": ["never_run", "success", "lock_skipped", "partial_freshness", "failed"],
-  "provider_result_values": ["current", "changed", "stale", "invalid", "skipped"],
-  "error_codes": {"sorted": true, "governed": true, "max_items": 16, "raw_text": false},
+  "status_values": [
+    "never_run",
+    "success",
+    "lock_skipped",
+    "partial_freshness",
+    "failed"
+  ],
+  "provider_result_values": [
+    "current",
+    "changed",
+    "stale",
+    "invalid",
+    "skipped"
+  ],
+  "error_codes": {
+    "sorted": true,
+    "governed": true,
+    "max_items": 16,
+    "raw_text": false
+  },
   "uninstall": {
-    "default_removes": ["plist", "bootstrapped_job"],
-    "default_preserves": ["lock", "status", "logs", "rotations"],
+    "default_removes": [
+      "plist",
+      "bootstrapped_job"
+    ],
+    "default_preserves": [
+      "lock",
+      "status",
+      "logs",
+      "rotations"
+    ],
     "purge_flag": "--purge-state",
-    "purge_removes": ["lock", "status", "logs", "rotations"]
+    "purge_removes": [
+      "lock",
+      "status",
+      "logs",
+      "rotations"
+    ]
   },
   "service_topology": {
-    "long_lived_launch_agents": ["com.user.reverso-proxy", "com.user.reverso-daemon"],
-    "scheduled_launch_agents": ["com.user.reverso-catalog-refresh"],
+    "long_lived_launch_agents": [
+      "com.user.reverso-proxy",
+      "com.user.reverso-daemon"
+    ],
+    "scheduled_launch_agents": [
+      "com.user.reverso-catalog-refresh"
+    ],
     "refresh_restarts_services": false
+  },
+  "ollama_inventory": {
+    "path": "~/Library/Application Support/reverso/ollama-inventory.json",
+    "owner": "reverso-client-sync/provider-ollama",
+    "group": "provider-ollama",
+    "permissions": "0600",
+    "freshness_values": [
+      "current",
+      "local_only",
+      "partial"
+    ],
+    "cloud_status_values": [
+      "current",
+      "auth_required",
+      "timeout",
+      "invalid",
+      "disabled",
+      "unavailable"
+    ],
+    "background_signin": false,
+    "stale_retention": "prior marker-owned Cloud rows only",
+    "opt_out": [
+      "REVERSO_OLLAMA_CLOUD=0",
+      "OLLAMA_NO_CLOUD=1"
+    ]
   }
 }

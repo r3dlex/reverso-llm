@@ -55,16 +55,20 @@ class OllamaAdapter(AnthropicNativeAdapter):
     async def create_anthropic_message(self, payload: dict[str, Any]) -> dict[str, Any]:
         if self._messages is None:
             raise RuntimeError("Ollama Messages client is unavailable")
+        await self._catalog.ensure_current(str(payload.get("model") or ""))
         return await self._messages.create(payload)
 
-    def stream_anthropic_message(
+    async def stream_anthropic_message(
         self, payload: dict[str, Any]
     ) -> AsyncIterator[dict[str, Any]]:
         if self._messages is None:
             raise RuntimeError("Ollama Messages client is unavailable")
-        return self._messages.stream(payload)
+        await self._catalog.ensure_current(str(payload.get("model") or ""))
+        async for event in self._messages.stream(payload):
+            yield event
 
     async def create_response(self, request: ResponsesRequest) -> ResponseEnvelope:
+        await self._catalog.ensure_current(request.model)
         envelope = _envelope(await self._responses.create(request), request)
         self._store.put_response(envelope, record_input_items(request))
         return envelope
@@ -72,6 +76,7 @@ class OllamaAdapter(AnthropicNativeAdapter):
     async def stream_response(
         self, request: ResponsesRequest
     ) -> AsyncIterator[SSEEvent]:
+        await self._catalog.ensure_current(request.model)
         completed: ResponseEnvelope | None = None
         async for data in self._responses.stream(request):
             event_name = data.get("type")
@@ -90,12 +95,27 @@ class OllamaAdapter(AnthropicNativeAdapter):
 
     async def list_models(self) -> ModelList:
         entries = await self._catalog.refresh()
+        return self._model_list(entries, self._catalog.cloud_status)
+
+    async def list_anthropic_models(self) -> ModelList:
+        entries, cloud_status = self._catalog.published()
+        return self._model_list(entries, cloud_status)
+
+    @staticmethod
+    def _model_list(entries: tuple[Any, ...], cloud_status: str) -> ModelList:
         return ModelList(
             data=[
-                {"id": entry.raw_id, "object": "model", "owned_by": "ollama"}
+                {
+                    "id": entry.raw_id,
+                    "object": "model",
+                    "owned_by": "ollama",
+                    "ollama_local": entry.local,
+                    "ollama_cloud": entry.cloud,
+                    "ollama_stale": entry.stale,
+                }
                 for entry in entries
             ],
-            discovery_source=f"live-local-cloud-{self._catalog.cloud_status}",
+            discovery_source=f"ollama-inventory-{cloud_status}",
         )
 
     async def get_response(self, response_id: str) -> ResponseEnvelope:

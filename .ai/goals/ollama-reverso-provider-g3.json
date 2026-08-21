@@ -1,0 +1,46 @@
+{
+  "id": "OLLAMA-RP-G3",
+  "issue_ref": ".ai/work-intake/ollama-reverso-provider-g3-convergence-refresh-docs.md",
+  "implementation_ready": true,
+  "context": "Complete prompt-free cross-client Ollama convergence, freshness, restore, uninstall, drift, and operator contracts.",
+  "root_causes": [
+    "The G2 clients did not share a durable marker-owned inventory snapshot.",
+    "Background failure states had no exact stale Cloud retention or absolute opt-out contract.",
+    "The nominal provider group lacked direct cross-client rollback evidence."
+  ],
+  "evidence": [
+    "docs/specifications/ACTIVE/ollama-reverso-provider.md defines the approved G3 scope and ten verification commands.",
+    ".ai/work-intake/ollama-reverso-provider-g3-convergence-refresh-docs.md is ready-for-agent and G2 is present in the branch base.",
+    "The legacy-safe red command exited 2 on the missing reverso.ollama_convergence freshness and atomicity seam."
+  ],
+  "solutions": [
+    "Prepare one marker-owned inventory snapshot and all Ollama client paths in provider-ollama.",
+    "Retain only prior marker-owned Cloud rows as stale on bounded background failure.",
+    "Make Cloud opt-out local-only and prove background sign-in is unreachable.",
+    "Publish isolated verification, operator guidance, fixtures, and drift evidence."
+  ],
+  "acceptance_criteria": [
+    "Dry-run, apply twice, refresh, and verify are deterministic and prompt-free.",
+    "Ollama profile, catalog, launcher, and inventory restore together on handled failure.",
+    "Auth-required, timeout, and invalid Cloud results retain only marker-owned stale Cloud rows.",
+    "Cloud opt-out invokes neither Cloud discovery nor sign-in.",
+    "Unrelated provider hashes and unmarked paths are preserved.",
+    "The ten G3 verification commands pass through an isolated wrapper."
+  ],
+  "scope": [
+    "src/reverso/ollama_convergence.py",
+    "src/reverso/client_sync.py",
+    "src/reverso/deployment_drift.py",
+    "tests/",
+    "README.md",
+    "docs/client-sync.md",
+    "docs/specifications/ACTIVE/",
+    "tests/fixtures/client_convergence/"
+  ],
+  "verification": [
+    "bash tests/verify_ollama_g3.sh"
+  ],
+  "coverage_percent": 0,
+  "legacy_safe_tdd": true,
+  "legacy_risk_reason": "cross-client filesystem atomicity and background authentication boundary"
+}

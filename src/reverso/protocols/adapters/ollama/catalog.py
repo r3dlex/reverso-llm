@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
 import httpx
+
+from reverso.ollama_convergence import load_inventory
 
 from .auth import OllamaAuthState
 
@@ -16,6 +20,22 @@ class OllamaCatalogEntry:
     local: bool
     cloud: bool
     observed_at: float
+    stale: bool = False
+
+
+class OllamaModelEligibilityError(RuntimeError):
+    """A requested model is retained diagnostically but is not current."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.status_code = 409
+        self.payload = {
+            "error": {
+                "type": code,
+                "code": code,
+                "message": code,
+            }
+        }
 
 
 class OllamaCatalog:
@@ -26,10 +46,12 @@ class OllamaCatalog:
         client: httpx.AsyncClient,
         endpoint: str,
         auth: OllamaAuthState,
+        inventory_path: Path,
     ) -> None:
         self._client = client
         self._endpoint = endpoint
         self._auth = auth
+        self._inventory_path = inventory_path
         self.entries: dict[str, OllamaCatalogEntry] = {}
 
     @property
@@ -60,3 +82,46 @@ class OllamaCatalog:
             )
         self.entries = entries
         return tuple(entries.values())
+
+    def published(self) -> tuple[tuple[OllamaCatalogEntry, ...], str]:
+        """Read the marker-owned snapshot used by scoped Claude discovery."""
+        snapshot = load_inventory(self._inventory_path)
+        entries = tuple(
+            OllamaCatalogEntry(
+                entry.raw_id,
+                entry.local,
+                entry.cloud,
+                0.0,
+                entry.stale,
+            )
+            for entry in snapshot.entries
+            if entry.local or not entry.stale
+        )
+        return entries, snapshot.cloud_status
+
+    async def ensure_current(self, raw_id: str) -> None:
+        """Confirm request-time eligibility without credentials or side effects."""
+        try:
+            snapshot = load_inventory(self._inventory_path)
+        except FileNotFoundError:
+            snapshot = None
+        if snapshot is None:
+            return
+        entry = next(
+            (candidate for candidate in snapshot.entries if candidate.raw_id == raw_id),
+            None,
+        )
+        if entry is None or entry.local or not entry.stale:
+            return
+        try:
+            live_entries = await asyncio.wait_for(self.refresh(), timeout=10.0)
+        except (TimeoutError, httpx.HTTPError, TypeError, ValueError):
+            live_entries = ()
+        if any(candidate.raw_id == raw_id for candidate in live_entries):
+            return
+        code = (
+            "auth_required"
+            if snapshot.auth_status == "required"
+            else "model_not_current"
+        )
+        raise OllamaModelEligibilityError(code)

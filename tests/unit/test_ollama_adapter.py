@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import httpx
 import pytest
@@ -9,6 +10,8 @@ from reverso.protocols.adapter import ResponsesRequest
 from reverso.protocols.adapters import ollama as ollama_module
 from reverso.protocols.adapters.ollama import build_ollama_runtime, validate_endpoint
 from reverso.protocols.adapters.ollama.auth import OllamaAuthState
+from reverso.protocols.anthropic_app import AnthropicMessagesApp
+from reverso.protocols.responses_app import ResponsesGatewayApp
 
 
 def _rich_request(*, stream: bool = False) -> ResponsesRequest:
@@ -125,7 +128,11 @@ def _transport(request: httpx.Request) -> httpx.Response:
 
 
 @pytest.mark.asyncio
-async def test_tags_discovers_every_validated_row_as_a_local_raw_id() -> None:
+async def test_tags_discovers_every_validated_row_as_a_local_raw_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("REVERSO_OLLAMA_CLOUD", raising=False)
+    monkeypatch.delenv("OLLAMA_NO_CLOUD", raising=False)
     client = httpx.AsyncClient(transport=httpx.MockTransport(_transport))
     runtime = build_ollama_runtime(client=client)
 
@@ -143,6 +150,143 @@ async def test_tags_discovers_every_validated_row_as_a_local_raw_id() -> None:
     assert suffix_looking.cloud is False
     assert runtime.auth.cloud_status == "unavailable"
     await runtime.close()
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_model_listing_uses_marker_owned_shared_inventory(
+    tmp_path: Path,
+) -> None:
+    inventory = tmp_path / "ollama-inventory.json"
+    inventory.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "owner": "reverso-client-sync/provider-ollama",
+                "observed_at": "2026-08-21T08:00:00+00:00",
+                "freshness": "partial",
+                "auth_status": "required",
+                "cloud_status": "auth_required",
+                "entries": [
+                    {
+                        "raw_id": "local-a",
+                        "local": True,
+                        "cloud": False,
+                        "stale": False,
+                    },
+                    {
+                        "raw_id": "local-stale-cloud",
+                        "local": True,
+                        "cloud": True,
+                        "stale": True,
+                    },
+                    {"raw_id": "cloud-a", "local": False, "cloud": True, "stale": True},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def no_live_request(request: httpx.Request) -> httpx.Response:
+        raise AssertionError(f"model publication must not rediscover {request.url}")
+
+    runtime = build_ollama_runtime(
+        client=httpx.AsyncClient(transport=httpx.MockTransport(no_live_request)),
+        inventory_path=inventory,
+    )
+
+    models = await runtime.adapter.list_anthropic_models()
+
+    assert [(row["id"], row["ollama_stale"]) for row in models.data] == [
+        ("local-a", False),
+        ("local-stale-cloud", True),
+    ]
+    assert models.discovery_source == "ollama-inventory-auth_required"
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("surface", ("responses", "messages"))
+@pytest.mark.parametrize(
+    ("auth_status", "cloud_status", "expected_code"),
+    (
+        ("required", "auth_required", "auth_required"),
+        ("failed", "timeout", "model_not_current"),
+    ),
+)
+async def test_protocol_surface_rejects_stale_cloud_before_upstream(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    surface: str,
+    auth_status: str,
+    cloud_status: str,
+    expected_code: str,
+) -> None:
+    monkeypatch.setenv("REVERSO_HEADROOM_ENABLED", "0")
+    inventory = tmp_path / "ollama-inventory.json"
+
+    def write_inventory(*, stale: bool) -> None:
+        inventory.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "owner": "reverso-client-sync/provider-ollama",
+                    "observed_at": "2026-08-21T08:00:00+00:00",
+                    "freshness": "partial" if stale else "current",
+                    "auth_status": auth_status if stale else "current",
+                    "cloud_status": cloud_status if stale else "current",
+                    "entries": [
+                        {
+                            "raw_id": "cloud-a",
+                            "local": False,
+                            "cloud": True,
+                            "stale": stale,
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    write_inventory(stale=False)
+    seen: list[str] = []
+
+    def transport(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.path)
+        if request.url.path == "/api/tags":
+            return httpx.Response(200, json={"models": []})
+        raise AssertionError("stale model reached an upstream generation endpoint")
+
+    runtime = build_ollama_runtime(
+        client=httpx.AsyncClient(transport=httpx.MockTransport(transport)),
+        inventory_path=inventory,
+    )
+    app = (
+        ResponsesGatewayApp({"ollama": runtime.adapter})
+        if surface == "responses"
+        else AnthropicMessagesApp({"ollama": runtime.adapter})
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:64946"
+    ) as client:
+        if surface == "messages":
+            listing = await client.get(
+                "/v1/models", headers={"x-reverso-model-catalog": "ollama"}
+            )
+            model = listing.json()["data"][0]["id"]
+            path = "/v1/messages"
+            headers = {"x-reverso-model-catalog": "ollama"}
+            payload = {"model": model, "max_tokens": 8, "messages": []}
+        else:
+            path = "/ollama/v1/responses"
+            headers = {}
+            payload = {"model": "cloud-a", "input": "hello"}
+        write_inventory(stale=True)
+        response = await client.post(path, headers=headers, json=payload)
+
+    assert response.status_code == 409
+    assert expected_code in response.text
+    assert seen == ["/api/tags"]
     await runtime.close()
 
 

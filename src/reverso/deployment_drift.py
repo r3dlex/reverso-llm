@@ -105,6 +105,7 @@ HEADROOM_USAGE_MAP_FIELDS = {
         "auggie",
         "deepseek",
         "kimi",
+        "ollama",
         "codex-direct",
         "openai-pass-through",
         "other",
@@ -1251,6 +1252,75 @@ def _production_home() -> Path:
             "governed account home must be absolute, real, and free of symbolic links"
         )
     return account_home
+
+
+def verify_isolated_convergence(*, home: Path, rtk_bin: Path) -> dict[str, object]:
+    """Verify hermetic client convergence without weakening production drift gates."""
+    from reverso import client_sync
+    from reverso.ollama_convergence import INVENTORY_OWNER
+
+    try:
+        resolved_home = home.resolve(strict=True)
+        production_home = Path(pwd.getpwuid(os.getuid()).pw_dir).resolve(strict=True)
+        resolved_rtk = rtk_bin.resolve(strict=True)
+        temporary_root = Path(tempfile.gettempdir()).resolve(strict=True)
+    except (KeyError, OSError, RuntimeError) as exc:
+        raise DeploymentDriftError(
+            "isolated convergence paths cannot be resolved safely"
+        ) from exc
+    if (
+        not home.is_absolute()
+        or home.is_symlink()
+        or not resolved_home.is_dir()
+        or resolved_home == production_home
+        or not resolved_home.is_relative_to(temporary_root)
+        or not resolved_rtk.is_file()
+        or not resolved_rtk.is_relative_to(resolved_home.parent)
+    ):
+        raise DeploymentDriftError("invalid isolated verification boundary")
+
+    status_path = (
+        resolved_home
+        / "Library/Application Support/reverso/catalog-refresh-status.json"
+    )
+    inventory_path = (
+        resolved_home / "Library/Application Support/reverso/ollama-inventory.json"
+    )
+    result = client_sync.run(
+        "verify",
+        codex_config=resolved_home / ".codex/config.toml",
+        claude_config_dir=resolved_home / ".claude",
+        catalog_dir=resolved_home / ".codex/reverso",
+        launch_agent_dir=resolved_home / ".local/bin",
+        rtk_bin=resolved_rtk,
+        home=resolved_home,
+        lock_path=(
+            resolved_home / "Library/Application Support/reverso/catalog-refresh.lock"
+        ),
+        status_path=status_path,
+    )
+    try:
+        inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+        status = json.loads(status_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise DeploymentDriftError(
+            f"isolated state is invalid: {type(exc).__name__}"
+        ) from exc
+    if (
+        result["status"] != "success"
+        or result["exit_code"] != 0
+        or inventory.get("owner") != INVENTORY_OWNER
+        or inventory_path.stat().st_mode & 0o777 != 0o600
+        or status.get("schema_version") != 1
+        or status_path.stat().st_mode & 0o777 != 0o600
+        or len(result["surfaces"]) != 19
+    ):
+        raise DeploymentDriftError("isolated convergence drift")
+    return {
+        "status": "isolated_convergence_verified",
+        "home": str(resolved_home),
+        "surface_count": len(result["surfaces"]),
+    }
 
 
 def main(argv: list[str] | None = None, *, repo_root: Path | None = None) -> int:

@@ -219,7 +219,7 @@ try:
         (root / "config/supported-client-surfaces.json").read_text(encoding="utf-8")
     )
     expected_surfaces = {item["id"] for item in manifest["surfaces"]}
-    if len(expected_surfaces) != 17:
+    if len(expected_surfaces) != 19:
         raise ValueError("surface count")
     for result in results:
         if {item["id"] for item in result["surfaces"]} != expected_surfaces:
@@ -403,7 +403,10 @@ try:
     ]:
         raise ValueError("service count")
 
-    with urllib.request.urlopen(HEADROOM_USAGE_URL, timeout=5.0) as response:
+    headroom_usage_url = os.environ.get(
+        "REVERSO_HEADROOM_USAGE_URL", HEADROOM_USAGE_URL
+    )
+    with urllib.request.urlopen(headroom_usage_url, timeout=5.0) as response:
         expected_profile = HeadroomCompressionConfig.from_env().profile
         validate_headroom_usage_payload(
             json.load(response),
@@ -422,10 +425,10 @@ print(
             "schema_version": 1,
             "status": "passed",
             "commit": head_commit,
-            "surface_count": 17,
+            "surface_count": 19,
             "long_lived_service_count": 2,
             "catalog_refresh_schedule": ["06:00", "18:00"],
-            "headroom_endpoint": HEADROOM_USAGE_URL,
+            "headroom_endpoint": headroom_usage_url,
             "headroom_schema_version": 2,
             "headroom_profile": expected_profile,
             "codex_profiles_executed": codex_profile_count,

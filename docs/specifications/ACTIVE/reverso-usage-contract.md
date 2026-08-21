@@ -81,6 +81,7 @@ The response body is JSON with `schema_version: 1`.
       "auggie": 0,
       "deepseek": 0,
       "kimi": 0,
+      "ollama": 0,
       "codex-direct": 0,
       "openai-pass-through": 0,
       "other": 0
@@ -172,6 +173,7 @@ compression metrics. The same aggregate is available directly at
       "auggie": 0,
       "deepseek": 0,
       "kimi": 0,
+      "ollama": 0,
       "codex-direct": 0,
       "openai-pass-through": 0,
       "other": 0
@@ -212,7 +214,7 @@ The bounded map keys are:
   `inflation_guard`, `retrieval_marker`, `unsafe_output`, `other`
 - `error_types`: `timeout`, `worker_busy`, `dependency_exception`,
   `inflation_guard`, `retrieval_marker`, `unsafe_output`, `other`
-- `provider_counts`: `claude`, `copilot`, `auggie`, `deepseek`, `kimi`,
+- `provider_counts`: `claude`, `copilot`, `auggie`, `deepseek`, `kimi`, `ollama`,
   `codex-direct`, `openai-pass-through`, `other`
 - `surface_counts`: `responses`, `anthropic_messages`, `other`
 

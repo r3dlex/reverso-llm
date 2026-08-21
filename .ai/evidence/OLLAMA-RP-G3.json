@@ -1,0 +1,23 @@
+{
+  "goal_id": "OLLAMA-RP-G3",
+  "red": {
+    "command": "uv run pytest tests/unit/test_ollama_convergence.py tests/integration/test_ollama_convergence_runbook.py -q",
+    "exit_code": 2,
+    "failure": "ImportError: cannot import name ollama_convergence from reverso"
+  },
+  "green": {
+    "command": "uv run pytest tests/unit/test_ollama_convergence.py tests/integration/test_ollama_convergence_runbook.py -q",
+    "exit_code": 0,
+    "result": "11 passed after implementation"
+  },
+  "wrapper": {
+    "command": "bash tests/verify_ollama_g3.sh",
+    "exit_code": 0,
+    "result": "38 unit passed; 29 integration passed; dry-run planned; first apply success; second apply no_op; refresh no_op; verify success; convergence acceptance passed; explicit isolated convergence verified 19 surfaces; 1194 non-integration passed"
+  },
+  "targeted_green": {
+    "command": "uv run pytest tests/unit/test_ollama_convergence.py tests/unit/test_catalog_refresh.py tests/unit/test_client_convergence_contract.py tests/integration/test_ollama_convergence_runbook.py -q",
+    "exit_code": 0,
+    "result": "41 passed"
+  }
+}
