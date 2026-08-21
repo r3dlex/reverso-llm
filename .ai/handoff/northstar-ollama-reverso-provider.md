@@ -1,10 +1,12 @@
 ---
 title: Northstar A to B handoff for ollama-reverso-provider
-status: active
+status: complete
 slug: ollama-reverso-provider
 ---
 
 # Northstar A to B Handoff: ollama-reverso-provider
+
+Completion: Implemented by PRs #116 through #120.
 
 ## Contract
 
@@ -19,12 +21,12 @@ slug: ollama-reverso-provider
 
 ## Sliced goals
 
-| Goal | Work item | Type | State | Blocked by |
+| Goal | Work item | Type | Status | Blocked by |
 |---|---|---|---|---|
-| OLLAMA-RP-G1 | `ollama-reverso-provider-g1-codex-responses.md` | AFK | ready-for-agent | none |
-| OLLAMA-RP-G2 | `ollama-reverso-provider-g2-claude-messages.md` | AFK | ready-for-agent | OLLAMA-RP-G1 |
-| OLLAMA-RP-G3 | `ollama-reverso-provider-g3-convergence-refresh-docs.md` | AFK | ready-for-agent | OLLAMA-RP-G2 |
-| OLLAMA-RP-G4 | `ollama-reverso-provider-g4-attended-proof-hardening.md` | HITL | ready-for-human | OLLAMA-RP-G3 |
+| OLLAMA-RP-G1 | `ollama-reverso-provider-g1-codex-responses.md` | AFK | completed in PR #116 | none |
+| OLLAMA-RP-G2 | `ollama-reverso-provider-g2-claude-messages.md` | AFK | completed in PR #118 | OLLAMA-RP-G1 |
+| OLLAMA-RP-G3 | `ollama-reverso-provider-g3-convergence-refresh-docs.md` | AFK | completed in PR #119 | OLLAMA-RP-G2 |
+| OLLAMA-RP-G4 | `ollama-reverso-provider-g4-attended-proof-hardening.md` | HITL | completed in PR #120 | OLLAMA-RP-G3 |
 
 ## Execution
 

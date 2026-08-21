@@ -2,7 +2,7 @@
 type: product-spec
 project: reverso
 title: Reverso-routed Ollama provider for Codex and Claude Code
-status: active
+status: complete
 slug: ollama-reverso-provider
 mode: deliberate
 date: 2026-08-20
@@ -617,6 +617,20 @@ uv run pytest tests/ -v --ignore=tests/integration --tb=short
 ```
 
 Attended live commands and evidence fields follow the companion test specification and are not run in unattended CI.
+
+## Completion
+
+The four sequential goals shipped through PRs #116, #118, #119, and #120. PR
+#117 supplied the repository lint remediation required by the G1 gate. Exact-head
+local and hosted checks passed for every implementation PR, all review threads
+were resolved, and the canonical deployment is pinned to merge commit
+`971b3c808492ae20872bf564378534662c9dfcf3`.
+
+The bounded target proof selected the installed local model
+`qwen3.8:27b-mlx` and recorded `cloud_model_required` because no current
+marker-owned Ollama Cloud model was available. This is an external runtime
+prerequisite permitted by G4's exit contract, not an unfinished implementation
+slice.
 
 ## Pre-mortem
 

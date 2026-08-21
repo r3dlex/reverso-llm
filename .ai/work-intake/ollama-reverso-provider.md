@@ -1,7 +1,7 @@
 ---
 title: Reverso-routed Ollama provider
-status: ready-for-agent
-state: ready-for-agent
+status: complete
+state: complete
 category: enhancement
 slug: ollama-reverso-provider
 owner: unassigned
@@ -27,17 +27,30 @@ Route Ollama through Reverso for a dedicated Codex Responses profile and a manag
 
 ## Sliced goals
 
-| Goal | Work item | Type | State | Blocked by |
+| Goal | Work item | Type | Status | Blocked by |
 |---|---|---|---|---|
-| OLLAMA-RP-G1 | `ollama-reverso-provider-g1-codex-responses.md` | AFK | ready-for-agent | none |
-| OLLAMA-RP-G2 | `ollama-reverso-provider-g2-claude-messages.md` | AFK | ready-for-agent | OLLAMA-RP-G1 |
-| OLLAMA-RP-G3 | `ollama-reverso-provider-g3-convergence-refresh-docs.md` | AFK | ready-for-agent | OLLAMA-RP-G2 |
-| OLLAMA-RP-G4 | `ollama-reverso-provider-g4-attended-proof-hardening.md` | HITL | ready-for-human | OLLAMA-RP-G3 |
+| OLLAMA-RP-G1 | `ollama-reverso-provider-g1-codex-responses.md` | AFK | completed in PR #116 | none |
+| OLLAMA-RP-G2 | `ollama-reverso-provider-g2-claude-messages.md` | AFK | completed in PR #118 | OLLAMA-RP-G1 |
+| OLLAMA-RP-G3 | `ollama-reverso-provider-g3-convergence-refresh-docs.md` | AFK | completed in PR #119 | OLLAMA-RP-G2 |
+| OLLAMA-RP-G4 | `ollama-reverso-provider-g4-attended-proof-hardening.md` | HITL | completed in PR #120 | OLLAMA-RP-G3 |
 
 ## Acceptance criteria
 
-- [ ] All four goal records complete in dependency order with recorded red-green evidence.
-- [ ] Codex and Claude Code use their correct Ollama protocol through Reverso.
-- [ ] Embedded Headroom runs exactly once per eligible request without corrupting structured content.
-- [ ] Local and Cloud model identity, authentication, opt-out, convergence, and rollback follow the active specification.
-- [ ] Exact-head local and hosted gates are green before merge.
+- [x] All four goal records complete in dependency order with recorded red-green evidence.
+- [x] Codex and Claude Code use their correct Ollama protocol through Reverso.
+- [x] Embedded Headroom runs exactly once per eligible request without corrupting structured content.
+- [x] Local and Cloud model identity, authentication, opt-out, convergence, and rollback follow the active specification.
+- [x] Exact-head local and hosted gates are green before merge.
+
+## Shipped via
+
+- PR #116 - G1 Codex Responses provider and isolated raw-id profile.
+- PR #117 - repository lint baseline remediation required by the G1 gate.
+- PR #118 - G2 Claude native Messages route and managed launcher.
+- PR #119 - G3 convergence, refresh, restore, uninstall, and operator contracts.
+- PR #120 - G4 bounded attended proof and hardening.
+
+The merged deployment is pinned to merge commit
+`971b3c808492ae20872bf564378534662c9dfcf3`. The bounded target proof
+completed its deterministic contract and recorded `cloud_model_required` as the
+remaining external prerequisite; no implementation slice remains open.

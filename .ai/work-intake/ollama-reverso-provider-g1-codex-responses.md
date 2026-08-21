@@ -1,7 +1,7 @@
 ---
 title: OLLAMA-RP-G1: Codex Responses vertical
-status: ready-for-agent
-state: ready-for-agent
+status: complete
+state: complete
 category: enhancement
 slug: ollama-reverso-provider-g1-codex-responses
 owner: unassigned
@@ -25,11 +25,11 @@ Deliver a usable dedicated Codex Ollama profile through Reverso Responses, inclu
 
 ## Acceptance criteria
 
-- [ ] The generated isolated Codex profile contains raw Ollama model ids only and reaches `/ollama/v1/responses`.
-- [ ] Embedded Headroom runs exactly once before Ollama dispatch and preserves supported structured inputs.
-- [ ] The runtime is composition-owned and closed exactly once.
-- [ ] No Ollama route is reachable on the Anthropic surface in this goal.
-- [ ] The goal verification commands and red-green evidence path in the consensus PRD are satisfied.
+- [x] The generated isolated Codex profile contains raw Ollama model ids only and reaches `/ollama/v1/responses`.
+- [x] Embedded Headroom runs exactly once before Ollama dispatch and preserves supported structured inputs.
+- [x] The runtime is composition-owned and closed exactly once.
+- [x] No Ollama route is reachable on the Anthropic surface in this goal.
+- [x] The goal verification commands and red-green evidence path in the consensus PRD are satisfied.
 
 ## Version impact
 
@@ -38,3 +38,8 @@ Additive routed-provider capability; no default-provider or frozen-interface cha
 ## Blocked by
 
 None - can start immediately
+
+## Shipped via
+
+Completed in PR #116 and gate remediation #117. Exact-head local and hosted gates passed, and the
+associated red-green evidence remains under `.ai/evidence/`.
