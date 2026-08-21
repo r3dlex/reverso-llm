@@ -12,10 +12,12 @@ from reverso.protocols.adapter import (
     ResponsesRequest,
     SSEEvent,
 )
+from reverso.protocols.anthropic_native import AnthropicNativeAdapter
 from reverso.protocols.replay import record_input_items
 from reverso.protocols.store import ResponseStore
 
 from .catalog import OllamaCatalog
+from .messages import OllamaMessagesClient
 from .responses import OllamaResponsesClient
 
 
@@ -37,16 +39,30 @@ def _envelope(raw: dict[str, Any], request: ResponsesRequest) -> ResponseEnvelop
     )
 
 
-class OllamaAdapter:
+class OllamaAdapter(AnthropicNativeAdapter):
     def __init__(
         self,
         catalog: OllamaCatalog,
         responses_client: OllamaResponsesClient,
         store: ResponseStore,
+        messages_client: OllamaMessagesClient | None = None,
     ) -> None:
         self._catalog = catalog
         self._responses = responses_client
+        self._messages = messages_client
         self._store = store
+
+    async def create_anthropic_message(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if self._messages is None:
+            raise RuntimeError("Ollama Messages client is unavailable")
+        return await self._messages.create(payload)
+
+    def stream_anthropic_message(
+        self, payload: dict[str, Any]
+    ) -> AsyncIterator[dict[str, Any]]:
+        if self._messages is None:
+            raise RuntimeError("Ollama Messages client is unavailable")
+        return self._messages.stream(payload)
 
     async def create_response(self, request: ResponsesRequest) -> ResponseEnvelope:
         envelope = _envelope(await self._responses.create(request), request)

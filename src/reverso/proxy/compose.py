@@ -38,6 +38,7 @@ from reverso.protocols.adapters import codex_usage_store
 from reverso.protocols.adapters.kimi import KimiAdapter, KimiOAuthAuth
 from reverso.protocols.adapters.ollama import OllamaRuntime, build_ollama_runtime
 from reverso.protocols.anthropic_app import (
+    build_anthropic_adapters,
     build_anthropic_app,
     route_is_anthropic_surface,
 )
@@ -192,19 +193,26 @@ class CompositionRoot:
         if gateway is None:
             self._kimi_login = KimiLoginCoordinator()
             self._kimi_auth = KimiOAuthAuth(login_coordinator=self._kimi_login)
-        self._anthropic_app = (
-            anthropic_app
-            if anthropic_app is not None
-            else build_anthropic_app(kimi_auth=self._kimi_auth)
-        )
+        else:
+            self._ollama_runtime = ollama_runtime
         if gateway is None:
             adapters = build_adapters(kimi_auth=self._kimi_auth)
             self._gateway = build_app(adapters)
             self._ollama_runtime = ollama_runtime or build_ollama_runtime()
             adapters["ollama"] = self._ollama_runtime.adapter
+            if anthropic_app is None:
+                anthropic_adapters = build_anthropic_adapters(kimi_auth=self._kimi_auth)
+                anthropic_adapters["ollama"] = self._ollama_runtime.adapter
+                self._anthropic_app = build_anthropic_app(anthropic_adapters)
+            else:
+                self._anthropic_app = anthropic_app
         else:
             self._gateway = gateway
-            self._ollama_runtime = ollama_runtime
+            self._anthropic_app = (
+                anthropic_app
+                if anthropic_app is not None
+                else build_anthropic_app(kimi_auth=self._kimi_auth)
+            )
         self._legacy_app = legacy_app
 
     async def close(self) -> None:

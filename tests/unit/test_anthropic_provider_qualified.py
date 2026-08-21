@@ -1,4 +1,4 @@
-"""G1 negative proof: Ollama has no Anthropic routing authority."""
+"""G2 negative proof: generic Ollama forms have no Anthropic authority."""
 
 from reverso.protocols.surface_registry import (
     SURFACE_BACKENDS,
@@ -7,7 +7,7 @@ from reverso.protocols.surface_registry import (
 
 
 def test_ollama_forms_are_not_anthropic_backends() -> None:
-    assert "ollama" not in SURFACE_BACKENDS["anthropic"]
+    assert "ollama" in SURFACE_BACKENDS["anthropic"]
     for model in (
         "qwen3:8b",
         "ollama/qwen3:8b",

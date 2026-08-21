@@ -97,7 +97,7 @@ def test_claude_models_resolve_to_claude() -> None:
 def test_surface_backends_includes_claude() -> None:
     anthropic = SURFACE_BACKENDS["anthropic"]
     assert anthropic == frozenset(
-        {"copilot", "deepseek", "auggie", "codex", "claude", "kimi"}
+        {"copilot", "deepseek", "auggie", "codex", "claude", "kimi", "ollama"}
     )
     assert "claude" in anthropic
 

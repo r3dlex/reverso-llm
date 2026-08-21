@@ -116,7 +116,7 @@ The unified command reports a per-surface result for:
 - Codex Reverso routes: Claude, Copilot, Auggie, DeepSeek, Kimi, and Ollama.
 - Feature-gated Codex routes: Codex Direct and OpenAI pass-through.
 - Claude Code launchers: aggregate Reverso, Claude, Codex, Copilot, Auggie,
-  DeepSeek, and Kimi.
+  DeepSeek, Kimi, and Ollama.
 - Direct user-preserving Codex profiles: built-in OpenAI and MiniMax.
 - External additive selector catalogs: AGY, when an existing configured source
   is present.
@@ -182,6 +182,29 @@ the Anthropic registry, and no Ollama alias is valid on `/v1/messages`. G2 may
 add catalog-scoped exact Anthropic alias authority and
 `anthropic_messages`/`ollama_messages` dimensions without changing the G1 raw
 Codex selector authority.
+
+### Ollama G2 Claude Messages contract
+
+The manifest adds the marker-owned `claude-ollama` launcher to
+`provider-ollama`, and `shared-reverso-launcher` depends on that provider. The
+launcher uses the existing loopback base URL and placeholder token, enables
+gateway discovery, and sends exactly `x-reverso-model-catalog: ollama` with the
+workspace header.
+
+The scoped model listing presents only opaque
+`anthropic-ollama-<raw-model-id>` aliases generated from the runtime catalog.
+Each complete alias is bound to its exact raw id in request-local Ollama catalog
+authority. Bare raw ids and `ollama/<id>` never route on Anthropic. Alias lookup
+is exact and case-sensitive; duplicate or casefold-colliding generations publish
+no conflicting Ollama rows. The bound raw bytes replace the alias before
+Headroom and native `/v1/messages` dispatch.
+
+One composition-owned runtime and adapter serve Responses and Messages. The
+Anthropic path prepares and translates once, compresses once, atomically
+projects only source-addressed text leaves back into the prepared native
+payload, then uses the optional native Messages facet. Projection ambiguity
+fails open to the whole prepared payload. Non-native providers retain their
+existing Responses translation path.
 
 The manifest is the authority for profile names, route prefixes, catalog
 ownership, default models, selector naming, and client support. Existing

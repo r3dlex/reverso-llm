@@ -1,0 +1,11 @@
+{
+  "goal_id": "OLLAMA-RP-G2",
+  "green": {
+    "command": "uv run pytest tests/unit/test_ollama_messages.py tests/integration/test_ollama_claude_launcher.py -q",
+    "exit_code": 0
+  },
+  "red": {
+    "command": "uv run pytest tests/unit/test_ollama_messages.py tests/integration/test_ollama_claude_launcher.py -q",
+    "exit_code": 2
+  }
+}

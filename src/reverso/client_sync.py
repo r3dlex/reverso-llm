@@ -117,6 +117,7 @@ EXPECTED_GROUPS = {
             "provider-copilot",
             "provider-deepseek",
             "provider-kimi",
+            "provider-ollama",
         ),
     ),
 }
@@ -179,6 +180,16 @@ EXPECTED_SURFACES = {
         "reverso_managed",
         "reverso",
         "<launch_agent_dir>/claude-kimi",
+        None,
+    ),
+    "claude-ollama": (
+        "provider_launcher",
+        "provider-ollama",
+        "anthropic-ollama-<raw-model-id>",
+        "runtime",
+        "reverso_managed",
+        "reverso",
+        "<launch_agent_dir>/claude-ollama",
         None,
     ),
     "claude-reverso": (

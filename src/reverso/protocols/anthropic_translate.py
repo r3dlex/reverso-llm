@@ -50,6 +50,9 @@ Response mapping (responses_envelope_to_anthropic):
 from __future__ import annotations
 
 import json
+import copy
+import hashlib
+from dataclasses import dataclass
 from typing import Any
 
 from reverso.protocols.adapter import ResponseEnvelope, ResponsesRequest
@@ -65,6 +68,22 @@ _EXTRA_PASSTHROUGH = ("max_tokens", "temperature", "stop_sequences")
 # Anthropic stop_reason values that map straight through; an unknown or absent
 # Responses status falls back to "end_turn".
 _DEFAULT_STOP_REASON = "end_turn"
+
+
+@dataclass(frozen=True)
+class AnthropicProjectionSource:
+    response_address: tuple[int | str, ...]
+    native_json_pointer: tuple[int | str, ...]
+    native_block_kind: str
+    structural_fingerprint: str
+    source_text_fingerprint: str
+
+
+@dataclass(frozen=True)
+class PreparedAnthropicDispatch:
+    request: ResponsesRequest
+    payload: dict[str, Any]
+    projection_sources: tuple[AnthropicProjectionSource, ...]
 
 
 def prepare_anthropic_request(
@@ -94,9 +113,158 @@ def prepare_anthropic_request(
     stored state; the only side effect is the documented in-place strip.
     Compression and dispatch remain the app's job.
     """
+    prepared = prepare_anthropic_dispatch(payload, backend)
+    return prepared.request, prepared.payload
+
+
+def prepare_anthropic_dispatch(
+    payload: dict[str, Any], backend: str
+) -> PreparedAnthropicDispatch:
+    """Prepare translation and its exact reversible native text addresses."""
     strip_degradable_features(payload)
     gate_anthropic_features(payload, backend)
-    return anthropic_request_to_responses(payload), payload
+    sources: list[AnthropicProjectionSource] = []
+    request = _anthropic_request_to_responses(payload, sources)
+    return PreparedAnthropicDispatch(request, payload, tuple(sources))
+
+
+def _get_at(root: Any, address: tuple[int | str, ...]) -> Any:
+    value = root
+    for part in address:
+        value = value[part]
+    return value
+
+
+def _set_at(root: Any, address: tuple[int | str, ...], value: Any) -> None:
+    target = root
+    for part in address[:-1]:
+        target = target[part]
+    target[address[-1]] = value
+
+
+def _native_fingerprint(
+    payload: dict[str, Any], pointer: tuple[int | str, ...], kind: str
+) -> str:
+    if pointer[:1] == ("system",):
+        siblings = (
+            [block.get("type") for block in payload["system"]]
+            if isinstance(payload.get("system"), list)
+            else ["string"]
+        )
+        role = "system"
+        stable_id = None
+    else:
+        message_index = int(pointer[1])
+        message = payload["messages"][message_index]
+        content = message.get("content")
+        siblings = (
+            [block.get("type") for block in content if isinstance(block, dict)]
+            if isinstance(content, list)
+            else ["string"]
+        )
+        role = message.get("role")
+        block = content[pointer[3]] if isinstance(content, list) else message
+        stable_id = block.get("id") or block.get("tool_use_id")
+    structural = json.dumps(
+        [role, kind, stable_id, siblings],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(structural).hexdigest()
+
+
+def _record_source(
+    sources: list[AnthropicProjectionSource],
+    payload: dict[str, Any],
+    response: tuple[int | str, ...],
+    native: tuple[int | str, ...],
+    kind: str,
+) -> None:
+    source_text = _get_at(payload, native)
+    sources.append(
+        AnthropicProjectionSource(
+            response,
+            native,
+            kind,
+            _native_fingerprint(payload, native, kind),
+            hashlib.sha256(source_text.encode("utf-8")).hexdigest(),
+        )
+    )
+
+
+def project_compressed_request_to_anthropic_payload(
+    prepared: PreparedAnthropicDispatch,
+    compressed_request: ResponsesRequest,
+) -> dict[str, Any]:
+    """Atomically project reversible compressed text, otherwise fail open."""
+    original = prepared.request
+    sources = prepared.projection_sources
+    response_addresses = [source.response_address for source in sources]
+    if len(response_addresses) != len(set(response_addresses)):
+        return copy.deepcopy(prepared.payload)
+    original_shape = {
+        "instructions": original.instructions,
+        "input": copy.deepcopy(original.input),
+    }
+    compressed_shape = {
+        "instructions": compressed_request.instructions,
+        "input": copy.deepcopy(compressed_request.input),
+    }
+    try:
+        for address in response_addresses:
+            if not isinstance(_get_at(original_shape, address), str) or not isinstance(
+                _get_at(compressed_shape, address), str
+            ):
+                return copy.deepcopy(prepared.payload)
+            _set_at(original_shape, address, "<reverso-text>")
+            _set_at(compressed_shape, address, "<reverso-text>")
+    except (IndexError, KeyError, TypeError):
+        return copy.deepcopy(prepared.payload)
+    if original_shape != compressed_shape:
+        return copy.deepcopy(prepared.payload)
+
+    source_by_text_fingerprint: dict[str, set[tuple[int | str, ...]]] = {}
+    for source in sources:
+        source_by_text_fingerprint.setdefault(
+            source.source_text_fingerprint, set()
+        ).add(source.response_address)
+    compressed_root = {
+        "instructions": compressed_request.instructions,
+        "input": compressed_request.input,
+    }
+    for source in sources:
+        compressed_text = _get_at(compressed_root, source.response_address)
+        compressed_fingerprint = hashlib.sha256(
+            compressed_text.encode("utf-8")
+        ).hexdigest()
+        original_addresses = source_by_text_fingerprint.get(compressed_fingerprint)
+        if (
+            original_addresses is not None
+            and source.response_address not in original_addresses
+        ):
+            return copy.deepcopy(prepared.payload)
+
+    projected = copy.deepcopy(prepared.payload)
+    try:
+        for source in sources:
+            if (
+                _native_fingerprint(
+                    projected, source.native_json_pointer, source.native_block_kind
+                )
+                != source.structural_fingerprint
+            ):
+                return copy.deepcopy(prepared.payload)
+            compressed_text = _get_at(
+                {
+                    "instructions": compressed_request.instructions,
+                    "input": compressed_request.input,
+                },
+                source.response_address,
+            )
+            _set_at(projected, source.native_json_pointer, compressed_text)
+    except (IndexError, KeyError, TypeError):
+        return copy.deepcopy(prepared.payload)
+    return projected
 
 
 def anthropic_request_to_responses(payload: dict[str, Any]) -> ResponsesRequest:
@@ -108,9 +276,39 @@ def anthropic_request_to_responses(payload: dict[str, Any]) -> ResponsesRequest:
     the Responses function-tool surface. ``max_tokens`` / ``temperature`` /
     ``stop_sequences`` ride in ``extra``.
     """
+    return _anthropic_request_to_responses(payload, None)
+
+
+def _anthropic_request_to_responses(
+    payload: dict[str, Any],
+    sources: list[AnthropicProjectionSource] | None,
+) -> ResponsesRequest:
+    """Translate while optionally emitting reverse sources at leaf creation."""
     model = payload.get("model")
     instructions = _system_to_instructions(payload.get("system"))
-    input_items = _messages_to_input_items(payload.get("messages"))
+    if sources is not None and instructions is not None:
+        system = payload.get("system")
+        if isinstance(system, str):
+            _record_source(
+                sources, payload, ("instructions",), ("system",), "system_text"
+            )
+        elif (
+            isinstance(system, list)
+            and len(system) == 1
+            and isinstance(system[0], dict)
+            and system[0].get("type") == "text"
+            and isinstance(system[0].get("text"), str)
+        ):
+            _record_source(
+                sources,
+                payload,
+                ("instructions",),
+                ("system", 0, "text"),
+                "system_text",
+            )
+    input_items = _messages_to_input_items(
+        payload.get("messages"), payload=payload, sources=sources
+    )
     tools = _tools_to_responses(payload.get("tools"))
     tool_choice = _tool_choice_to_responses(payload.get("tool_choice"))
 
@@ -176,7 +374,12 @@ def _system_to_instructions(system: Any) -> str | None:
     return None
 
 
-def _messages_to_input_items(messages: Any) -> list[dict[str, Any]]:
+def _messages_to_input_items(
+    messages: Any,
+    *,
+    payload: dict[str, Any] | None = None,
+    sources: list[AnthropicProjectionSource] | None = None,
+) -> list[dict[str, Any]]:
     """Translate Anthropic ``messages`` into a Responses input item list.
 
     Each message's content blocks are translated in order. text blocks for a
@@ -187,34 +390,75 @@ def _messages_to_input_items(messages: Any) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     if not isinstance(messages, list):
         return items
-    for message in messages:
+    for message_index, message in enumerate(messages):
         if not isinstance(message, dict):
             continue
         role = message.get("role")
         role = role if isinstance(role, str) else "user"
-        items.extend(_message_to_items(role, message.get("content")))
+        items.extend(
+            _message_to_items(
+                role,
+                message.get("content"),
+                item_offset=len(items),
+                message_index=message_index,
+                payload=payload,
+                sources=sources,
+            )
+        )
     return items
 
 
-def _message_to_items(role: str, content: Any) -> list[dict[str, Any]]:
+def _message_to_items(
+    role: str,
+    content: Any,
+    *,
+    item_offset: int = 0,
+    message_index: int = 0,
+    payload: dict[str, Any] | None = None,
+    sources: list[AnthropicProjectionSource] | None = None,
+) -> list[dict[str, Any]]:
     """Translate one Anthropic message's content into Responses input items."""
     if isinstance(content, str):
         if not content:
             return []
-        return [_message_item(role, [_text_part(role, content)])]
+        item = _message_item(role, [_text_part(role, content)])
+        if sources is not None and payload is not None:
+            _record_source(
+                sources,
+                payload,
+                ("input", item_offset, "content", 0, "text"),
+                ("messages", message_index, "content"),
+                "message_text",
+            )
+        return [item]
 
     if not isinstance(content, list):
         return []
 
     items: list[dict[str, Any]] = []
     pending_parts: list[dict[str, Any]] = []
+    pending_native_pointers: list[tuple[int | str, ...]] = []
 
     def flush() -> None:
         if pending_parts:
+            item_index = item_offset + len(items)
             items.append(_message_item(role, list(pending_parts)))
+            if sources is not None and payload is not None:
+                for part_index, (part, pointer) in enumerate(
+                    zip(pending_parts, pending_native_pointers, strict=False)
+                ):
+                    if part.get("type") in {"input_text", "output_text"}:
+                        _record_source(
+                            sources,
+                            payload,
+                            ("input", item_index, "content", part_index, "text"),
+                            pointer,
+                            "message_text",
+                        )
             pending_parts.clear()
+            pending_native_pointers.clear()
 
-    for block in content:
+    for block_index, block in enumerate(content):
         if not isinstance(block, dict):
             continue
         block_type = block.get("type")
@@ -222,8 +466,12 @@ def _message_to_items(role: str, content: Any) -> list[dict[str, Any]]:
             text = block.get("text")
             if isinstance(text, str):
                 pending_parts.append(_text_part(role, text))
+                pending_native_pointers.append(
+                    ("messages", message_index, "content", block_index, "text")
+                )
         elif block_type == "image":
             pending_parts.append(_image_part(block))
+            pending_native_pointers.append(())
         elif block_type == "tool_use":
             flush()
             items.append(_function_call_item(block))

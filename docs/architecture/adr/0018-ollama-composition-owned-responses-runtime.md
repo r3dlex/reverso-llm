@@ -4,7 +4,7 @@ status: accepted
 date: 2026-08-20
 ---
 
-# ADR 0018: Composition-owned Ollama Responses runtime
+# ADR 0018: Composition-owned Ollama dual-protocol runtime
 
 ## Context
 
@@ -40,10 +40,32 @@ close is idempotent only as a defensive safeguard. Embedded Headroom remains at
 the Responses dispatch boundary and attributes the request to provider
 `ollama` and surface `responses` before adapter dispatch.
 
+G2 extends the same runtime with one native Messages client and an internal
+`AnthropicNativeAdapter` facet on the existing adapter object. The composition
+root injects that identical object into both registries. The frozen
+`ProviderAdapter` remains byte-for-byte unchanged.
+
+Ollama Messages routing is available only through the exact
+`x-reverso-model-catalog: ollama` authority. The scoped catalog presents opaque
+`anthropic-ollama-<raw-id>` aliases and binds each complete alias to its exact
+raw model id. Bare ids, generic `ollama/<id>` forms, missing catalog headers,
+case variants, duplicate aliases, and casefold collisions do not route. The raw
+id from the authority replaces the presented alias before preparation,
+Headroom, or upstream dispatch.
+
+The Anthropic translator emits reverse source addresses while it creates each
+reversible Responses text leaf. After Headroom runs once, projection changes
+only those mapped native text leaves. Missing, reordered, merged, split, or
+structurally changed mappings return the complete prepared native payload
+unchanged. Tool blocks, tool results, images, ids, ordering, and request controls
+remain native Messages structures. Existing non-native adapters continue using
+the prior Responses translation and mapping path.
+
 ## Consequences
 
 - Ollama becomes a first-party Responses route without changing the frozen
   adapter contract.
 - Local inventory changes are visible on the next supported model refresh.
-- Claude Messages aliases and native Messages dispatch are explicitly deferred.
+- G2 completes the formerly deferred Claude Messages authority without adding a second
+  runtime or widening the public adapter contract.
 - Daemon management, model pulls, and unattended sign-in are outside scope.

@@ -13,9 +13,9 @@ from reverso.proxy import compose
 from reverso.proxy.compose import CompositionRoot
 
 
-def test_ollama_is_responses_only_in_g1() -> None:
+def test_ollama_is_reachable_on_both_surfaces_in_g2() -> None:
     assert "ollama" in APP_PROVIDER_PREFIXES
-    assert "ollama" not in SURFACE_BACKENDS["anthropic"]
+    assert "ollama" in SURFACE_BACKENDS["anthropic"]
 
 
 @pytest.mark.asyncio
@@ -187,6 +187,18 @@ async def test_lifespan_forces_hung_request_to_quiesce_and_closes_runtime_once()
         {"type": "lifespan.startup.complete"},
         {"type": "lifespan.shutdown.complete"},
     ]
+
+
+@pytest.mark.asyncio
+async def test_composition_injects_identical_adapter_into_both_registries() -> None:
+    runtime = build_ollama_runtime(
+        client=httpx.AsyncClient(transport=httpx.MockTransport(lambda _: None))
+    )
+    root = CompositionRoot(ollama_runtime=runtime, legacy_app=lambda *_: None)
+
+    assert root._gateway._adapters["ollama"] is runtime.adapter
+    assert root._anthropic_app._adapters["ollama"] is runtime.adapter
+    await root.close()
 
 
 def test_gateway_composition_failure_does_not_construct_owned_runtime(
