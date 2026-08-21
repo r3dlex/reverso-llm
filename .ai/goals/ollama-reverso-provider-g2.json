@@ -7,6 +7,11 @@
     "The G1 runtime has no native Messages client or optional Anthropic facet.",
     "Claude Code has no Ollama launcher or exact catalog-scoped alias authority."
   ],
+  "evidence": [
+    "PR #116 merged OLLAMA-RP-G1 at 88cf946bf3e46d73470e0397664dd82c66bb6aab with exact-head local and hosted gates green.",
+    "docs/specifications/ACTIVE/ollama-reverso-provider.md defines the approved G2 native Messages scope and verification commands.",
+    ".ai/work-intake/ollama-reverso-provider-g2-claude-messages.md is ready-for-agent and blocked only by the now-merged G1."
+  ],
   "solutions": [
     "Add translation-emitted projection sources and atomic fail-open projection before native Messages dispatch.",
     "Inject the identical composition-owned adapter into both registries and route only exact header-bound Ollama aliases.",
