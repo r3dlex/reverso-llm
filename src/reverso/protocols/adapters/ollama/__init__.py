@@ -14,6 +14,7 @@ from reverso.protocols.store import ResponseStore
 from .adapter import OllamaAdapter
 from .auth import OllamaAuthState
 from .catalog import OllamaCatalog
+from .messages import OllamaMessagesClient
 from .responses import OllamaResponsesClient
 
 OLLAMA_ENDPOINT = "http://127.0.0.1:11434"
@@ -40,6 +41,7 @@ class OllamaRuntime:
     catalog: OllamaCatalog
     auth: OllamaAuthState
     responses_client: OllamaResponsesClient
+    messages_client: OllamaMessagesClient
     adapter: OllamaAdapter
     closed: bool = False
 
@@ -76,12 +78,14 @@ def build_ollama_runtime(
     try:
         catalog = OllamaCatalog(owned_client, endpoint, auth_state)
         responses_client = OllamaResponsesClient(owned_client, endpoint)
-        adapter = OllamaAdapter(catalog, responses_client, store)
+        messages_client = OllamaMessagesClient(owned_client, endpoint)
+        adapter = OllamaAdapter(catalog, responses_client, store, messages_client)
         return OllamaRuntime(
             owned_client,
             catalog,
             auth_state,
             responses_client,
+            messages_client,
             adapter,
         )
     except BaseException:

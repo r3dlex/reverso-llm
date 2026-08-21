@@ -53,12 +53,15 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
-from reverso.protocols.adapter import ProviderAdapter, ResponsesRequest
+from reverso.protocols.adapter import ProviderAdapter
+from reverso.protocols.anthropic_native import AnthropicNativeAdapter
 from reverso.protocols.anthropic_feature_gate import AnthropicFeatureRejected
 from reverso.protocols.anthropic_stream import responses_sse_to_anthropic
 from reverso.protocols.anthropic_translate import (
     anthropic_request_to_responses,
-    prepare_anthropic_request,
+    PreparedAnthropicDispatch,
+    prepare_anthropic_dispatch,
+    project_compressed_request_to_anthropic_payload,
     responses_envelope_to_anthropic,
 )
 from reverso.protocols.headroom_compression import (
@@ -99,7 +102,7 @@ _MODEL_CATALOG_HEADER = b"x-reverso-model-catalog"
 # is now part of SURFACE_BACKENDS["anthropic"] and is served first-party via the
 # claude CLI (ADR 0009), so /claude/v1/messages reaches the claude backend.
 _ANTHROPIC_SURFACE_BACKENDS = SURFACE_BACKENDS["anthropic"]
-_PROFILE_PREFIXES = frozenset(_ANTHROPIC_SURFACE_BACKENDS)
+_PROFILE_PREFIXES = frozenset(_ANTHROPIC_SURFACE_BACKENDS - {"ollama"})
 
 # The Anthropic local paths this surface serves. G002 routed only /v1/messages;
 # G006 adds /v1/messages/count_tokens (a pre-flight sizing POST) and the bare
@@ -237,9 +240,10 @@ def _model_catalog_from_headers(
     Claude alias sees only its own models in gateway discovery. A missing header
     or the explicit value ``all`` preserves the aggregate claude-reverso catalog.
     """
-    for key, value in headers:
-        if key.lower() != _MODEL_CATALOG_HEADER:
-            continue
+    values = [value for key, value in headers if key.lower() == _MODEL_CATALOG_HEADER]
+    if len(values) > 1:
+        raise ValueError("invalid Reverso model catalog")
+    for value in values:
         catalog = value.decode("utf-8", "replace").strip().lower()
         if catalog == "all":
             return None
@@ -449,6 +453,7 @@ class AnthropicMessagesApp:
         self._model_catalog_lock = asyncio.Lock()
         self._adapter_model_cache: dict[str, list[str]] = {}
         self._discovery_aliases: dict[str, str] = {}
+        self._ollama_alias_authority: dict[str, tuple[str, str]] = {}
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope.get("type") != "http":
@@ -479,6 +484,17 @@ class AnthropicMessagesApp:
             )
             return
         method = str(scope.get("method", "GET")).upper()
+        try:
+            catalog_backend = _model_catalog_from_headers(headers)
+        except ValueError:
+            await _send_error(
+                send,
+                400,
+                "invalid_request_error",
+                "invalid Reverso model catalog",
+                anthropic_version=anthropic_version,
+            )
+            return
 
         # GET /v1/models is the only GET route this surface serves; it takes no
         # body and resolves no per-request backend. It combines the static surface
@@ -491,17 +507,6 @@ class AnthropicMessagesApp:
                     404,
                     "not_found_error",
                     "not found",
-                    anthropic_version=anthropic_version,
-                )
-                return
-            try:
-                catalog_backend = _model_catalog_from_headers(headers)
-            except ValueError:
-                await _send_error(
-                    send,
-                    400,
-                    "invalid_request_error",
-                    "invalid Reverso model catalog",
                     anthropic_version=anthropic_version,
                 )
                 return
@@ -548,8 +553,8 @@ class AnthropicMessagesApp:
                 CURRENT_PROFILE_WORKSPACE.set(system_workspace)
         model = _model_from_payload(payload)
 
-        backend = self._resolve_backend(route, model)
-        if backend is None:
+        resolved = self._resolve_backend(route, model, catalog_backend)
+        if resolved is None:
             # Unknown model (auto path) or a pinned prefix with no matching
             # adapter: not_found_error 404. This is consistent across
             # /v1/messages and /v1/messages/count_tokens so a pre-flight sizing
@@ -563,12 +568,13 @@ class AnthropicMessagesApp:
                 anthropic_version=anthropic_version,
             )
             return
+        backend, exact_raw_model = resolved
 
         # A fully-qualified provider/model id routed by its prefix above; the
         # downstream adapter expects the BARE upstream model id, so canonicalize the
         # payload model in place before any translation reads payload["model"].
         if payload is not None:
-            canonical = canonical_model_id(model)
+            canonical = exact_raw_model or canonical_model_id(model)
             if canonical is not None and canonical != payload.get("model"):
                 payload["model"] = canonical
 
@@ -621,7 +627,8 @@ class AnthropicMessagesApp:
         # unsupported feature is rejected here with a 400 JSON body, before any
         # text/event-stream header is committed (never a 200 event-stream).
         try:
-            request, payload = prepare_anthropic_request(payload, backend)
+            prepared = prepare_anthropic_dispatch(payload, backend)
+            payload = prepared.payload
         except AnthropicFeatureRejected as rejected:
             # Use str(rejected) so the 400 message is rendered by the single
             # source in AnthropicFeatureRejected.__init__; the app never
@@ -652,18 +659,24 @@ class AnthropicMessagesApp:
 
         if payload.get("stream") is True:
             await self._handle_streaming(
-                backend, request, send, anthropic_version=anthropic_version
+                backend,
+                prepared,
+                send,
+                anthropic_version=anthropic_version,
             )
             return
 
         await self._handle_nonstreaming(
-            backend, request, send, anthropic_version=anthropic_version
+            backend,
+            prepared,
+            send,
+            anthropic_version=anthropic_version,
         )
 
     async def _handle_nonstreaming(
         self,
         backend: str,
-        request: ResponsesRequest,
+        prepared: PreparedAnthropicDispatch,
         send: Send,
         *,
         anthropic_version: str,
@@ -677,6 +690,7 @@ class AnthropicMessagesApp:
         502 Anthropic error envelope; the request is never silently dropped.
         """
         adapter = self._adapters[backend]
+        request = prepared.request
         compression_outcome = await compress_responses_request(
             request,
             provider=normalize_headroom_provider(backend),
@@ -684,6 +698,15 @@ class AnthropicMessagesApp:
         )
         dispatch_request = compression_outcome.request
         try:
+            if isinstance(adapter, AnthropicNativeAdapter):
+                native_payload = project_compressed_request_to_anthropic_payload(
+                    prepared, dispatch_request
+                )
+                message = await adapter.create_anthropic_message(native_payload)
+                await _send_json(
+                    send, 200, message, anthropic_version=anthropic_version
+                )
+                return
             envelope = await adapter.create_response(dispatch_request)
         except Exception as exc:  # noqa: BLE001 - any backend failure -> 502
             logger.warning(
@@ -707,7 +730,7 @@ class AnthropicMessagesApp:
     async def _handle_streaming(
         self,
         backend: str,
-        request: ResponsesRequest,
+        prepared: PreparedAnthropicDispatch,
         send: Send,
         *,
         anthropic_version: str,
@@ -733,12 +756,24 @@ class AnthropicMessagesApp:
             only safe channel (emitted by the mapper itself).
         """
         adapter = self._adapters[backend]
+        request = prepared.request
         compression_outcome = await compress_responses_request(
             request,
             provider=normalize_headroom_provider(backend),
             surface="anthropic_messages",
         )
         dispatch_request = compression_outcome.request
+        if isinstance(adapter, AnthropicNativeAdapter):
+            await self._handle_native_streaming(
+                adapter,
+                project_compressed_request_to_anthropic_payload(
+                    prepared, dispatch_request
+                ),
+                send,
+                backend=backend,
+                anthropic_version=anthropic_version,
+            )
+            return
         message_id = new_message_id()
         anthropic_events = responses_sse_to_anthropic(
             adapter.stream_response(dispatch_request),
@@ -795,6 +830,63 @@ class AnthropicMessagesApp:
         if not started:
             # The mapper always yields at least message_start, so this is
             # defensive; commit the header so the client sees a valid stream.
+            await _start_anthropic_stream(send, anthropic_version=anthropic_version)
+        await send({"type": "http.response.body", "body": b"", "more_body": False})
+
+    async def _handle_native_streaming(
+        self,
+        adapter: AnthropicNativeAdapter,
+        payload: dict[str, Any],
+        send: Send,
+        *,
+        backend: str,
+        anthropic_version: str,
+    ) -> None:
+        started = False
+        native_events = adapter.stream_anthropic_message(payload)
+        try:
+            async for event in native_events:
+                if not started:
+                    await _start_anthropic_stream(
+                        send, anthropic_version=anthropic_version
+                    )
+                    started = True
+                await send(
+                    {
+                        "type": "http.response.body",
+                        "body": _anthropic_sse_bytes(event),
+                        "more_body": True,
+                    }
+                )
+        except Exception as exc:  # noqa: BLE001 - ASGI error boundary
+            logger.warning(
+                "anthropic native stream %s failed: %s", backend, type(exc).__name__
+            )
+            if not started:
+                await _send_error(
+                    send,
+                    502,
+                    "api_error",
+                    _safe_backend_error_message(exc),
+                    anthropic_version=anthropic_version,
+                )
+                return
+            await send(
+                {
+                    "type": "http.response.body",
+                    "body": _anthropic_sse_bytes(
+                        build_anthropic_error(
+                            "api_error", _safe_backend_error_message(exc)
+                        )
+                    ),
+                    "more_body": True,
+                }
+            )
+        finally:
+            close = getattr(native_events, "aclose", None)
+            if close is not None:
+                await close()
+        if not started:
             await _start_anthropic_stream(send, anthropic_version=anthropic_version)
         await send({"type": "http.response.body", "body": b"", "more_body": False})
 
@@ -882,6 +974,33 @@ class AnthropicMessagesApp:
             alias_rows = list_anthropic_discovery_aliases(self._adapter_model_cache)
             self._discovery_aliases = {row["id"]: row["backend"] for row in alias_rows}
             rows = list_anthropic_surface_models() + alias_rows
+            ollama_rows: list[dict[str, str]] = []
+            if catalog_backend == "ollama":
+                occupied = {
+                    row["id"].casefold()
+                    for row in rows
+                    if row.get("backend") != "ollama"
+                }
+                authority: dict[str, tuple[str, str]] = {}
+                casefold_aliases: set[str] = set()
+                for raw_id in self._adapter_model_cache.get("ollama", []):
+                    alias = f"anthropic-ollama-{raw_id}"
+                    folded = alias.casefold()
+                    if (
+                        alias in authority
+                        or folded in casefold_aliases
+                        or folded in occupied
+                    ):
+                        authority = {}
+                        ollama_rows = []
+                        break
+                    authority[alias] = ("ollama", raw_id)
+                    casefold_aliases.add(folded)
+                    ollama_rows.append(
+                        {"id": alias, "display_name": alias, "backend": "ollama"}
+                    )
+                self._ollama_alias_authority = authority
+                rows = ollama_rows
             if catalog_backend is not None:
                 rows = [row for row in rows if row["backend"] == catalog_backend]
         data = [
@@ -907,7 +1026,12 @@ class AnthropicMessagesApp:
             anthropic_version=anthropic_version,
         )
 
-    def _resolve_backend(self, route: AnthropicRoute, model: str | None) -> str | None:
+    def _resolve_backend(
+        self,
+        route: AnthropicRoute,
+        model: str | None,
+        catalog_backend: str | None,
+    ) -> tuple[str, str | None] | None:
         """Resolve the backend for a route, or None to yield a 404.
 
         Per-profile prefixes pin the named backend and bypass model resolution,
@@ -918,11 +1042,15 @@ class AnthropicMessagesApp:
         """
         if route.profile is not None:
             if route.profile in self._adapters:
-                return route.profile
+                return route.profile, None
             return None
+        if catalog_backend == "ollama":
+            if not isinstance(model, str):
+                return None
+            return self._ollama_alias_authority.get(model)
         backend = resolve_anthropic_backend(model, self._discovery_aliases)
         if backend is not None and backend in self._adapters:
-            return backend
+            return backend, None
         return None
 
 

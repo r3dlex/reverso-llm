@@ -437,6 +437,10 @@ The executor uses the repository-current root validation path if the child repo 
 
 ### G2: OLLAMA-RP-G2 Claude Code native Messages vertical
 
+Implementation status: delivered on the G2 branch with the composition-owned
+dual-protocol runtime, exact header-bound alias authority, translation-emitted
+projection sources, native Messages dispatch, and marker-owned launcher.
+
 Issue path:
 
 - `.ai/work-intake/ollama-reverso-provider-g2-claude-messages.md`

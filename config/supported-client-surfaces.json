@@ -23,7 +23,8 @@
     "claude-copilot": "copilot",
     "claude-auggie": "auggie",
     "claude-deepseek": "deepseek",
-    "claude-kimi": "kimi"
+    "claude-kimi": "kimi",
+    "claude-ollama": "ollama"
   },
   "external_catalogs": {
     "agy": {
@@ -152,11 +153,23 @@
         "provider-codex",
         "provider-copilot",
         "provider-deepseek",
-        "provider-kimi"
+        "provider-kimi",
+        "provider-ollama"
       ]
     }
   ],
   "surfaces": [
+    {
+      "id": "claude-ollama",
+      "kind": "provider_launcher",
+      "group": "provider-ollama",
+      "selector_template": "anthropic-ollama-<raw-model-id>",
+      "default_model_authority": "runtime",
+      "ownership": "reverso_managed",
+      "runtime_authority": "reverso",
+      "path_template": "<launch_agent_dir>/claude-ollama",
+      "feature_gate": null
+    },
     {
       "id": "claude-auggie",
       "kind": "provider_launcher",

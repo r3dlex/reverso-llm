@@ -1,0 +1,41 @@
+{
+  "id": "OLLAMA-RP-G2",
+  "issue_ref": ".ai/work-intake/ollama-reverso-provider-g2-claude-messages.md",
+  "implementation_ready": true,
+  "context": "Extend the merged Ollama Responses runtime with the Claude Code native Messages vertical without changing the frozen ProviderAdapter contract.",
+  "root_causes": [
+    "The G1 runtime has no native Messages client or optional Anthropic facet.",
+    "Claude Code has no Ollama launcher or exact catalog-scoped alias authority."
+  ],
+  "solutions": [
+    "Add translation-emitted projection sources and atomic fail-open projection before native Messages dispatch.",
+    "Inject the identical composition-owned adapter into both registries and route only exact header-bound Ollama aliases.",
+    "Generate the marker-owned Claude launcher and register its governed manifest surface."
+  ],
+  "acceptance_criteria": [
+    "Header-bound full aliases restore exact raw model bytes before Headroom and upstream dispatch.",
+    "Bare raw ids and generic ollama-qualified ids remain rejected on Anthropic.",
+    "Native unary and streaming Messages preserve structured content and projection fails open atomically.",
+    "Both registries share one runtime adapter and existing non-native adapters retain prior behavior.",
+    "The eight G2 verification commands pass through the allowlisted wrapper."
+  ],
+  "scope": [
+    "src/reverso/protocols/adapters/ollama/",
+    "src/reverso/protocols/anthropic_native.py",
+    "src/reverso/protocols/anthropic_translate.py",
+    "src/reverso/protocols/anthropic_app.py",
+    "src/reverso/protocols/surface_registry.py",
+    "src/reverso/proxy/compose.py",
+    "src/reverso/claude_code_sync.py",
+    "config/supported-client-surfaces.json",
+    "tests/",
+    "docs/architecture/adr/0018-ollama-composition-owned-responses-runtime.md",
+    "docs/specifications/ACTIVE/"
+  ],
+  "verification": [
+    "bash tests/verify_ollama_g2.sh"
+  ],
+  "coverage_percent": 0,
+  "legacy_safe_tdd": true,
+  "legacy_risk_reason": "high coupling/protocol fidelity and composition blast radius"
+}

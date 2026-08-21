@@ -41,7 +41,7 @@ from reverso.protocols.model_exposure import codex_builtin_model_backends
 # "codex" would make the match order-dependent).
 SURFACE_BACKENDS: dict[str, frozenset[str]] = {
     "anthropic": frozenset(
-        {"copilot", "deepseek", "auggie", "codex", "claude", "kimi"}
+        {"copilot", "deepseek", "auggie", "codex", "claude", "kimi", "ollama"}
     ),
 }
 
@@ -245,6 +245,8 @@ def _resolve_qualified(provider: str, bare: str) -> str | None:
     """
     if not bare or provider not in SURFACE_BACKENDS["anthropic"]:
         return None
+    if provider == "ollama":
+        return None
     if provider not in _BACKENDS_WITH_ROWS:
         return provider
     indexed = _MODEL_INDEX.get(bare)
@@ -421,6 +423,8 @@ def list_anthropic_discovery_aliases(
     rows_by_id: dict[str, dict[str, str]] = {}
 
     def add(backend: str, model_id: str) -> None:
+        if backend == "ollama":
+            return
         normalized = _normalize_model(model_id)
         if not normalized:
             return

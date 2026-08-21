@@ -45,6 +45,7 @@ LAUNCHER_CATALOGS: tuple[tuple[str, str], ...] = (
     ("claude-auggie", "auggie"),
     ("claude-deepseek", "deepseek"),
     ("claude-kimi", "kimi"),
+    ("claude-ollama", "ollama"),
 )
 LEGACY_REVERSO_ENV_KEYS: tuple[str, ...] = (
     "ANTHROPIC_BASE_URL",
