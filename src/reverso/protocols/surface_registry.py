@@ -120,6 +120,17 @@ def _load_model_list(path: Path | None = None) -> list[dict[str, Any]]:
     return [row for row in model_list if isinstance(row, dict)]
 
 
+class ModelIndexConflictError(RuntimeError):
+    """Two backends claim the same bare model id.
+
+    The index is the single authority mapping a bare id to a backend, and
+    ``_BACKENDS_WITH_ROWS`` is derived from its values, so an unnoticed duplicate
+    does not merely lose a row: it can move a backend between the rows-owning and
+    rowless branches of ``_resolve_qualified`` (ADR 0008) and silently change which
+    upstream subscription serves a model. Fail closed and make the operator choose.
+    """
+
+
 def _build_model_index(path: Path | None = None) -> dict[str, str]:
     """Build {normalized_model_name: backend} from the litellm_config data.
 
@@ -128,6 +139,23 @@ def _build_model_index(path: Path | None = None) -> dict[str, str]:
     via SURFACE_BACKENDS as a first-party backend that has no legacy config rows.
     """
     index: dict[str, str] = {}
+
+    def claim(model_id: str, backend: str) -> None:
+        """Record ``model_id -> backend``, refusing a claim by a second backend.
+
+        Re-declaring the same id for the SAME backend is accepted: ordinary config
+        duplication must not become an outage. Only a cross-backend claim is fatal.
+        """
+        key = _normalize_model(model_id)
+        incumbent = index.get(key)
+        if incumbent is not None and incumbent != backend:
+            raise ModelIndexConflictError(
+                f"model id '{key}' is claimed by two backends: "
+                f"'{incumbent}' and '{backend}'. One bare id resolves to exactly one "
+                "backend; expose the newcomer under a provider-qualified id instead."
+            )
+        index[key] = backend
+
     for row in _load_model_list(path):
         model_name = row.get("model_name")
         if not isinstance(model_name, str) or not model_name.strip():
@@ -135,7 +163,7 @@ def _build_model_index(path: Path | None = None) -> dict[str, str]:
         backend = _backend_for_model_name(model_name)
         if backend is None:
             continue
-        index[_normalize_model(model_name)] = backend
+        claim(model_name, backend)
     # Seed the static codex ids (Milestone 2). These are config-independent: codex
     # owns its own model taxonomy and (after G005) has no litellm_config rows, so
     # they are seeded here rather than derived from config. Seeding inside the
@@ -143,9 +171,9 @@ def _build_model_index(path: Path | None = None) -> dict[str, str]:
     # independently-rebuilt fresh_index carries them too, keeping resolution and
     # the build-time lint consistent (C3).
     for model_id, backend in _CODEX_MODELS.items():
-        index[_normalize_model(model_id)] = backend
+        claim(model_id, backend)
     for model_id in _KIMI_MODELS:
-        index[_normalize_model(model_id)] = "kimi"
+        claim(model_id, "kimi")
     return index
 
 
