@@ -1,0 +1,91 @@
+{
+  "manifest": "openrouter_or-g0_spike",
+  "description": "Redacted OR-G0 spike fixtures for OpenRouter native Responses and Anthropic Messages.",
+  "providers": [
+    "openrouter"
+  ],
+  "prefix_template": "/openrouter/v1",
+  "upstream_base": "https://openrouter.ai/api/v1",
+  "model": "stealth/ox-alpha",
+  "observation_id": "or-g0-attended",
+  "freshness_bound_seconds": 600,
+  "probe_budget": {
+    "approved_amount_usd": 0.1,
+    "spent_amount_usd": 0.0,
+    "currency": "USD"
+  },
+  "endpoint_binding": {
+    "policy": "zdr_required",
+    "routing_object": "openrouter_request_routing",
+    "evidence_revision_field": "id",
+    "compatibility_set": [
+      "zdr_only_endpoint_providers"
+    ],
+    "proof": "All five captures returned HTTP 200 with a stealth/ox-alpha response id and matching model field. The catalog entry reports zero prompt and zero completion price; OR-G1 must revalidate this evidence before every request and refuse dispatch when the freshness bound is exceeded."
+  },
+  "capability_carriers": {
+    "codex": {
+      "feasible": true,
+      "header": "x-reverso-capability",
+      "handshake": "loopback_unix_socket",
+      "verification": "Codex Codex CLI accepts arbitrary header names via its provider config; OR-G1 wires the gateway to consume and strip x-reverso-capability before the adapter dispatches. The capability is generated at attended launcher issuance and never reaches OpenRouter or any persistent artifact."
+    },
+    "claude": {
+      "feasible": true,
+      "header": "x-reverso-capability",
+      "handshake": "loopback_unix_socket",
+      "verification": "Claude Code launcher accepts header overrides through ANTHROPIC_CUSTOM_HEADERS; OR-G1 sets x-reverso-capability on every Anthropic Messages request. The gateway consumes and strips it before adapter dispatch."
+    }
+  },
+  "claude_alias_grammar": {
+    "template": "anthropic-openrouter-{encoded_author_model}",
+    "encoding": "base64url_strip_padding",
+    "upstream_identity_preserved": true,
+    "rationale": "Claude Code aliases are catalog-scoped and exact-match; encoding uses base64url without padding to avoid underscore collisions with Anthropic's own `claude-*` namespace. The launcher catalog maps each alias back to the exact upstream `author/model` bytes without any tail parsing."
+  },
+  "responses_replay_grammar": {
+    "chain_source": "local_storage",
+    "forbidden_upstream_fields": [
+      "previous_response_id",
+      "store"
+    ],
+    "rejects_unknown_chain": true,
+    "rejects_partial_chain": true,
+    "rejected_statuses": [
+      "response.incomplete"
+    ],
+    "rationale": "OpenRouter Responses is stateless. Reverso owns the full typed chain in local storage and materializes instructions, reasoning, tools, tool calls/results, images, ordering, and identifiers before the second upstream request. Incomplete, canceled, or unknown chains fail locally; text-only replay is forbidden."
+  },
+  "fixtures": [
+    {
+      "name": "list_models_authenticated",
+      "file": "list_models_authenticated.json",
+      "kind": "single",
+      "covers": "GET /api/v1/models"
+    },
+    {
+      "name": "responses_unary",
+      "file": "responses_unary.json",
+      "kind": "single",
+      "covers": "POST /api/v1/responses unary"
+    },
+    {
+      "name": "responses_streaming",
+      "file": "responses_streaming.json",
+      "kind": "streaming",
+      "covers": "POST /api/v1/responses SSE"
+    },
+    {
+      "name": "messages_unary",
+      "file": "messages_unary.json",
+      "kind": "single",
+      "covers": "POST /api/v1/messages unary"
+    },
+    {
+      "name": "messages_streaming",
+      "file": "messages_streaming.json",
+      "kind": "streaming",
+      "covers": "POST /api/v1/messages SSE"
+    }
+  ]
+}
