@@ -109,3 +109,33 @@ it fetches live models, writes profile files and catalogs, and strips old base
 config clutter, but it does not own provider-prefix semantics. Runtime request
 routing remains with `surface_registry`; profile sync only prepares Codex's
 local selector files.
+
+## Catalog owning backend
+
+A backend whose bare model ids come from a provider catalog that may OVERLAP the
+ids other backends already own (ADR 0020). It is the third backend kind, and
+unlike the other two it is DECLARED rather than derived from index membership,
+because deriving it would reclassify it the moment its ids were seeded. Behind
+its own prefix the declared catalog is authoritative, so a contested id stays
+reachable as `<backend>/<id>`; outside that catalog the prefix fails closed
+rather than trusting any bare id. `surface_registry` owns this Interface;
+`_CATALOG_OWNING_BACKENDS` is its Implementation, and OpenCode Go is its first
+consumer.
+
+## Bare exposure
+
+The partition of a catalog owning backend's catalog into the ids reachable
+WITHOUT a prefix and the ids that require one. It is derived from the live
+routing index rather than declared, so it shifts whenever any other backend
+gains a model: an id reachable bare today can become prefix only tomorrow with
+nothing in this repository changing. Because that would silently change which
+upstream subscription served a saved model string, the partition is committed as
+an artifact and policed by a fail closed check.
+
+## Incumbency
+
+The rule that decides a contested bare id: whoever already holds it in the
+routing index keeps it. A catalog owning backend seeds only the ids no incumbent
+claims, so gaining a catalog never moves an existing id. Moving one would change
+which upstream subscription, which credential and whose bill served the request,
+which is why deference is unconditional rather than a heuristic.

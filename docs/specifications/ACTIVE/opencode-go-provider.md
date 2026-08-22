@@ -263,3 +263,50 @@ across provider groups, three shared-dependency lists and per-surface uninstall
 ownership. G6 already owns "uninstall and restore leave no OpenCode artifact", so
 the row lands with the plumbing that makes it removable rather than half-landing
 here.
+
+## G6 findings and one deferral (2026-08-22)
+
+**The catalog had to become data.** G6 requires that a model added upstream
+becomes reachable after a refresh with no code change. It was not: the declared
+catalog was a Python constant, so a new upstream model was LISTED by live
+discovery but not ROUTABLE, because it fell outside the declared catalog and ADR
+0020's prefix branch correctly failed closed on it. The catalog now lives in
+`docs/reference/opencode-go-catalog.json`, read by both the listing fallback and
+the routing declaration, so one artifact governs both and a refresh is a data
+change. Parsing fails closed: an empty declared catalog would make every
+qualified id fail closed, which presents as a routing bug rather than as a
+corrupt file.
+
+**Two gates, not one.** Writing the collision test corrected a wrong assumption.
+A new backend claiming an id OpenCode publishes does NOT raise G1's conflict
+error: config rows and static seeds are claimed first, and the catalog-owning
+seed then defers to whatever is already there. Incumbency winning is ADR 0020
+working as designed, but the id moves to the new claimant silently. So the gates
+divide the work: G1's `ModelIndexConflictError` catches two index-claiming
+backends colliding and is the only case that can fail at import time, while G3's
+exposure `--check` catches an id LEAVING the bare set, which is that silent
+transfer. Both are now asserted, which is what makes the pair complete rather
+than assumed.
+
+**Deferred: the Codex profile and route.** Adding `opencode` to
+`REVERSO_ROUTED_CODEX_PROFILE_PREFIXES` cascaded to 83 failing tests, because
+`codex-sync` then REQUIRES live OpenCode model discovery to succeed for every
+sync and fails closed when it does not. That is the Codex client-sync surface
+(profile generation, catalog slugs, shared codex config and cleanup ownership),
+which is a slice of its own rather than a step in this one. G4's intake had
+listed the isolated Codex profile; it is not delivered, and it is recorded here
+rather than quietly dropped.
+
+The Claude launcher DID land, with its full install-plan wiring: the
+`claude-opencode` row, the `provider-opencode` group, the
+`shared-reverso-launcher` dependency, the `claude-opencode` surface entry, and
+the matching halves of both double-entry contracts (`EXPECTED_GROUPS` and
+`EXPECTED_SURFACES` in code, mirrored in
+`config/supported-client-surfaces.json`).
+
+**Launcher context window.** The catalog spans 202752 to 1050000 tokens, but a
+launcher is rendered once and cannot know which of the 29 models will be picked.
+The MINIMUM is used as the safe static bound: compacting early wastes tokens and
+is recoverable, while a window larger than the model's real context is a hard
+failure mid-session. Per-model sizing needs the Anthropic discovery listing to
+carry context windows, which it does not; that remains open.

@@ -80,6 +80,7 @@ EXPECTED_GROUPS = {
     "provider-deepseek": ("provider", ()),
     "provider-kimi": ("provider", ()),
     "provider-ollama": ("provider", ()),
+    "provider-opencode": ("provider", ()),
     "provider-openai-pass-through": ("provider", ()),
     "rtk": ("prerequisite", ()),
     "shared-claude-settings": ("shared_dependency", ()),
@@ -119,6 +120,7 @@ EXPECTED_GROUPS = {
             "provider-deepseek",
             "provider-kimi",
             "provider-ollama",
+            "provider-opencode",
         ),
     ),
 }
@@ -191,6 +193,16 @@ EXPECTED_SURFACES = {
         "reverso_managed",
         "reverso",
         "<launch_agent_dir>/claude-ollama",
+        None,
+    ),
+    "claude-opencode": (
+        "provider_launcher",
+        "provider-opencode",
+        "anthropic-opencode-<raw-model-id>",
+        "runtime",
+        "reverso_managed",
+        "reverso",
+        "<launch_agent_dir>/claude-opencode",
         None,
     ),
     "claude-reverso": (
