@@ -1,21 +1,19 @@
-"""Unit tests for the OpenRouter native Anthropic Messages path (OR-G4, U8, I4).
-
-These tests inject a fake transport and assert that the native Anthropic
-Messages path:
-* posts to /api/v1/messages with bearer authorization;
-* normalizes content blocks, tools, thinking, and images;
-* records usage and reported cost;
-* preserves the canonical Messages response shape end-to-end.
-"""
+"""Unit tests for the OpenRouter native Anthropic Messages path (OR-G4, U8, I4)."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, TypedDict
 from unittest import mock
 
 
+from reverso.protocols.adapters.openrouter.messages import (
+    build_messages_payload,
+    normalize_messages_response,
+)
 
+
+class AnthropicMessagesRequest(TypedDict, total=False):
     model: str
     max_tokens: int
     messages: list[dict[str, Any]]
@@ -28,12 +26,6 @@ from unittest import mock
     temperature: float
     top_p: float
     top_k: int
-
-
-from reverso.protocols.adapters.openrouter.messages import (
-    build_messages_payload,
-    normalize_messages_response,
-)
 
 
 @dataclass
@@ -56,9 +48,6 @@ class FakeHttpxClient:
         response.text = ""
         response.headers = {"content-type": "application/json"}
         return response
-
-
-# --- U8: native Messages mapping ------------------------------------------------
 
 
 def test_build_messages_payload_forwards_required_fields() -> None:
@@ -140,21 +129,9 @@ def test_normalize_messages_response_preserves_thinking_blocks() -> None:
     assert "text" in types
 
 
-# --- I4: shared safety state ---------------------------------------------------
-
-
 def test_messages_request_does_not_call_responses_dispatch() -> None:
-    fake = FakeHttpxClient(
-        response_status=200,
-        response_payload={
-            "id": "msg-3",
-            "model": "stealth/ox-alpha",
-            "content": [{"type": "text", "text": "ok"}],
-            "usage": {"input_tokens": 1, "output_tokens": 1},
-        },
-    )
     transport = mock.Mock()
-    transport.create_message = lambda payload: (
+    transport.create_message = lambda payload, headers=None: (
         200,
         {
             "id": "msg-3",
@@ -172,9 +149,6 @@ def test_messages_payload_carries_bearer_authorization() -> None:
         model="stealth/ox-alpha",
         max_tokens=32,
         messages=[{"role": "user", "content": "ping"}],
-    )
-    fake = FakeHttpxClient(
-        response_status=200, response_payload={"id": "m", "model": "m", "content": []}
     )
     transport = mock.Mock()
     transport.create_message = lambda payload, headers=None: (
