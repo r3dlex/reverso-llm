@@ -91,7 +91,11 @@ class BudgetLedger:
         if self._session_limit is None:
             return Decimal("inf")
         reserved = sum(
-            (r.amount_usd for r in self._reservations if r.state == ReservationState.PENDING.value),
+            (
+                r.amount_usd
+                for r in self._reservations
+                if r.state == ReservationState.PENDING.value
+            ),
             Decimal("0"),
         )
         return self._session_limit - reserved - self._reconciled

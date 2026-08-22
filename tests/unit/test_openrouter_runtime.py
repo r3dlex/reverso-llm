@@ -56,7 +56,9 @@ class FakeTransport:
         self.calls.append(("GET", "/api/v1/models", None))
         return 200, {"data": []}
 
-    async def create_response(self, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    async def create_response(
+        self, payload: dict[str, Any]
+    ) -> tuple[int, dict[str, Any]]:
         self.calls.append(("POST", "/api/v1/responses", payload))
         return 200, {
             "id": "gen-fixture",
@@ -174,7 +176,12 @@ def test_default_attribution_header_is_reverso() -> None:
 def test_grant_registry_rejects_unbound_capability() -> None:
     registry = GrantRegistry()
     with pytest.raises(InvalidGrantError):
-        registry.verify(capability="cap_invalid", launcher_pid=1234, model="stealth/ox-alpha", liveness=lambda: True)
+        registry.verify(
+            capability="cap_invalid",
+            launcher_pid=1234,
+            model="stealth/ox-alpha",
+            liveness=lambda: True,
+        )
 
 
 def test_grant_registry_revokes_on_launcher_exit() -> None:
@@ -183,10 +190,20 @@ def test_grant_registry_revokes_on_launcher_exit() -> None:
     capability = registry.issue(
         launcher_pid=1234, model="stealth/ox-alpha", liveness=liveness
     )
-    assert registry.verify(capability=capability, launcher_pid=1234, model="stealth/ox-alpha", liveness=liveness)
+    assert registry.verify(
+        capability=capability,
+        launcher_pid=1234,
+        model="stealth/ox-alpha",
+        liveness=liveness,
+    )
     liveness.alive = False
     with pytest.raises(InvalidGrantError):
-        registry.verify(capability=capability, launcher_pid=1234, model="stealth/ox-alpha", liveness=liveness)
+        registry.verify(
+            capability=capability,
+            launcher_pid=1234,
+            model="stealth/ox-alpha",
+            liveness=liveness,
+        )
 
 
 def test_grant_registry_enforces_ttl() -> None:
@@ -198,7 +215,12 @@ def test_grant_registry_enforces_ttl() -> None:
     )
     clock.now += 11
     with pytest.raises(InvalidGrantError):
-        registry.verify(capability=capability, launcher_pid=1234, model="stealth/ox-alpha", liveness=liveness)
+        registry.verify(
+            capability=capability,
+            launcher_pid=1234,
+            model="stealth/ox-alpha",
+            liveness=liveness,
+        )
 
 
 def test_runtime_reconstruct_clears_all_grants() -> None:
@@ -207,11 +229,21 @@ def test_runtime_reconstruct_clears_all_grants() -> None:
     capability = runtime.grants.issue(
         launcher_pid=1234, model="stealth/ox-alpha", liveness=liveness
     )
-    assert runtime.grants.verify(capability=capability, launcher_pid=1234, model="stealth/ox-alpha", liveness=liveness)
+    assert runtime.grants.verify(
+        capability=capability,
+        launcher_pid=1234,
+        model="stealth/ox-alpha",
+        liveness=liveness,
+    )
     runtime2 = _build_test_runtime()
     assert runtime2.grants is not runtime.grants
     with pytest.raises(InvalidGrantError):
-        runtime2.grants.verify(capability=capability, launcher_pid=1234, model="stealth/ox-alpha", liveness=liveness)
+        runtime2.grants.verify(
+            capability=capability,
+            launcher_pid=1234,
+            model="stealth/ox-alpha",
+            liveness=liveness,
+        )
 
 
 # --- U5: budget ledger ---------------------------------------------------------
@@ -220,56 +252,68 @@ def test_runtime_reconstruct_clears_all_grants() -> None:
 def test_budget_rejects_missing_limits() -> None:
     ledger = BudgetLedger()
     with pytest.raises(MissingLimitsError):
-        ledger.reserve(request_tokens=10, completion_tokens=10, model="stealth/ox-alpha")
+        ledger.reserve(
+            request_tokens=10, completion_tokens=10, model="stealth/ox-alpha"
+        )
 
 
 def test_budget_reservation_is_atomic() -> None:
-    ledger = BudgetLedger(
-        request_limit_usd="0.05", session_limit_usd="0.10"
-    )
+    ledger = BudgetLedger(request_limit_usd="0.05", session_limit_usd="0.10")
     res_a = ledger.reserve(
-        request_tokens=100, completion_tokens=100,
-        model="stealth/ox-alpha", pricing_prompt="1", pricing_completion="2",
+        request_tokens=100,
+        completion_tokens=100,
+        model="stealth/ox-alpha",
+        pricing_prompt="1",
+        pricing_completion="2",
     )
     res_b = ledger.reserve(
-        request_tokens=100, completion_tokens=100,
-        model="stealth/ox-alpha", pricing_prompt="1", pricing_completion="2",
+        request_tokens=100,
+        completion_tokens=100,
+        model="stealth/ox-alpha",
+        pricing_prompt="1",
+        pricing_completion="2",
     )
     assert res_a.id != res_b.id
     assert ledger.remaining_usd() < Decimal("0.10")
 
 
 def test_budget_releases_on_failure() -> None:
-    ledger = BudgetLedger(
-        request_limit_usd="0.05", session_limit_usd="0.10"
-    )
+    ledger = BudgetLedger(request_limit_usd="0.05", session_limit_usd="0.10")
     res = ledger.reserve(
-        request_tokens=100, completion_tokens=100,
-        model="stealth/ox-alpha", pricing_prompt="1", pricing_completion="2",
+        request_tokens=100,
+        completion_tokens=100,
+        model="stealth/ox-alpha",
+        pricing_prompt="1",
+        pricing_completion="2",
     )
     ledger.release(res)
     assert ledger.remaining_usd() == Decimal("0.10")
 
 
 def test_budget_rejects_request_above_request_limit() -> None:
-    ledger = BudgetLedger(
-        request_limit_usd="0.001", session_limit_usd="0.10"
-    )
+    ledger = BudgetLedger(request_limit_usd="0.001", session_limit_usd="0.10")
     with pytest.raises(InsufficientBudgetError):
         ledger.reserve(
-            request_tokens=1000, completion_tokens=1000,
-            model="stealth/ox-alpha", pricing_prompt="1", pricing_completion="1",
+            request_tokens=1000,
+            completion_tokens=1000,
+            model="stealth/ox-alpha",
+            pricing_prompt="1",
+            pricing_completion="1",
         )
 
 
 # --- U6: credentials and bounded errors ---------------------------------------
 
 
-def test_resolve_api_key_reads_only_zsh_exports(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_resolve_api_key_reads_only_zsh_exports(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("HOME", "/tmp/fake-home")
     fake_path = Path("/tmp/fake-home/.zsh_exports")
     fake_path.parent.mkdir(parents=True, exist_ok=True)
-    fake_path.write_text('export OPENROUTER_API_KEY="sk-or-v1-fixture"\n', encoding="utf-8")
+    fake_path.write_text(
+        'export OPENROUTER_API_KEY="sk-or-v1-fixture"\n', encoding="utf-8"
+    )
     assert resolve_api_key(home=Path("/tmp/fake-home")) == "sk-or-v1-fixture"
 
 
@@ -350,10 +394,13 @@ def test_surface_compatibility_required() -> None:
 
 def test_surface_compatibility_denies_unlisted() -> None:
     from reverso.protocols.adapters.openrouter.runtime import OpenRouterSurfaceGrant
+
     runtime = _build_test_runtime(
         surface_grants=[
             OpenRouterSurfaceGrant(
-                model="stealth/ox-alpha", surface="codex", source=OpenRouterCatalogSource.LIVE_AUTHED
+                model="stealth/ox-alpha",
+                surface="codex",
+                source=OpenRouterCatalogSource.LIVE_AUTHED,
             )
         ]
     )
@@ -372,9 +419,7 @@ def test_no_secrets_in_serialized_artifacts() -> None:
 
 
 def test_no_secrets_in_budget_repr() -> None:
-    ledger = BudgetLedger(
-        request_limit_usd="0.05", session_limit_usd="0.10"
-    )
+    ledger = BudgetLedger(request_limit_usd="0.05", session_limit_usd="0.10")
     text = repr(ledger)
     assert CANARY_KEY not in text
 
@@ -432,7 +477,9 @@ def _runtime_kwargs(**overrides: Any) -> dict[str, Any]:
     return kwargs
 
 
-def _build_runtime_with_transport(scenario: str, **overrides: Any) -> tuple[OpenRouterRuntime, FakeTransport]:
+def _build_runtime_with_transport(
+    scenario: str, **overrides: Any
+) -> tuple[OpenRouterRuntime, FakeTransport]:
     kwargs = _runtime_kwargs(**overrides)
     if scenario == "stale_policy":
         kwargs["policy"] = OpenRouterPolicy(

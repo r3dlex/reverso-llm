@@ -44,9 +44,7 @@ class OpenRouterResponsesTransport(Protocol):
         self, payload: dict[str, Any]
     ) -> tuple[int, dict[str, Any]]: ...
 
-    def stream_response(
-        self, payload: dict[str, Any]
-    ) -> AsyncIterator[SSEEvent]: ...
+    def stream_response(self, payload: dict[str, Any]) -> AsyncIterator[SSEEvent]: ...
 
 
 class OpenRouterAdapter:

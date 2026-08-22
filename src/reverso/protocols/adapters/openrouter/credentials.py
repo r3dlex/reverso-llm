@@ -33,15 +33,11 @@ def resolve_api_key(*, home: Path | None = None) -> str:
     base = home or Path.home()
     exports = base / _ZSH_EXPORTS_NAME
     if not exports.is_file():
-        raise OpenRouterCredentialError(
-            f"OPENROUTER_API_KEY not found in {exports}"
-        )
+        raise OpenRouterCredentialError(f"OPENROUTER_API_KEY not found in {exports}")
     for line in exports.read_text(encoding="utf-8").splitlines():
         match = _KEY_PATTERN.match(line.strip())
         if match:
             value = match.group(1).strip().strip('"').strip("'")
             if value:
                 return value
-    raise OpenRouterCredentialError(
-        f"OPENROUTER_API_KEY not found in {exports}"
-    )
+    raise OpenRouterCredentialError(f"OPENROUTER_API_KEY not found in {exports}")
