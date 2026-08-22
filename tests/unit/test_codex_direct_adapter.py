@@ -227,7 +227,17 @@ def test_direct_codex_route_is_reserved_but_disabled_by_kill_switch(
     assert "codex-direct" in APP_PROVIDER_PREFIXES
     assert split_provider_path("/codex-direct/v1/models") is not None
     mounted = compose.build_adapters()
-    assert set(mounted) == {"claude", "copilot", "auggie", "deepseek", "kimi"}
+    # opencode joined the unconditional roster in OCG-G4, on the deepseek/kimi
+    # precedent: credential-gated at call time (503 without a key), not
+    # mount-gated behind a kill switch the way codex-direct and openai are.
+    assert set(mounted) == {
+        "claude",
+        "copilot",
+        "auggie",
+        "deepseek",
+        "kimi",
+        "opencode",
+    }
     assert "codex_direct" not in mounted
     assert "codex-direct" not in mounted
 
