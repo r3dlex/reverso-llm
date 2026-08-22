@@ -203,10 +203,12 @@ Anthropic Ollama routing is header-bound and exact:
 ### Inventory and Cloud eligibility
 
 - Installed local ids come from validated `/api/tags` results.
-- Cloud ids require a supported machine-readable Ollama Cloud authority established for the pinned minimum version. None is established in G1, so G1 blocks Cloud publication. No suffix inference, HTML scraping, or static shipped list is permitted.
+- Cloud ids require a supported machine-readable Ollama Cloud authority. That authority is now established: `GET https://ollama.com/api/tags`, documented under "Listing models" at <https://docs.ollama.com/cloud>. It is the only permitted Cloud source; suffix inference over local `/api/tags` rows, HTML scraping of `https://ollama.com/search?c=cloud`, and static shipped lists all remain barred.
+- The authority publishes bare ids (`gpt-oss:120b`). The user-owned local Ollama service routes the same model only under the documented `-cloud` alias (`gpt-oss:120b-cloud`); the bare id is rejected locally with `model '<id>' not found`. Reverso therefore publishes `<authority-id>-cloud` as the routing raw id and never double-suffixes an authority id that already carries the alias. This is a documented alias applied to an authority-published id, not inference over an unlabelled local row.
 - Catalog entries retain raw ids, source eligibility (`local`, `cloud`, or both), observation time, and freshness internally. Client catalogs omit secrets.
 - Exact duplicate raw ids collapse deterministically while retaining both eligibility flags.
-- Cloud disabled produces a current local-only catalog and performs no Cloud probe or sign-in. Cloud requested in G1 reports `unavailable` while preserving every validated `/api/tags` row as local inventory.
+- Cloud disabled produces a current local-only catalog and performs no Cloud probe or sign-in. Cloud requested performs exactly one bounded prompt-free authority probe per refresh and never invokes `ollama signin`.
+- Authority probe outcomes map to exactly one status: `2xx` with at least one validated row is `current`; `401`/`403` is `auth_required`; any other `4xx`/`5xx` or transport failure is `unavailable`; a timeout is `timeout`; a malformed payload, an unvalidatable id, or an empty model list is `invalid`. Every non-`current` outcome preserves the full validated local inventory unchanged.
 - Background `auth_required`, timeout, or malformed Cloud discovery retains prior marker-owned Cloud entries as stale, updates valid local entries, reports partial freshness, and never claims stale entries are currently eligible.
 - At request time, a stale Cloud-only id must be revalidated. If it cannot be confirmed, return `auth_required` or `model_not_current`; never route elsewhere.
 - If no compatible local model is installed, live proof reports `local_model_required` with an explicit user-run pull command but does not execute it.

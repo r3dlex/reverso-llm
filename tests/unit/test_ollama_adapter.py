@@ -101,7 +101,13 @@ async def test_runtime_factory_failure_closes_owned_client_before_propagating(
     assert clients[0].is_closed is True
 
 
+def _cloud_authority_response(*names: str) -> httpx.Response:
+    return httpx.Response(200, json={"models": [{"name": name} for name in names]})
+
+
 def _transport(request: httpx.Request) -> httpx.Response:
+    if request.url.host == "ollama.com":
+        return _cloud_authority_response("gpt-oss:120b")
     if request.url.path == "/api/tags":
         return httpx.Response(
             200,
@@ -142,6 +148,7 @@ async def test_tags_discovers_every_validated_row_as_a_local_raw_id(
         "qwen3:8b",
         "gpt-oss:20b",
         "deepseek-v3.1:671b-cloud",
+        "gpt-oss:120b-cloud",
     ]
     assert runtime.catalog.entries["qwen3:8b"].local is True
     assert runtime.catalog.entries["qwen3:8b"].cloud is False
@@ -151,6 +158,149 @@ async def test_tags_discovers_every_validated_row_as_a_local_raw_id(
     assert runtime.auth.cloud_status == "unavailable"
     await runtime.close()
     await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_cloud_authority_publishes_documented_local_routing_aliases() -> None:
+    seen: list[httpx.Request] = []
+
+    def transport(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.host == "ollama.com":
+            return _cloud_authority_response("gpt-oss:120b", "kimi-k3")
+        return httpx.Response(200, json={"models": [{"name": "qwen3:8b"}]})
+
+    runtime = build_ollama_runtime(
+        client=httpx.AsyncClient(transport=httpx.MockTransport(transport)),
+        auth=OllamaAuthState.from_env(
+            {"REVERSO_OLLAMA_CLOUD": "1", "OLLAMA_API_KEY": "key-123"}
+        ),
+    )
+
+    models = await runtime.adapter.list_models()
+
+    assert [
+        (row["id"], row["ollama_local"], row["ollama_cloud"]) for row in models.data
+    ] == [
+        ("qwen3:8b", True, False),
+        ("gpt-oss:120b-cloud", False, True),
+        ("kimi-k3-cloud", False, True),
+    ]
+    assert models.discovery_source == "ollama-inventory-current"
+    assert runtime.catalog.cloud_status == "current"
+    authority = [request for request in seen if request.url.host == "ollama.com"]
+    assert [str(request.url) for request in authority] == [
+        "https://ollama.com/api/tags"
+    ]
+    assert authority[0].headers["Authorization"] == "Bearer key-123"
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_cloud_authority_id_already_carrying_the_alias_is_not_double_suffixed() -> (
+    None
+):
+    def transport(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "ollama.com":
+            return _cloud_authority_response("gpt-oss:120b-cloud")
+        return httpx.Response(200, json={"models": [{"name": "qwen3:8b"}]})
+
+    runtime = build_ollama_runtime(
+        client=httpx.AsyncClient(transport=httpx.MockTransport(transport)),
+        auth=OllamaAuthState.from_env({"REVERSO_OLLAMA_CLOUD": "1"}),
+    )
+
+    models = await runtime.adapter.list_models()
+
+    assert [row["id"] for row in models.data] == ["qwen3:8b", "gpt-oss:120b-cloud"]
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_local_row_matching_a_cloud_alias_reports_both_sources() -> None:
+    def transport(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "ollama.com":
+            return _cloud_authority_response("gpt-oss:120b")
+        return httpx.Response(200, json={"models": [{"name": "gpt-oss:120b-cloud"}]})
+
+    runtime = build_ollama_runtime(
+        client=httpx.AsyncClient(transport=httpx.MockTransport(transport)),
+        auth=OllamaAuthState.from_env({"REVERSO_OLLAMA_CLOUD": "1"}),
+    )
+
+    models = await runtime.adapter.list_models()
+
+    assert [
+        (row["id"], row["ollama_local"], row["ollama_cloud"]) for row in models.data
+    ] == [("gpt-oss:120b-cloud", True, True)]
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("responder", "expected"),
+    (
+        (lambda: httpx.Response(401, json={"error": "unauthorized"}), "auth_required"),
+        (lambda: httpx.Response(403, json={"error": "forbidden"}), "auth_required"),
+        (lambda: httpx.Response(503, json={"error": "down"}), "unavailable"),
+        (lambda: httpx.Response(200, json={"models": []}), "invalid"),
+        (lambda: httpx.Response(200, json={"nope": 1}), "invalid"),
+        (lambda: httpx.Response(200, json={"models": [{"name": ""}]}), "invalid"),
+        (lambda: httpx.Response(200, text="not json"), "invalid"),
+    ),
+)
+async def test_cloud_authority_failures_keep_local_inventory_and_report_status(
+    responder: object, expected: str
+) -> None:
+    def transport(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "ollama.com":
+            return responder()  # type: ignore[operator]
+        return httpx.Response(200, json={"models": [{"name": "qwen3:8b"}]})
+
+    runtime = build_ollama_runtime(
+        client=httpx.AsyncClient(transport=httpx.MockTransport(transport)),
+        auth=OllamaAuthState.from_env({"REVERSO_OLLAMA_CLOUD": "1"}),
+    )
+
+    models = await runtime.adapter.list_models()
+
+    assert [row["id"] for row in models.data] == ["qwen3:8b"]
+    assert runtime.catalog.cloud_status == expected
+    assert models.discovery_source == f"ollama-inventory-{expected}"
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_cloud_authority_timeout_reports_timeout_without_dropping_local() -> None:
+    def transport(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "ollama.com":
+            raise httpx.ReadTimeout("slow", request=request)
+        return httpx.Response(200, json={"models": [{"name": "qwen3:8b"}]})
+
+    runtime = build_ollama_runtime(
+        client=httpx.AsyncClient(transport=httpx.MockTransport(transport)),
+        auth=OllamaAuthState.from_env({"REVERSO_OLLAMA_CLOUD": "1"}),
+    )
+
+    models = await runtime.adapter.list_models()
+
+    assert [row["id"] for row in models.data] == ["qwen3:8b"]
+    assert runtime.catalog.cloud_status == "timeout"
+    await runtime.close()
+
+
+@pytest.mark.parametrize(
+    "url",
+    (
+        "http://ollama.com/api/tags",
+        "https://evil.example/api/tags",
+        "https://user@ollama.com/api/tags",
+        "https://ollama.com/api/tags?x=1",
+    ),
+)
+def test_cloud_authority_validation_rejects_unsupported_urls(url: str) -> None:
+    with pytest.raises(ValueError, match="plain ollama.com HTTPS URL"):
+        OllamaAuthState.from_env({"REVERSO_OLLAMA_CLOUD_AUTHORITY": url})
 
 
 @pytest.mark.asyncio
@@ -252,7 +402,7 @@ async def test_protocol_surface_rejects_stale_cloud_before_upstream(
     seen: list[str] = []
 
     def transport(request: httpx.Request) -> httpx.Response:
-        seen.append(request.url.path)
+        seen.append(f"{request.url.host}{request.url.path}")
         if request.url.path == "/api/tags":
             return httpx.Response(200, json={"models": []})
         raise AssertionError("stale model reached an upstream generation endpoint")
@@ -286,7 +436,7 @@ async def test_protocol_surface_rejects_stale_cloud_before_upstream(
 
     assert response.status_code == 409
     assert expected_code in response.text
-    assert seen == ["/api/tags"]
+    assert seen == ["127.0.0.1/api/tags", "ollama.com/api/tags"]
     await runtime.close()
 
 
