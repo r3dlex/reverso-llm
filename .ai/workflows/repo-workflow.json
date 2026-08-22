@@ -139,6 +139,11 @@
       "enabled_when": "northstar_handoff_present",
       "status": "complete",
       "completed_via": "PRs #116 through #120"
+    },
+    {
+      "id": "northstar-handoff-opencode-go-provider",
+      "enabled_when": "northstar_handoff_present",
+      "status": "available"
     }
   ],
   "handoff": ".ai/handoff/init-ai-repo-handoff.md",
