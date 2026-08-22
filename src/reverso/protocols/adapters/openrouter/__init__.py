@@ -21,11 +21,26 @@ from .continuation import (
     build_continuation_request,
     materialize_continuation,
 )
+from .client_sync import (
+    ClaudeLauncher,
+    CodexProfile,
+    build_claude_alias,
+    build_claude_launcher,
+    build_codex_profile,
+    decode_claude_alias,
+    encode_claude_alias,
+)
 from .messages import (
     OpenRouterMessagesAdapter,
     OpenRouterMessagesError,
     build_messages_payload,
     normalize_messages_response,
+)
+from .messages_stream import (
+    OpenRouterMessagesStreamError,
+    OpenRouterMessagesStreamingClient,
+    build_stream_payload,
+    normalize_stream_event,
 )
 from .credentials import OpenRouterCredentialError, resolve_api_key
 from .grants import GrantRegistry, InvalidGrantError, LauncherLiveness
@@ -61,8 +76,12 @@ __all__ = (
     "OpenRouterCatalogSource",
     "OpenRouterCredentialError",
     "OpenRouterError",
+    "ClaudeLauncher",
+    "CodexProfile",
     "OpenRouterMessagesAdapter",
     "OpenRouterMessagesError",
+    "OpenRouterMessagesStreamError",
+    "OpenRouterMessagesStreamingClient",
     "OpenRouterPolicy",
     "OpenRouterRuntime",
     "OpenRouterSurfaceGrant",
@@ -73,9 +92,13 @@ __all__ = (
     "ReplayItem",
     "ResponseStore",
     "UnknownPolicyError",
+    "build_claude_alias",
+    "build_claude_launcher",
+    "build_codex_profile",
     "build_continuation_request",
     "build_messages_payload",
     "build_openrouter_runtime",
+    "build_stream_payload",
     "materialize_continuation",
     "normalize_messages_response",
     "reset_openrouter_runtime",
