@@ -1,8 +1,11 @@
-"""OpenRouter ``ProviderAdapter`` (OR-G1, U7, U8, I1, I3, I4).
+"""OpenRouter ``ProviderAdapter`` (OR-G1, OR-G2; U7, U8, I1, I3, I4).
 
 The adapter implements the frozen ``ProviderAdapter`` Protocol and forwards
 Responses requests to ``POST /api/v1/responses``. Streaming is delegated to
-``OpenRouterResponsesTransport`` which yields SSE events verbatim.
+the transport which yields SSE events verbatim. The transport strips
+``previous_response_id`` and ``store`` so the stateless OpenRouter endpoint
+never sees state, and the optional store reflects the response locally for
+``previous_response_id`` chaining.
 """
 
 from __future__ import annotations
@@ -25,6 +28,7 @@ __all__ = [
     "OpenRouterAdapter",
     "OpenRouterError",
     "OpenRouterResponsesTransport",
+    "ResponseStore",
 ]
 
 
@@ -36,7 +40,7 @@ class OpenRouterError(RuntimeError):
 
 
 class OpenRouterResponsesTransport(Protocol):
-    """A minimal httpx transport surface for the OpenRouter adapter."""
+    """A minimal transport surface for the OpenRouter adapter."""
 
     async def list_models(self) -> tuple[int, dict[str, Any]]: ...
 
@@ -44,7 +48,19 @@ class OpenRouterResponsesTransport(Protocol):
         self, payload: dict[str, Any]
     ) -> tuple[int, dict[str, Any]]: ...
 
-    def stream_response(self, payload: dict[str, Any]) -> AsyncIterator[SSEEvent]: ...
+
+class ResponseStore(Protocol):
+    """Persistence seam for unary Responses (OR-G2, U7)."""
+
+    def save_response(self, payload: dict[str, Any]) -> None: ...
+
+    def get_response(self, response_id: str) -> dict[str, Any]: ...
+
+    def record_input_items(
+        self, response_id: str, items: list[dict[str, Any]]
+    ) -> None: ...
+
+    def input_items_for(self, response_id: str) -> list[dict[str, Any]]: ...
 
 
 class OpenRouterAdapter:
@@ -53,11 +69,13 @@ class OpenRouterAdapter:
     def __init__(
         self,
         *,
-        transport: OpenRouterResponsesTransport | Any,
+        transport: OpenRouterResponsesTransport,
         credentials: Any,
+        store: ResponseStore | None = None,
     ) -> None:
         self._transport = transport
         self._credentials = credentials
+        self._store = store
 
     async def list_models(self) -> ModelList:
         status, payload = await self._transport.list_models()
@@ -97,33 +115,46 @@ class OpenRouterAdapter:
     async def create_response(self, request: ResponsesRequest) -> ResponseEnvelope:
         payload = self._translate(request)
         status, body = await self._transport.create_response(payload)
-        if status != 200:
+        if status != 200 or not isinstance(body, dict):
             raise OpenRouterError(f"POST /api/v1/responses returned {status}")
-        return _to_envelope(body)
+        envelope = _to_envelope(body)
+        if self._store is not None:
+            self._store.save_response(body)
+            self._store.record_input_items(
+                envelope.id, list(payload.get("input") or [])
+            )
+        return envelope
 
     async def stream_response(
         self, request: ResponsesRequest
     ) -> AsyncIterator[SSEEvent]:  # type: ignore[override]
-        payload = self._translate(request)
-        async for event in self._transport.stream_response(payload):
-            yield event
+        # OR-G3 will provide the streaming implementation.
+        raise NotImplementedError("OpenRouter Responses streaming lands in OR-G3")
 
     async def get_response(self, response_id: str) -> ResponseEnvelope:  # type: ignore[override]
-        raise OpenRouterError(
-            "OpenRouter Responses is stateless; previous_response_id is resolved locally."
-        )
+        if self._store is None:
+            raise OpenRouterError(
+                "OpenRouter Responses is stateless; a store is required"
+            )
+        body = self._store.get_response(response_id)
+        if not body:
+            raise OpenRouterError(f"unknown response_id {response_id}")
+        return _to_envelope(body)
 
     async def list_input_items(self, response_id: str) -> InputItemList:  # type: ignore[override]
-        raise OpenRouterError(
-            "OpenRouter Responses is stateless; input_items are read from local storage."
-        )
+        if self._store is None:
+            raise OpenRouterError(
+                "OpenRouter Responses is stateless; a store is required"
+            )
+        items = self._store.input_items_for(response_id)
+        return InputItemList(response_id=response_id, data=list(items), object="list")
 
     def _translate(self, request: ResponsesRequest) -> dict[str, Any]:
         """Translate a ResponsesRequest into the OpenRouter request body.
 
-        ``provider``, ``X-OpenRouter-Title`` and ``HTTP-Referer`` are merged into
-        ``extra`` by the runtime; this method carries them through verbatim and
-        never overrides caller-set routing fields.
+        ``provider`` and ``X-OpenRouter-Title`` are merged into ``extra`` by the
+        runtime before the adapter sees them; this method carries them through
+        verbatim and never overrides caller-set routing fields.
         """
         body: dict[str, Any] = {
             "model": request.model,
