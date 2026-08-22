@@ -1,0 +1,60 @@
+{
+  "id": "OCG-G3",
+  "issue_ref": ".ai/work-intake/opencode-go-provider-g3-credentials-catalog-protocol.md",
+  "implementation_ready": true,
+  "context": "Fix the credential, catalog and endpoint facts the OpenCode Go verticals will be built on: Keychain-backed key resolution with a read-only OCGO_API_KEY alias, catalog discovery with a bounded offline fallback, measured endpoint selection, and a committed bare-exposure artifact with a fail-closed --check.",
+  "root_causes": [
+    "The planned per-model protocol split was inherited from ocgo's hand-maintained 16-entry UsesAnthropicEndpoint table, which was never verified against the 29 live ids.",
+    "The OpenCode Go key reaches the process through the environment, which every spawned CLI inherits wholesale, so exposure is a property of the launcher rather than of the adapter.",
+    "Which catalog ids are bare-exposable is derived from the live routing index, so it changes whenever any other backend gains a model, with no signal that a user's saved model string now resolves elsewhere."
+  ],
+  "evidence": [
+    "Measured 2026-08-22 on all 29 catalog ids against both upstreams: 22 returned 200 on both /messages and /chat/completions; only grok-4.5 refused the Anthropic format ('Model grok-4.5 is not supported for format anthropic').",
+    "ocgo forces minimax-m3, minimax-m2.7, minimax-m2.5 and qwen3.7-max onto /messages; all four answer /chat/completions, so its table is wrong in substance and not merely stale.",
+    "A first measurement pass sending string-form content produced 15 spurious 400s that read as endpoint rejections; the upstream errors ('messages must not be empty') showed the gateway was dropping the body, and block-form content returned 200 for all 15.",
+    "/messages returns AuthError 'Missing API key' for an Authorization: Bearer header and accepts only X-API-Key, while /chat/completions requires the bearer form.",
+    "The edge returns Cloudflare error 1010 to a default client fingerprint, so a User-Agent is required even on the public /models path.",
+    "Against the live routing index, 3 of 29 ids are already claimed (deepseek-v4-flash and deepseek-v4-pro by deepseek, kimi-k3 by kimi), leaving 26 bare-exposable."
+  ],
+  "solutions": [
+    "Resolve the key from OPENCODE_API_KEY first and OCGO_API_KEY second, treating blank or whitespace as absent so an empty export cannot mask a working alias; never write the alias.",
+    "Add OPENCODE_API_KEY to the Keychain map and suppress the missing-key warning when the read-only alias is present, without promoting the alias into the canonical variable.",
+    "Scrub both names from every spawned CLI environment via LAUNCHER_SCRUB_ENV_KEYS.",
+    "Select the endpoint dual-protocol by default with a narrow declared deny-list of exactly the measured refusals, rather than encoding a 29-entry table of 22 identical rows.",
+    "Commit the computed bare-exposure set as an artifact and police it with a fail-closed --check wired into the test suite so it gates rather than merely existing."
+  ],
+  "acceptance_criteria": [
+    "OPENCODE_API_KEY wins over OCGO_API_KEY, and the alias is never written or promoted.",
+    "A blank canonical export falls through to a usable alias rather than masking it.",
+    "An absent credential raises rather than returning a partial key, and no error message echoes a key.",
+    "A pre-set key short-circuits the Keychain read so tests and CI inject directly.",
+    "A pre-set alias suppresses the missing-key warning, while a genuinely absent key still warns.",
+    "Both names are absent from the environment of every spawned CLI.",
+    "Catalog discovery parses the OpenAI list shape, skips unusable rows, and degrades to a bounded 29-id fallback offline.",
+    "Endpoint selection is dual-protocol by default; only measured refusals are denied, and every deny-list entry is a known catalog id.",
+    "The bare-exposure artifact partitions the catalog with no id dropped or double-counted.",
+    "--check fails closed on drift, on a missing artifact and on an unparseable artifact, and is proven falsifiable by injecting a collision."
+  ],
+  "scope": [
+    "src/reverso/protocols/adapters/opencode/__init__.py",
+    "src/reverso/protocols/adapters/opencode/credentials.py",
+    "src/reverso/protocols/adapters/opencode/catalog.py",
+    "src/reverso/opencode_exposure.py",
+    "src/reverso/proxy/main.py",
+    "src/reverso/claude_code_sync.py",
+    "scripts/check-opencode-exposure.py",
+    "docs/reference/opencode-go-exposure.json",
+    "docs/specifications/ACTIVE/opencode-go-provider.md",
+    "tests/unit/test_opencode_credentials.py",
+    "tests/unit/test_opencode_catalog.py",
+    "tests/unit/test_opencode_exposure.py",
+    "tests/unit/test_opencode_env_exposure.py",
+    ".ai/goals/opencode-go-provider-g3.json"
+  ],
+  "verification": [
+    "pytest --override-ini pythonpath=src tests/unit/test_opencode_credentials.py tests/unit/test_opencode_catalog.py tests/unit/test_opencode_exposure.py tests/unit/test_opencode_env_exposure.py tests/unit/test_docs_dash_clean.py -q"
+  ],
+  "coverage_percent": 91,
+  "legacy_safe_tdd": true,
+  "legacy_risk_reason": "touches the proxy startup credential path and the launcher env scrub shared by every provider; a regression either leaks a subscription key into spawned CLIs or breaks credential injection for deepseek"
+}

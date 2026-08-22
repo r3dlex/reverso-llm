@@ -54,7 +54,8 @@ It is instead treated as a **contract oracle**. Ported knowledge:
   `minimax-m3`, `minimax-m2.7`, `minimax-m2.5`, `qwen3.7-max` require
   `/messages`; the rest use `/chat/completions`. This table is *hand-maintained
   and covers only 16 of the 29 live ids*, so it is a starting hypothesis to be
-  replaced by measurement (G3), not a fact to be copied.
+  replaced by measurement (G3), not a fact to be copied. **Measured in G3 and
+  refuted: see "G3 measurement" below.**
 - **Strict-upstream normalization** (`normalizeAnthropicRequestForUpstream`,
   `main.go:1106`): OpenCode's Anthropic endpoint is *stricter than Anthropic's*
   and rejects `thinking`, `reasoning`, `reasoning_effort`, `effort`, `level`,
@@ -158,11 +159,59 @@ word-count approximation and never delegates it upstream.
 ## Verification
 
 1. `/models` - public; already verified (29 ids).
-2. **Measured protocol split**: with the key, send a 1-token request per id to
-   *both* upstreams and record which accepts it. Replaces ocgo's hand table and
-   covers the 13 ids it never knew about.
+2. **Measured protocol split**: DONE, see "G3 measurement" below. The split does
+   not exist; the hypothesis was refuted rather than refined.
 3. **Strict-normalization proof**: send `thinking`/`output_config` to `/messages`
    and confirm the documented rejection, so each strip has a test proving it is
    required rather than assumed.
 4. End-to-end: one tool-heavy Codex turn, then one Claude Code turn, comparing
    tool_use fidelity to quantify the double-translation cost.
+
+## G3 measurement (2026-08-22)
+
+Every catalog id was sent a bounded request on *both* upstreams. The first pass
+was invalid and is recorded here because its failure mode is the instructive
+part: sending `content` as a plain string made 15 ids return `400`, which reads
+exactly like "this model rejects the Anthropic endpoint". The upstream errors
+gave it away (`messages must not be empty`, `Input required: specify "prompt" or
+"messages"`), pointing at the gateway dropping a string-form body during
+translation rather than at the model. Re-run with block-form content, those same
+15 ids returned `200`. A table built from the first pass would have been mostly
+wrong, and would have looked measured.
+
+Corrected result:
+
+| Outcome | Count | Detail |
+|---|---|---|
+| Dual-protocol (`200` on both) | 22 | No endpoint restriction of any kind |
+| Anthropic format refused | 1 | `grok-4.5`: `Model grok-4.5 is not supported for format anthropic` |
+| Workspace opt-in required | 3 | `deepseek-v4-flash`, `deepseek-v4-pro` (`RegionError`, China-hosted), `muse-spark-1.2-contributor` (`DataPolicyError`) |
+| Upstream unavailable | 3 | `hy3-preview`, `mimo-v2-omni`, `mimo-v2-pro` |
+
+**Consequences.**
+
+1. There is no per-model protocol split to encode. Endpoint selection is
+   dual-protocol by default with a declared deny-list, today exactly
+   `{grok-4.5}`. A 29-entry table would encode 22 identical rows plus noise.
+2. `ocgo`'s table is wrong in substance, not merely stale. It forces
+   `minimax-m3`, `minimax-m2.7`, `minimax-m2.5` and `qwen3.7-max` onto
+   `/messages`; all four answer `/chat/completions`. Copying it would have
+   pinned four models to a needless endpoint.
+3. The opt-in and outage rows are account-scoped or transient and are
+   deliberately NOT frozen into the protocol table. All 29 ids stay published and
+   the upstream error surfaces verbatim, since a `RegionError` carries the opt-in
+   URL that fixes it.
+4. `/messages` authenticates by `X-API-Key` only. An `Authorization: Bearer`
+   header on that path returns `AuthError: Missing API key`, while
+   `/chat/completions` requires the bearer form.
+5. The edge rejects a default HTTP client fingerprint with Cloudflare error
+   1010, so a User-Agent is a functional requirement. This also explains a
+   transient `403` on `GET /models`, which is otherwise public and needs no
+   credential.
+
+**Bare exposure.** Against the routing index, 3 of the 29 ids are contested and
+deferred to incumbents per ADR 0020 (`deepseek-v4-flash`, `deepseek-v4-pro` to
+deepseek; `kimi-k3` to kimi), leaving 26 bare-exposable. Recorded in
+`docs/reference/opencode-go-exposure.json` and policed by
+`scripts/check-opencode-exposure.py --check`, proven falsifiable by injecting a
+collision.
