@@ -39,6 +39,11 @@ from .messages_stream import (
     OpenRouterMessagesStreamingClient,
     build_stream_payload,
 )
+from .observability import (
+    OpenRouterMetrics,
+    StatusSnapshot,
+    snapshot_status,
+)
 from .credentials import OpenRouterCredentialError, resolve_api_key
 from .grants import GrantRegistry, InvalidGrantError, LauncherLiveness
 from .policy import (
@@ -80,6 +85,7 @@ __all__ = (
     "OpenRouterMessagesError",
     "OpenRouterMessagesStreamError",
     "OpenRouterMessagesStreamingClient",
+    "OpenRouterMetrics",
     "OpenRouterPolicy",
     "OpenRouterRuntime",
     "OpenRouterSurfaceGrant",
@@ -98,6 +104,7 @@ __all__ = (
     "build_stream_payload",
     "materialize_continuation",
     "normalize_messages_response",
+    "snapshot_status",
     "reset_openrouter_runtime",
     "resolve_api_key",
 )
