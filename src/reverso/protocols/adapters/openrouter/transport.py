@@ -1,15 +1,16 @@
-"""OpenRouter HTTP transport (OR-G2, I1, U6).
+"""OpenRouter HTTP transport (OR-G2, OR-G3; I1, U6).
 
 The transport owns one ``httpx.Client`` and per-call credential resolution. It
 forwards Responses requests to ``POST /api/v1/responses`` and listing requests
 to ``GET /api/v1/models`` after stripping caller-controlled ``store`` and
-``previous_response_id`` fields. The transport never logs the key or the body.
+``previous_response_id`` fields. Streaming yields canonical SSE events with
+``data: [DONE]`` filtered out and SSE comments (``:``) filtered out.
 """
 
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import AsyncIterator, Callable
 from typing import Any, Protocol
 
 __all__ = [
@@ -59,6 +60,28 @@ class HttpOpenRouterTransport:
         response = self._request("POST", "/api/v1/responses", json=body)
         return response.status_code, _safe_json(response)
 
+    async def stream_response(self, payload: dict[str, Any]) -> AsyncIterator[Any]:
+        """Yield canonical Responses SSE events from upstream."""
+        body = _strip_stateful_fields(payload)
+        headers = self._headers()
+        url = f"{self._api_base}/api/v1/responses"
+        with self._client_factory() as client:
+            response = client.request("POST", url, headers=headers, json=body)
+            for line in response.iter_lines():
+                if not line:
+                    continue
+                if line.startswith(":"):
+                    continue
+                if line.startswith("data:"):
+                    raw = line[len("data:") :].strip()
+                    if raw == "[DONE]":
+                        return
+                    try:
+                        payload_obj = json.loads(raw)
+                    except json.JSONDecodeError:
+                        continue
+                    yield payload_obj
+
     # --- Internals -------------------------------------------------------- #
 
     def _request(self, method: str, path: str, **kwargs: Any) -> Any:
@@ -71,6 +94,14 @@ class HttpOpenRouterTransport:
         url = f"{self._api_base}{path}"
         with self._client_factory() as client:
             return client.request(method, url, headers=headers, **kwargs)
+
+    def _headers(self) -> dict[str, str]:
+        api_key = self._credentials.resolve_api_key()
+        return {
+            "Authorization": f"Bearer {api_key}",
+            "X-OpenRouter-Title": "Reverso",
+            "Content-Type": "application/json",
+        }
 
 
 def _default_client_factory() -> _HttpxClient:
@@ -93,7 +124,7 @@ def _safe_json(response: Any) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
-def _strip_stateful_fields(payload: Mapping[str, Any]) -> dict[str, Any]:
+def _strip_stateful_fields(payload: dict[str, Any]) -> dict[str, Any]:
     """Drop ``previous_response_id`` and ``store`` so the stateless endpoint sees no state."""
     forbidden = {"previous_response_id", "store"}
     return {key: value for key, value in payload.items() if key not in forbidden}
