@@ -31,11 +31,14 @@ def test_headroom_has_a_real_provider_dimension() -> None:
     assert normalize_headroom_provider("opencode") == "opencode"
 
 
-def test_not_reachable_on_the_anthropic_surface_yet() -> None:
-    """Negative proof for G4: the Messages vertical is G5's job."""
+def test_reachable_on_the_anthropic_surface() -> None:
+    """G4 asserted the NEGATIVE here, deliberately: the Messages vertical was
+    G5's job, and the negative proof kept a half-built path from becoming
+    reachable early. G5 landed it, so the assertion is inverted rather than
+    deleted -- the surface is still pinned, just to its new state."""
     from reverso.protocols.anthropic_app import build_anthropic_adapters
 
-    assert "opencode" not in build_anthropic_adapters()
+    assert "opencode" in build_anthropic_adapters()
 
 
 def test_the_responses_gateway_accepts_the_prefix() -> None:
