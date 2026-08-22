@@ -33,11 +33,47 @@
     "reset_reason"
   ],
   "maps": {
-    "outcome_counts": ["compressed", "passed_through", "fail_open", "other"],
-    "failure_reasons": ["worker_busy", "timeout", "exception", "inflation_guard", "retrieval_marker", "unsafe_output", "other"],
-    "error_types": ["timeout", "worker_busy", "dependency_exception", "inflation_guard", "retrieval_marker", "unsafe_output", "other"],
-    "provider_counts": ["claude", "copilot", "auggie", "deepseek", "kimi", "ollama", "codex-direct", "openai-pass-through", "other"],
-    "surface_counts": ["responses", "anthropic_messages", "other"]
+    "outcome_counts": [
+      "compressed",
+      "passed_through",
+      "fail_open",
+      "other"
+    ],
+    "failure_reasons": [
+      "worker_busy",
+      "timeout",
+      "exception",
+      "inflation_guard",
+      "retrieval_marker",
+      "unsafe_output",
+      "other"
+    ],
+    "error_types": [
+      "timeout",
+      "worker_busy",
+      "dependency_exception",
+      "inflation_guard",
+      "retrieval_marker",
+      "unsafe_output",
+      "other"
+    ],
+    "provider_counts": [
+      "claude",
+      "copilot",
+      "auggie",
+      "deepseek",
+      "kimi",
+      "ollama",
+      "codex-direct",
+      "openai-pass-through",
+      "opencode",
+      "other"
+    ],
+    "surface_counts": [
+      "responses",
+      "anthropic_messages",
+      "other"
+    ]
   },
   "unknown_dimension_bucket": "other",
   "formulas": {
@@ -46,7 +82,10 @@
     "average_tokens_saved": "tokens_saved / requests_compressed; zero when requests_compressed is zero",
     "requests_passed_through": "max(requests_seen - requests_compressed - fail_open_count, 0)"
   },
-  "reset_reasons": {"new_process": "process_start", "explicit_test_reset": "manual_test_reset"},
+  "reset_reasons": {
+    "new_process": "process_start",
+    "explicit_test_reset": "manual_test_reset"
+  },
   "persistence": false,
   "standalone_savings_file_read": false,
   "subprocess": false,

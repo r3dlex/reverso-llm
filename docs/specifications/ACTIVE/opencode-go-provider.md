@@ -54,7 +54,8 @@ It is instead treated as a **contract oracle**. Ported knowledge:
   `minimax-m3`, `minimax-m2.7`, `minimax-m2.5`, `qwen3.7-max` require
   `/messages`; the rest use `/chat/completions`. This table is *hand-maintained
   and covers only 16 of the 29 live ids*, so it is a starting hypothesis to be
-  replaced by measurement (G3), not a fact to be copied.
+  replaced by measurement (G3), not a fact to be copied. **Measured in G3 and
+  refuted: see "G3 measurement" below.**
 - **Strict-upstream normalization** (`normalizeAnthropicRequestForUpstream`,
   `main.go:1106`): OpenCode's Anthropic endpoint is *stricter than Anthropic's*
   and rejects `thinking`, `reasoning`, `reasoning_effort`, `effort`, `level`,
@@ -158,11 +159,154 @@ word-count approximation and never delegates it upstream.
 ## Verification
 
 1. `/models` - public; already verified (29 ids).
-2. **Measured protocol split**: with the key, send a 1-token request per id to
-   *both* upstreams and record which accepts it. Replaces ocgo's hand table and
-   covers the 13 ids it never knew about.
+2. **Measured protocol split**: DONE, see "G3 measurement" below. The split does
+   not exist; the hypothesis was refuted rather than refined.
 3. **Strict-normalization proof**: send `thinking`/`output_config` to `/messages`
    and confirm the documented rejection, so each strip has a test proving it is
    required rather than assumed.
 4. End-to-end: one tool-heavy Codex turn, then one Claude Code turn, comparing
    tool_use fidelity to quantify the double-translation cost.
+
+## G3 measurement (2026-08-22)
+
+Every catalog id was sent a bounded request on *both* upstreams. The first pass
+was invalid and is recorded here because its failure mode is the instructive
+part: sending `content` as a plain string made 15 ids return `400`, which reads
+exactly like "this model rejects the Anthropic endpoint". The upstream errors
+gave it away (`messages must not be empty`, `Input required: specify "prompt" or
+"messages"`), pointing at the gateway dropping a string-form body during
+translation rather than at the model. Re-run with block-form content, those same
+15 ids returned `200`. A table built from the first pass would have been mostly
+wrong, and would have looked measured.
+
+Corrected result:
+
+| Outcome | Count | Detail |
+|---|---|---|
+| Dual-protocol (`200` on both) | 22 | No endpoint restriction of any kind |
+| Anthropic format refused | 1 | `grok-4.5`: `Model grok-4.5 is not supported for format anthropic` |
+| Workspace opt-in required | 3 | `deepseek-v4-flash`, `deepseek-v4-pro` (`RegionError`, China-hosted), `muse-spark-1.2-contributor` (`DataPolicyError`) |
+| Upstream unavailable | 3 | `hy3-preview`, `mimo-v2-omni`, `mimo-v2-pro` |
+
+**Consequences.**
+
+1. There is no per-model protocol split to encode. Endpoint selection is
+   dual-protocol by default with a declared deny-list, today exactly
+   `{grok-4.5}`. A 29-entry table would encode 22 identical rows plus noise.
+2. `ocgo`'s table is wrong in substance, not merely stale. It forces
+   `minimax-m3`, `minimax-m2.7`, `minimax-m2.5` and `qwen3.7-max` onto
+   `/messages`; all four answer `/chat/completions`. Copying it would have
+   pinned four models to a needless endpoint.
+3. The opt-in and outage rows are account-scoped or transient and are
+   deliberately NOT frozen into the protocol table. All 29 ids stay published and
+   the upstream error surfaces verbatim, since a `RegionError` carries the opt-in
+   URL that fixes it.
+4. `/messages` authenticates by `X-API-Key` only. An `Authorization: Bearer`
+   header on that path returns `AuthError: Missing API key`, while
+   `/chat/completions` requires the bearer form.
+5. The edge rejects a default HTTP client fingerprint with Cloudflare error
+   1010, so a User-Agent is a functional requirement. This also explains a
+   transient `403` on `GET /models`, which is otherwise public and needs no
+   credential.
+
+**Bare exposure.** Against the routing index, 3 of the 29 ids are contested and
+deferred to incumbents per ADR 0020 (`deepseek-v4-flash`, `deepseek-v4-pro` to
+deepseek; `kimi-k3` to kimi), leaving 26 bare-exposable. Recorded in
+`docs/reference/opencode-go-exposure.json` and policed by
+`scripts/check-opencode-exposure.py --check`, proven falsifiable by injecting a
+collision.
+
+## G5 measurement: the normalization is mostly unnecessary (2026-08-22)
+
+`ocgo` strips seven fields on the grounds that OpenCode's Anthropic endpoint is
+stricter than Anthropic's, and normalizes `system`. G5's acceptance criterion
+requires an observed rejection per strip, so each field was sent individually to
+`/messages` against `glm-5`, `kimi-k3` and `minimax-m3`.
+
+| Field | Result | Verdict |
+|---|---|---|
+| `thinking` | 200 on all three | keep |
+| `reasoning` | 200 on all three | keep |
+| `reasoning_effort` | 200 on all three | keep |
+| `effort` | 200 on all three | keep |
+| `level` | 200 on all three | keep |
+| `depth` | 200 on all three | keep |
+| `output_config` | 400 `invalid_request_error` | STRIP |
+| `system` (string and block form) | 200 on all three | keep, no normalization |
+
+Six of the seven strips are speculative. Stripping `thinking` is the most
+damaging of them: the request would succeed while silently discarding the
+caller's reasoning budget, so the failure is invisible rather than loud.
+
+`output_config` was then scoped across all 22 `/messages`-capable ids: 9 reject
+it (`kimi-k3`, all three `minimax`, all five `qwen`), 11 accept it, and 2 were
+inconclusive (a 503 and a transport failure, deliberately not recorded as
+rejections). It is stripped UNCONDITIONALLY: it is an output-shaping hint these
+non-Anthropic upstreams do not implement, so the accepting ids are almost
+certainly ignoring it, and a per-model table would add drift risk for no
+behavioural gain. This catalog has already produced one hand-maintained table
+that proved wrong.
+
+Note the overlap: the families that reject `output_config` are largely the same
+ones `ocgo` marked as requiring `/messages`. That suggests its table conflated
+"needs special handling" with "needs the Anthropic endpoint".
+
+**Tool-call fidelity.** `kimi-k3` returns reasoning as a proper `thinking`
+content block. `glm-5` instead leaks raw `</think>` markers into `text` content,
+so thinking-tag hygiene is a per-model property of this catalog rather than a
+gateway guarantee.
+
+**Scope moved.** The `claude-opencode` launcher row moved from G5 to G6. It is
+not a routing concern: `LAUNCHER_CATALOGS` feeds the `client_sync` install plan,
+whose manifest (`config/supported-client-surfaces.json`) fails closed on drift
+across provider groups, three shared-dependency lists and per-surface uninstall
+ownership. G6 already owns "uninstall and restore leave no OpenCode artifact", so
+the row lands with the plumbing that makes it removable rather than half-landing
+here.
+
+## G6 findings and one deferral (2026-08-22)
+
+**The catalog had to become data.** G6 requires that a model added upstream
+becomes reachable after a refresh with no code change. It was not: the declared
+catalog was a Python constant, so a new upstream model was LISTED by live
+discovery but not ROUTABLE, because it fell outside the declared catalog and ADR
+0020's prefix branch correctly failed closed on it. The catalog now lives in
+`docs/reference/opencode-go-catalog.json`, read by both the listing fallback and
+the routing declaration, so one artifact governs both and a refresh is a data
+change. Parsing fails closed: an empty declared catalog would make every
+qualified id fail closed, which presents as a routing bug rather than as a
+corrupt file.
+
+**Two gates, not one.** Writing the collision test corrected a wrong assumption.
+A new backend claiming an id OpenCode publishes does NOT raise G1's conflict
+error: config rows and static seeds are claimed first, and the catalog-owning
+seed then defers to whatever is already there. Incumbency winning is ADR 0020
+working as designed, but the id moves to the new claimant silently. So the gates
+divide the work: G1's `ModelIndexConflictError` catches two index-claiming
+backends colliding and is the only case that can fail at import time, while G3's
+exposure `--check` catches an id LEAVING the bare set, which is that silent
+transfer. Both are now asserted, which is what makes the pair complete rather
+than assumed.
+
+**Deferred: the Codex profile and route.** Adding `opencode` to
+`REVERSO_ROUTED_CODEX_PROFILE_PREFIXES` cascaded to 83 failing tests, because
+`codex-sync` then REQUIRES live OpenCode model discovery to succeed for every
+sync and fails closed when it does not. That is the Codex client-sync surface
+(profile generation, catalog slugs, shared codex config and cleanup ownership),
+which is a slice of its own rather than a step in this one. G4's intake had
+listed the isolated Codex profile; it is not delivered, and it is recorded here
+rather than quietly dropped.
+
+The Claude launcher DID land, with its full install-plan wiring: the
+`claude-opencode` row, the `provider-opencode` group, the
+`shared-reverso-launcher` dependency, the `claude-opencode` surface entry, and
+the matching halves of both double-entry contracts (`EXPECTED_GROUPS` and
+`EXPECTED_SURFACES` in code, mirrored in
+`config/supported-client-surfaces.json`).
+
+**Launcher context window.** The catalog spans 202752 to 1050000 tokens, but a
+launcher is rendered once and cannot know which of the 29 models will be picked.
+The MINIMUM is used as the safe static bound: compacting early wastes tokens and
+is recoverable, while a window larger than the model's real context is a hard
+failure mid-session. Per-model sizing needs the Anthropic discovery listing to
+carry context windows, which it does not; that remains open.

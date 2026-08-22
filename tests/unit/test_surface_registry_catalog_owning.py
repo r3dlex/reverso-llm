@@ -128,10 +128,13 @@ def test_existing_kinds_are_unchanged(catalog_backend: None) -> None:
     assert resolve_anthropic_backend("deepseek/deepseek-v4-pro") == "deepseek"
 
 
-def test_no_catalog_owner_is_registered_by_default() -> None:
-    """This slice adds the mechanism, not a provider.
+def test_opencode_is_the_registered_catalog_owner() -> None:
+    """G2 shipped this mechanism empty; OCG-G5 registered its first consumer.
 
-    Runs without the fixture so it observes the shipped configuration.
+    Runs without the fixture so it observes the shipped configuration. The
+    incumbency half is the part worth keeping from the original assertion: a
+    registered catalog owner must not have taken a contested bare id.
     """
-    assert surface_registry._CATALOG_OWNING_BACKENDS == {}
+    assert set(surface_registry._CATALOG_OWNING_BACKENDS) == {"opencode"}
     assert resolve_anthropic_backend("kimi-k3") == "kimi"
+    assert resolve_anthropic_backend("opencode/kimi-k3") == "opencode"

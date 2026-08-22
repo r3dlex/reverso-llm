@@ -467,6 +467,7 @@ def test_sync_installs_provider_scoped_managed_launchers(tmp_path: Path) -> None
         "claude-deepseek": "deepseek",
         "claude-kimi": "kimi",
         "claude-ollama": "ollama",
+        "claude-opencode": "opencode",  # OCG-G6
     }
     assert result.error is None
     assert result.changed_launchers == tuple(expected)

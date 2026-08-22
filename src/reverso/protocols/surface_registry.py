@@ -41,7 +41,16 @@ from reverso.protocols.model_exposure import codex_builtin_model_backends
 # "codex" would make the match order-dependent).
 SURFACE_BACKENDS: dict[str, frozenset[str]] = {
     "anthropic": frozenset(
-        {"copilot", "deepseek", "auggie", "codex", "claude", "kimi", "ollama"}
+        {
+            "copilot",
+            "deepseek",
+            "auggie",
+            "codex",
+            "claude",
+            "kimi",
+            "ollama",
+            "opencode",
+        }
     ),
 }
 
@@ -128,7 +137,22 @@ def _load_model_list(path: Path | None = None) -> list[dict[str, Any]]:
 # routing is granted only for ids no incumbent claims: incumbency always wins,
 # because moving a bare id would silently change which upstream subscription, which
 # credential and whose bill served the request.
-_CATALOG_OWNING_BACKENDS: dict[str, frozenset[str]] = {}
+def _opencode_catalog() -> frozenset[str]:
+    """The declared OpenCode Go catalog, read from the committed artifact.
+
+    Imported lazily to keep import order acyclic. Reading the ARTIFACT rather
+    than a constant is what lets a refresh add a routable model without a code
+    change (OCG-G6); it fails closed on a corrupt file rather than silently
+    declaring an empty catalog.
+    """
+    from reverso.opencode_catalog_artifact import load_catalog_ids
+
+    return frozenset(load_catalog_ids())
+
+
+_CATALOG_OWNING_BACKENDS: dict[str, frozenset[str]] = {
+    "opencode": _opencode_catalog(),
+}
 
 
 class ModelIndexConflictError(RuntimeError):
@@ -499,6 +523,17 @@ def list_anthropic_discovery_aliases(
             continue
         for model_id in models:
             add(backend, model_id)
+    # A catalog-owning backend is aliased from its DECLARED CATALOG, not from the
+    # index. Its contested ids are indexed to their incumbents, so the index loop
+    # above mints anthropic-kimi-kimi-k3 but never anthropic-opencode-kimi-k3 --
+    # and the qualified alias is exactly how ADR 0020 makes a contested id
+    # reachable. Driving this from the catalog also means the picker gains new
+    # models when the catalog does, with no curated tuple to forget to update.
+    for backend, catalog in _CATALOG_OWNING_BACKENDS.items():
+        if backend not in SURFACE_BACKENDS["anthropic"]:
+            continue
+        for model_id in sorted(catalog):
+            add(backend, model_id)
     if adapter_models is not None:
         for backend, models in adapter_models.items():
             if backend not in SURFACE_BACKENDS["anthropic"]:
@@ -537,6 +572,15 @@ def cross_check_anthropic_models(path: Path | None = None) -> None:
     static_exempt = {
         *(_normalize_model(model_id) for model_id in _CODEX_MODELS),
         *(_normalize_model(model_id) for model_id in _KIMI_MODELS),
+        # A catalog-owning backend's catalog (ADR 0020) is seeded data for the
+        # same reason: it is discovered from the provider, not declared in
+        # litellm_config. Exempt from CONFIG-EXISTENCE only; the backend-
+        # membership assertion below still covers every one of these ids.
+        *(
+            _normalize_model(model_id)
+            for catalog in _CATALOG_OWNING_BACKENDS.values()
+            for model_id in catalog
+        ),
     }
     for model_name, backend in fresh_index.items():
         if model_name not in config_names and model_name not in static_exempt:

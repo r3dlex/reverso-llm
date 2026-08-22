@@ -1124,6 +1124,7 @@ def build_anthropic_adapters(
     from reverso.protocols.adapters.codex import CodexAdapter
     from reverso.protocols.adapters.copilot import CopilotAdapter
     from reverso.protocols.adapters.deepseek import DeepSeekAdapter
+    from reverso.protocols.adapters.opencode.adapter import OpenCodeAdapter
     from reverso.protocols.adapters.kimi import KimiAdapter
 
     return {
@@ -1133,6 +1134,9 @@ def build_anthropic_adapters(
         "codex": CodexAdapter(),
         "claude": ClaudeAdapter(),
         "kimi": KimiAdapter(auth=kimi_auth),
+        # OpenCode Go (OCG-G5). Serves the Anthropic-native facet, so /messages
+        # is dispatched directly instead of round-tripping through Responses.
+        "opencode": OpenCodeAdapter(),
     }
 
 

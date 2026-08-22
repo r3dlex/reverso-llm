@@ -97,6 +97,7 @@ def build_adapters(
     from reverso.protocols.adapters.claude import ClaudeAdapter
     from reverso.protocols.adapters.copilot import CopilotAdapter
     from reverso.protocols.adapters.deepseek import DeepSeekAdapter
+    from reverso.protocols.adapters.opencode.adapter import OpenCodeAdapter
 
     adapters: dict[str, ProviderAdapter] = {
         "claude": ClaudeAdapter(),
@@ -104,6 +105,9 @@ def build_adapters(
         "auggie": AuggieAdapter(),
         "deepseek": DeepSeekAdapter(),
         "kimi": KimiAdapter(auth=kimi_auth or KimiOAuthAuth()),
+        # OpenCode Go (OCG-G4). Responses surface only this slice; the Anthropic
+        # vertical is G5, and a negative test asserts it is not reachable yet.
+        "opencode": OpenCodeAdapter(),
     }
     if codex_direct_backend_enabled(env):
         from reverso.protocols.adapters.codex import CodexOAuthAuth

@@ -24,7 +24,8 @@
     "claude-auggie": "auggie",
     "claude-deepseek": "deepseek",
     "claude-kimi": "kimi",
-    "claude-ollama": "ollama"
+    "claude-ollama": "ollama",
+    "claude-opencode": "opencode"
   },
   "external_catalogs": {
     "agy": {
@@ -43,6 +44,11 @@
     },
     {
       "id": "codex-roots",
+      "kind": "prerequisite",
+      "dependencies": []
+    },
+    {
+      "id": "rtk",
       "kind": "prerequisite",
       "dependencies": []
     },
@@ -97,18 +103,18 @@
       "dependencies": []
     },
     {
-      "id": "provider-openai-pass-through",
-      "kind": "provider",
-      "dependencies": []
-    },
-    {
       "id": "provider-ollama",
       "kind": "provider",
       "dependencies": []
     },
     {
-      "id": "rtk",
-      "kind": "prerequisite",
+      "id": "provider-openai-pass-through",
+      "kind": "provider",
+      "dependencies": []
+    },
+    {
+      "id": "provider-opencode",
+      "kind": "provider",
       "dependencies": []
     },
     {
@@ -117,7 +123,7 @@
       "dependencies": []
     },
     {
-      "id": "shared-codex-config",
+      "id": "shared-codex-cleanup",
       "kind": "shared_dependency",
       "dependencies": [
         "provider-auggie",
@@ -131,7 +137,7 @@
       ]
     },
     {
-      "id": "shared-codex-cleanup",
+      "id": "shared-codex-config",
       "kind": "shared_dependency",
       "dependencies": [
         "provider-auggie",
@@ -154,22 +160,12 @@
         "provider-copilot",
         "provider-deepseek",
         "provider-kimi",
-        "provider-ollama"
+        "provider-ollama",
+        "provider-opencode"
       ]
     }
   ],
   "surfaces": [
-    {
-      "id": "claude-ollama",
-      "kind": "provider_launcher",
-      "group": "provider-ollama",
-      "selector_template": "anthropic-ollama-<raw-model-id>",
-      "default_model_authority": "runtime",
-      "ownership": "reverso_managed",
-      "runtime_authority": "reverso",
-      "path_template": "<launch_agent_dir>/claude-ollama",
-      "feature_gate": null
-    },
     {
       "id": "claude-auggie",
       "kind": "provider_launcher",
@@ -234,6 +230,28 @@
       "ownership": "reverso_managed",
       "runtime_authority": "reverso",
       "path_template": "<launch_agent_dir>/claude-kimi",
+      "feature_gate": null
+    },
+    {
+      "id": "claude-ollama",
+      "kind": "provider_launcher",
+      "group": "provider-ollama",
+      "selector_template": "anthropic-ollama-<raw-model-id>",
+      "default_model_authority": "runtime",
+      "ownership": "reverso_managed",
+      "runtime_authority": "reverso",
+      "path_template": "<launch_agent_dir>/claude-ollama",
+      "feature_gate": null
+    },
+    {
+      "id": "claude-opencode",
+      "kind": "provider_launcher",
+      "group": "provider-opencode",
+      "selector_template": "anthropic-opencode-<raw-model-id>",
+      "default_model_authority": "runtime",
+      "ownership": "reverso_managed",
+      "runtime_authority": "reverso",
+      "path_template": "<launch_agent_dir>/claude-opencode",
       "feature_gate": null
     },
     {
