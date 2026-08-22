@@ -1,0 +1,41 @@
+{
+  "id": "OCG-G2",
+  "issue_ref": ".ai/work-intake/opencode-go-provider-g2-catalog-owning-routing.md",
+  "implementation_ready": true,
+  "context": "Add a third backend kind to the Anthropic-surface routing authority: a catalog-owning backend whose prefix is authoritative for its declared catalog and which receives bare routing only for ids unique to it.",
+  "root_causes": [
+    "ADR 0008 defines only rowless backends (prefix authoritative for any bare id) and rows-owning backends (bare id must be indexed to itself), so a backend with a discoverable catalog that overlaps other backends cannot be expressed.",
+    "Seeding such a catalog into _MODEL_INDEX to gain bare routing makes the backend rows-owning by derivation, at which point a qualified id naming a model an incumbent owns resolves to None.",
+    "Not seeding it leaves the backend rowless, which grants qualified routing for anything but forbids bare routing entirely."
+  ],
+  "evidence": [
+    "_resolve_qualified returns the provider unconditionally when the provider is absent from _BACKENDS_WITH_ROWS, and otherwise requires _MODEL_INDEX[bare] == provider.",
+    "_BACKENDS_WITH_ROWS is frozenset(_MODEL_INDEX.values()), so index membership alone decides which branch a backend takes.",
+    "The OpenCode Go catalog probed on 2026-08-11 contains kimi-k3, deepseek-v4-pro and deepseek-v4-flash, which are indexed to kimi and deepseek."
+  ],
+  "solutions": [
+    "Declare catalog-owning backends explicitly with their catalog of bare ids, rather than inferring a kind from index membership.",
+    "Resolve the catalog-owning branch before the rowless and rows-owning branches so the declared catalog is authoritative behind the prefix and fails closed outside it.",
+    "Seed only the ids no incumbent already claims, so incumbency wins and G1's conflict guard is not tripped by a deliberate deference."
+  ],
+  "acceptance_criteria": [
+    "A qualified id in the declared catalog resolves to the catalog-owning backend even when the bare id is indexed to an incumbent.",
+    "A qualified id outside the declared catalog fails closed, so the prefix is never a fail-open bypass.",
+    "A bare id unique to the catalog-owning backend resolves to it.",
+    "A bare id an incumbent claims still resolves to the incumbent.",
+    "claude remains fail-closed on every path.",
+    "Existing rowless and rows-owning resolution is unchanged."
+  ],
+  "scope": [
+    "docs/architecture/adr/0020-catalog-owning-backend-routing.md",
+    "src/reverso/protocols/surface_registry.py",
+    "tests/unit/test_surface_registry_catalog_owning.py",
+    ".ai/goals/opencode-go-provider-g2.json"
+  ],
+  "verification": [
+    "pytest --override-ini pythonpath=src tests/unit/test_surface_registry_catalog_owning.py tests/unit/test_surface_registry.py tests/unit/test_surface_registry_index_conflicts.py -q"
+  ],
+  "coverage_percent": 91,
+  "legacy_safe_tdd": true,
+  "legacy_risk_reason": "changes the single resolution authority shared by claude, codex, deepseek, kimi, copilot and auggie; a regression silently reroutes a model to a different upstream subscription"
+}

@@ -35,7 +35,7 @@ protocol split and the strict-upstream normalization.
 
 | Goal | Work item | Type | Status | Blocked by |
 |---|---|---|---|---|
-| OCG-G1 | `opencode-go-provider-g1-index-conflict-detection.md` | AFK | ready-for-agent | none |
+| OCG-G1 | `opencode-go-provider-g1-index-conflict-detection.md` | AFK | completed in PR #123 | none |
 | OCG-G2 | `opencode-go-provider-g2-catalog-owning-routing.md` | AFK | ready-for-agent | OCG-G1 |
 | OCG-G3 | `opencode-go-provider-g3-credentials-catalog-protocol.md` | AFK | ready-for-agent | OCG-G1 |
 | OCG-G4 | `opencode-go-provider-g4-codex-responses-vertical.md` | AFK | ready-for-agent | OCG-G2, OCG-G3 |
@@ -48,7 +48,7 @@ protocol split and the strict-upstream normalization.
 - [ ] All seven goal records complete in dependency order with recorded red-green evidence.
 - [ ] `opencode/<id>` reaches OpenCode for every one of the 29 catalog ids, including the ids DeepSeek and Kimi already claim bare.
 - [ ] Bare routing is granted only for ids unique to OpenCode, and no existing bare id changes backend.
-- [ ] A collision between two backends over one bare id fails closed rather than resolving silently.
+- [x] A collision between two backends over one bare id fails closed rather than resolving silently.
 - [ ] The per-model protocol split is measured against both upstreams, not copied from `ocgo`.
 - [ ] Headroom runs exactly once per eligible request; a 429 surfaces as an error and never falls back to another provider.
 - [ ] Local and hosted exact-head gates are green before each merge.

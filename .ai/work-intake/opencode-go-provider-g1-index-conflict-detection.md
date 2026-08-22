@@ -1,7 +1,7 @@
 ---
 title: OCG-G1: fail closed on model-index collisions
-status: ready-for-agent
-state: ready-for-agent
+status: complete
+state: complete
 category: enhancement
 slug: opencode-go-provider-g1-index-conflict-detection
 owner: unassigned
@@ -29,10 +29,10 @@ current backend set is collision-free.
 
 ## Acceptance criteria
 
-- [ ] A synthetic duplicate bare id across two backends fails the index build with a message naming the id and both backends.
-- [ ] The real backend set (claude, codex, deepseek, kimi rows and seeds) builds clean, proving the guard is not vacuous.
-- [ ] `cross_check_anthropic_models` and its independently rebuilt `fresh_index` observe the same rule, so resolution and the build-time lint cannot diverge.
-- [ ] No behaviour change for any currently resolvable id.
+- [x] A synthetic duplicate bare id across two backends fails the index build with a message naming the id and both backends.
+- [x] The real backend set (claude, codex, deepseek, kimi rows and seeds) builds clean, proving the guard is not vacuous.
+- [x] `cross_check_anthropic_models` and its independently rebuilt `fresh_index` observe the same rule, so resolution and the build-time lint cannot diverge.
+- [x] No behaviour change for any currently resolvable id.
 
 ## Why first
 
@@ -43,3 +43,8 @@ subscription without anyone noticing. Needs no credential.
 ## Blocked by
 
 None - can start immediately
+
+## Shipped via
+
+Completed in PR #123. Exact-head local and hosted gates passed, and the observed
+red-then-green evidence is recorded at `.ai/evidence/OCG-G1.json`.
