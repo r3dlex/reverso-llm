@@ -138,10 +138,16 @@ def _load_model_list(path: Path | None = None) -> list[dict[str, Any]]:
 # because moving a bare id would silently change which upstream subscription, which
 # credential and whose bill served the request.
 def _opencode_catalog() -> frozenset[str]:
-    """The OpenCode Go catalog, imported lazily to keep import order acyclic."""
-    from reverso.protocols.adapters.opencode.catalog import FALLBACK_MODEL_IDS
+    """The declared OpenCode Go catalog, read from the committed artifact.
 
-    return frozenset(FALLBACK_MODEL_IDS)
+    Imported lazily to keep import order acyclic. Reading the ARTIFACT rather
+    than a constant is what lets a refresh add a routable model without a code
+    change (OCG-G6); it fails closed on a corrupt file rather than silently
+    declaring an empty catalog.
+    """
+    from reverso.opencode_catalog_artifact import load_catalog_ids
+
+    return frozenset(load_catalog_ids())
 
 
 _CATALOG_OWNING_BACKENDS: dict[str, frozenset[str]] = {

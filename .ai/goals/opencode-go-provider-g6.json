@@ -1,0 +1,62 @@
+{
+  "id": "OCG-G6",
+  "issue_ref": ".ai/work-intake/opencode-go-provider-g6-convergence-refresh-docs.md",
+  "implementation_ready": true,
+  "context": "Make the OpenCode Go provider survive refresh, restore, uninstall and drift: catalog as committed data, a reconciling refresh script, the Claude launcher with its full install-plan wiring, the domain terms, and the operator guide.",
+  "root_causes": [
+    "The declared catalog was a Python constant, so a model added upstream was listed by live discovery but not routable, and refreshing meant editing code.",
+    "A new backend claiming an id OpenCode publishes does not trip G1's conflict guard, because config rows are claimed first and the catalog-owning seed defers, so the id moves silently.",
+    "LAUNCHER_CATALOGS feeds the client_sync install plan, whose group and surface contracts are pinned in code AND mirrored in a manifest, so adding a launcher row alone fails closed.",
+    "The catalog spans 202752 to 1050000 tokens but a launcher is rendered once, so no single static context window is per-model correct."
+  ],
+  "evidence": [
+    "Adding the launcher row alone failed 26 tests with 'manifest Claude launchers drift from launcher catalog'; the full wiring required EXPECTED_GROUPS, EXPECTED_SURFACES and the manifest to agree.",
+    "Adding opencode to REVERSO_ROUTED_CODEX_PROFILE_PREFIXES cascaded to 83 failures because codex-sync then requires live OpenCode model discovery per sync and fails closed without it.",
+    "A monkeypatched kimi claim over glm-5 does not raise ModelIndexConflictError; the resulting index maps glm-5 to kimi, and it is the exposure --check that fails.",
+    "The committed catalog matched the live catalog at 29 ids when reconciled by the refresh script."
+  ],
+  "solutions": [
+    "Move the catalog to docs/reference/opencode-go-catalog.json, read by both the listing fallback and the routing declaration, failing closed on a corrupt or empty artifact.",
+    "Add a refresh script whose --check diffs committed against live and prints added and removed ids.",
+    "Land the Claude launcher with the provider group, the shared-reverso-launcher dependency, the surface entry and both halves of the two double-entry contracts.",
+    "Use the catalog minimum as the launcher context window, since compacting early is recoverable and overflowing the real context is not.",
+    "Assert both gates explicitly: G1 for two index-claiming backends, the exposure check for an id leaving the bare set.",
+    "Defer the Codex profile and route to its own slice rather than half-landing the Codex client-sync surface."
+  ],
+  "acceptance_criteria": [
+    "A model added to the catalog artifact becomes routable with no code change.",
+    "The artifact is the single source for both the listing fallback and the routing declaration.",
+    "A corrupt or empty artifact fails closed rather than declaring an empty catalog.",
+    "The refresh --check fails closed on drift and names the added and removed ids.",
+    "A genuine two-backend collision fails with a message naming both backends and saying what to do.",
+    "A silent transfer of a bare id away from OpenCode is caught by the exposure check.",
+    "The claude-opencode launcher installs with its group, dependency and surface contracts consistent in code and manifest.",
+    "The launcher pins no single model and sets both window variables.",
+    "CONTEXT.md gains the catalog-owning backend, bare exposure and incumbency terms.",
+    "Operator documentation covers key provisioning, quota versus opt-in versus outage failures, and per-request provider attribution."
+  ],
+  "scope": [
+    "src/reverso/opencode_catalog_artifact.py",
+    "src/reverso/protocols/adapters/opencode/catalog.py",
+    "src/reverso/protocols/surface_registry.py",
+    "src/reverso/claude_code_sync.py",
+    "src/reverso/client_sync.py",
+    "config/supported-client-surfaces.json",
+    "docs/reference/opencode-go-catalog.json",
+    "docs/opencode-go-operations.md",
+    "docs/specifications/ACTIVE/opencode-go-provider.md",
+    "CONTEXT.md",
+    "scripts/refresh-opencode-catalog.py",
+    "tests/unit/test_opencode_catalog_artifact.py",
+    "tests/unit/test_opencode_collision_gate.py",
+    "tests/unit/test_claude_code_sync.py",
+    "tests/verify_opencode_g6.sh",
+    ".ai/goals/opencode-go-provider-g6.json"
+  ],
+  "verification": [
+    "bash tests/verify_opencode_g6.sh"
+  ],
+  "coverage_percent": 91,
+  "legacy_safe_tdd": true,
+  "legacy_risk_reason": "changes the client_sync install plan contracts and the launcher catalog shared by every provider; a regression breaks install or uninstall for all of them, and can leave user-owned files modified"
+}

@@ -35,6 +35,8 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any
 
+from reverso.opencode_catalog_artifact import load_catalog_ids as _load_catalog_ids
+
 __all__ = [
     "ANTHROPIC_UNSUPPORTED_MODELS",
     "CHAT_COMPLETIONS_PATH",
@@ -63,41 +65,16 @@ USER_AGENT = "reverso-opencode-go/1.0"
 # would silently downgrade it.
 ANTHROPIC_UNSUPPORTED_MODELS = frozenset({"grok-4.5"})
 
-# Bounded offline fallback: the catalog observed on 2026-08-22. Used only when
-# live discovery fails, so a network outage degrades to a known-good list rather
-# than an empty picker. It WILL drift as OpenCode adds models; live discovery is
-# the authority whenever it answers.
-FALLBACK_MODEL_IDS: tuple[str, ...] = (
-    "deepseek-v4-flash",
-    "deepseek-v4-flash-vision-exp",
-    "deepseek-v4-pro",
-    "glm-5",
-    "glm-5.1",
-    "glm-5.2",
-    "glm-5.3",
-    "gpt-5.6-luna",
-    "grok-4.5",
-    "hy3",
-    "hy3-preview",
-    "kimi-k2.5",
-    "kimi-k2.6",
-    "kimi-k2.7-code",
-    "kimi-k3",
-    "mimo-v2-omni",
-    "mimo-v2-pro",
-    "mimo-v2.5",
-    "mimo-v2.5-pro",
-    "minimax-m2.5",
-    "minimax-m2.7",
-    "minimax-m3",
-    "muse-spark-1.2-contributor",
-    "ox-alpha-free",
-    "qwen3.5-plus",
-    "qwen3.6-plus",
-    "qwen3.7-max",
-    "qwen3.7-plus",
-    "qwen3.8-max",
-)
+# Bounded offline fallback: the committed catalog artifact
+# (docs/reference/opencode-go-catalog.json). Used only when live discovery fails,
+# so a network outage degrades to a known-good list rather than an empty picker.
+#
+# It lives in DATA rather than in this module (OCG-G6) so refreshing the catalog
+# is not a code change: the same artifact is also the declared catalog that ADR
+# 0020 routes on, so one file governs both listing fallback and routability.
+# Reading fails closed: an empty declared catalog would make every qualified id
+# fail closed, presenting as a routing bug rather than a corrupt file.
+FALLBACK_MODEL_IDS: tuple[str, ...] = _load_catalog_ids()
 
 
 def supports_anthropic_format(model_id: str) -> bool:
