@@ -1,0 +1,37 @@
+{
+  "id": "OCG-G1",
+  "issue_ref": ".ai/work-intake/opencode-go-provider-g1-index-conflict-detection.md",
+  "implementation_ready": true,
+  "context": "Make a bare model-id collision between two Anthropic-surface backends fail closed, before the overlapping 29-model OpenCode catalog is introduced.",
+  "root_causes": [
+    "_build_model_index assigns index[key] = backend with no conflict detection, so a duplicate bare id is resolved by insertion order and the loser is discarded silently.",
+    "kimi-k3 currently resolves to the kimi backend because the kimi seed loop runs last, which is an ordering accident rather than a recorded decision.",
+    "_BACKENDS_WITH_ROWS is derived from frozenset(_MODEL_INDEX.values()), so a silent overwrite also changes which backends count as rows-owning for qualified routing."
+  ],
+  "evidence": [
+    "surface_registry._build_model_index writes index[_normalize_model(model_name)] = backend for config rows, then seeds _CODEX_MODELS and _KIMI_MODELS over the same dict with no duplicate check.",
+    "The OpenCode Go catalog probed live on 2026-08-11 contains deepseek-v4-pro, deepseek-v4-flash and kimi-k3, all already claimed bare by other backends."
+  ],
+  "solutions": [
+    "Detect a bare id claimed by two different backends during index construction and fail closed with a message naming the id and both backends.",
+    "Keep an identical re-declaration of the same id to the same backend harmless, so ordinary config duplication does not become an outage.",
+    "Apply the same rule inside the builder so cross_check_anthropic_models' independently rebuilt fresh_index cannot diverge from resolution."
+  ],
+  "acceptance_criteria": [
+    "A synthetic duplicate bare id across two backends fails the index build with a message naming the id and both backends.",
+    "The real backend set builds clean, proving the guard is not vacuous.",
+    "A duplicate id mapping to the same backend is accepted.",
+    "No currently resolvable model id changes backend."
+  ],
+  "scope": [
+    "src/reverso/protocols/surface_registry.py",
+    "tests/unit/test_surface_registry_index_conflicts.py",
+    ".ai/goals/opencode-go-provider-g1.json"
+  ],
+  "verification": [
+    "pytest --override-ini pythonpath=src tests/unit/test_surface_registry_index_conflicts.py -q"
+  ],
+  "coverage_percent": 91,
+  "legacy_safe_tdd": true,
+  "legacy_risk_reason": "module coverage is 91%, so the low-coverage trigger does not apply; legacy-safe is selected on blast radius. _build_model_index feeds _MODEL_INDEX, which _BACKENDS_WITH_ROWS is derived from, which decides rows-owning vs rowless qualified routing for claude, codex, deepseek, kimi, copilot and auggie. A regression here silently changes which backend serves a model."
+}
