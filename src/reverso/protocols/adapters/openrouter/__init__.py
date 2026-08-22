@@ -1,10 +1,4 @@
-"""OpenRouter provider support (ADR 0020, OR-G1, OR-G2).
-
-This package carries the credential, catalog, policy, grant, budget, runtime,
-transport, and adapter facts the OpenRouter verticals are built on. The runtime
-is the sole composition-owned owner; both the Codex Responses vertical (OR-G2)
-and the Claude Messages vertical (OR-G4) share its adapter object.
-"""
+"""OpenRouter provider support (ADR 0020, OR-G1..OR-G3)."""
 
 from __future__ import annotations
 
@@ -19,6 +13,13 @@ from .catalog import (
     OpenRouterCatalogEntry,
     OpenRouterCatalogError,
     OpenRouterCatalogSource,
+)
+from .continuation import (
+    ContinuationRejection,
+    ReplayChain,
+    ReplayItem,
+    build_continuation_request,
+    materialize_continuation,
 )
 from .credentials import OpenRouterCredentialError, resolve_api_key
 from .grants import GrantRegistry, InvalidGrantError, LauncherLiveness
@@ -40,6 +41,7 @@ from .transport import HttpOpenRouterTransport, OpenRouterTransportError
 __all__ = (
     "BudgetLedger",
     "BudgetReservation",
+    "ContinuationRejection",
     "FreshnessBoundError",
     "GrantRegistry",
     "HttpOpenRouterTransport",
@@ -59,9 +61,13 @@ __all__ = (
     "OpenRouterTransportError",
     "PolicyEvaluator",
     "PolicyRejectionError",
+    "ReplayChain",
+    "ReplayItem",
     "ResponseStore",
     "UnknownPolicyError",
+    "build_continuation_request",
     "build_openrouter_runtime",
+    "materialize_continuation",
     "reset_openrouter_runtime",
     "resolve_api_key",
 )
