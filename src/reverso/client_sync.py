@@ -95,6 +95,7 @@ EXPECTED_GROUPS = {
             "provider-kimi",
             "provider-ollama",
             "provider-openai-pass-through",
+            "provider-opencode",
         ),
     ),
     "shared-codex-cleanup": (
@@ -108,6 +109,7 @@ EXPECTED_GROUPS = {
             "provider-kimi",
             "provider-ollama",
             "provider-openai-pass-through",
+            "provider-opencode",
         ),
     ),
     "shared-reverso-launcher": (
@@ -323,6 +325,16 @@ EXPECTED_SURFACES = {
         "reverso_managed",
         "reverso",
         "<codex_config_dir>/reverso-ollama.config.toml",
+        None,
+    ),
+    "codex-reverso-opencode": (
+        "reverso_route",
+        "provider-opencode",
+        "<raw-model-id>",
+        "runtime",
+        "reverso_managed",
+        "reverso",
+        "<codex_config_dir>/reverso-opencode.config.toml",
         None,
     ),
 }

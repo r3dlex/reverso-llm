@@ -1,0 +1,49 @@
+{
+  "id": "OCG-G8",
+  "issue_ref": ".ai/work-intake/opencode-go-provider-g4-codex-responses-vertical.md",
+  "implementation_ready": true,
+  "context": "The isolated Codex profile and reverso route for OpenCode Go, deferred out of G4 and G6 because adding the route prefix made codex-sync fail closed for every deployment without the subscription.",
+  "root_causes": [
+    "codex-sync treats every routed prefix as REQUIRED live discovery, so adding opencode made every sync fail for anyone without an OpenCode subscription.",
+    "codex_profile_default_model falls back to models[0], which for this catalog sorts to deepseek-v4-flash: an id gated behind a workspace opt in, so the profile default would 403 on first use.",
+    "A Codex profile carries its own context window, and leaving it unset makes Codex size context management from its own default rather than the model's real limit."
+  ],
+  "evidence": [
+    "Adding the route prefix alone failed 83 tests with 'required reverso provider model discovery returned no compatible models for: opencode'; making discovery optional reduced that to 27.",
+    "OPTIONAL_DISCOVERY_PREFIXES already exempts ollama for the same class of reason: its daemon may simply not be running.",
+    "load_catalog_ids()[0] is deepseek-v4-flash, which returns 403 RegionError until the workspace opts in.",
+    "The install-plan group dependency lists are validated as sorted, and provider-opencode sorts AFTER provider-openai-pass-through, which the first attempt got wrong."
+  ],
+  "solutions": [
+    "Add opencode to OPTIONAL_DISCOVERY_PREFIXES so a missing subscription degrades instead of failing every sync.",
+    "Pin an explicit profile default of glm-5: dual protocol, ungated and uncontested, and still fall through to models[0] when it is absent from discovery.",
+    "Derive the profile context window from the model the profile actually pins, which a single-model profile can do exactly, unlike the multi-model Claude launcher.",
+    "Complete the route, surface and shared-codex dependency wiring in both halves of each double-entry contract."
+  ],
+  "acceptance_criteria": [
+    "The route prefix is registered and its discovery is optional.",
+    "The profile default is never a gated id, and falls back correctly when the explicit default is absent from discovery.",
+    "The profile routes through reverso_opencode and uses the model catalog.",
+    "The profile context window and auto-compact limit come from the pinned model's real limits.",
+    "Every catalog id stays Codex selectable, so a gated model surfaces its opt-in error rather than vanishing.",
+    "Other prefixes keep their existing defaults and windows.",
+    "The install-plan contracts agree between code and manifest."
+  ],
+  "scope": [
+    "src/reverso/protocols/model_exposure.py",
+    "src/reverso/codex_sync.py",
+    "src/reverso/client_sync.py",
+    "config/supported-client-surfaces.json",
+    "tests/unit/test_opencode_codex_profile.py",
+    "tests/unit/test_model_exposure.py",
+    "tests/unit/test_client_sync.py",
+    "tests/verify_opencode_g8.sh",
+    ".ai/goals/opencode-go-provider-g8.json"
+  ],
+  "verification": [
+    "bash tests/verify_opencode_g8.sh"
+  ],
+  "coverage_percent": 91,
+  "legacy_safe_tdd": true,
+  "legacy_risk_reason": "changes the codex-sync required-discovery contract and the install-plan group graph shared by every provider; a regression breaks Codex profile sync for all of them"
+}

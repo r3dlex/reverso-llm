@@ -6,7 +6,8 @@
     "auggie",
     "deepseek",
     "kimi",
-    "ollama"
+    "ollama",
+    "opencode"
   ],
   "feature_gated_routes": {
     "codex-direct": "REVERSO_CODEX_DIRECT_BACKEND",
@@ -133,7 +134,8 @@
         "provider-deepseek",
         "provider-kimi",
         "provider-ollama",
-        "provider-openai-pass-through"
+        "provider-openai-pass-through",
+        "provider-opencode"
       ]
     },
     {
@@ -147,7 +149,8 @@
         "provider-deepseek",
         "provider-kimi",
         "provider-ollama",
-        "provider-openai-pass-through"
+        "provider-openai-pass-through",
+        "provider-opencode"
       ]
     },
     {
@@ -384,6 +387,17 @@
       "ownership": "reverso_managed",
       "runtime_authority": "reverso",
       "path_template": "<codex_config_dir>/reverso-ollama.config.toml",
+      "feature_gate": null
+    },
+    {
+      "id": "codex-reverso-opencode",
+      "kind": "reverso_route",
+      "group": "provider-opencode",
+      "selector_template": "<raw-model-id>",
+      "default_model_authority": "runtime",
+      "ownership": "reverso_managed",
+      "runtime_authority": "reverso",
+      "path_template": "<codex_config_dir>/reverso-opencode.config.toml",
       "feature_gate": null
     }
   ]
