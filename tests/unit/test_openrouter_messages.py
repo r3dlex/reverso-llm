@@ -15,10 +15,7 @@ from typing import Any
 from unittest import mock
 
 
-from typing import TypedDict
 
-
-class AnthropicMessagesRequest(TypedDict, total=False):
     model: str
     max_tokens: int
     messages: list[dict[str, Any]]
