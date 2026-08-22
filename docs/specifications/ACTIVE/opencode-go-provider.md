@@ -349,3 +349,53 @@ roughly one full run in two, a DIFFERENT test each time, and each passes in
 isolation and on clean `main`. They are still run and still must pass. This is a
 mitigation, not a skip, and the flakiness itself is unfixed and worth its own
 issue.
+
+## G7 attended proof (2026-08-22)
+
+Run in-process against Reverso's REAL ASGI apps and the LIVE upstream, so both
+surfaces go through the actual translation stack without needing the deployed
+gateway daemon. `scripts/opencode-live-proof.py` is the reusable driver;
+`docs/reference/opencode-go-proof.json` is the recorded result.
+
+**Both surfaces complete a tool-bearing turn.** For `kimi-k3`, the Responses
+surface and the Anthropic surface each returned exactly one parsed tool call with
+the correct name and arguments, and the Anthropic side additionally carried a
+proper `thinking` block.
+
+**The double-translation cost is not material for tool_use.** That was the open
+question the plan flagged, and the answer is measured rather than asserted: one
+call in, one call out, name and parsed arguments intact on both paths. No
+passthrough seam is needed on that account, so none is filed.
+
+**One real defect, filed rather than fixed** (per this goal's contract):
+`.ai/work-intake/opencode-go-anthropic-tools-gap.md`.
+
+11 of the 22 `/messages`-capable ids return `400 invalid_request_error` when the
+request carries `tools`. The endpoint deny-list was measured WITHOUT tools, so
+those ids look healthy in the picker and in a no-tools smoke test while being
+effectively broken for Claude Code, which sends tools on essentially every turn.
+The same models accept the same tool declaration on `/chat/completions`, which is
+why the Responses surface is unaffected.
+
+The structure of the split is the useful part: tool support and `output_config`
+support are almost perfectly ANTI-correlated. Nine ids accept tools and reject
+`output_config`, nine do the reverse, two accept both, two accept neither. That is
+two different upstream translator implementations behind one endpoint, not a
+single strictness rule, so neither capability can be inferred from the other.
+
+**Why the earlier measurements missed it.** Both the G3 endpoint measurement and
+the G5 normalization measurement probed with a bare text message. Endpoint
+reachability is not the same property as feature support ON that endpoint, and
+only an end-to-end tool-bearing turn separated them. The lesson generalizes:
+probe the request shape the client actually sends, not the smallest one that
+returns 200.
+
+**Quota behaviour was not observed first-hand.** No request in this proof was
+rate limited, so the 429 path remains covered by unit tests on both the unary and
+streaming paths rather than by live observation. Recorded as not-yet-observed
+rather than claimed.
+
+**Not covered.** The three opt-in-gated ids (`deepseek-v4-flash`,
+`deepseek-v4-pro`, `muse-spark-1.2-contributor`) return 403 until the workspace
+opts in, which only the account owner can do. `grok-4.5` was additionally
+unavailable upstream (503) throughout, matching its G3 reading.
