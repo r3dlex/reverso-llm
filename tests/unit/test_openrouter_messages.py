@@ -145,11 +145,6 @@ def test_messages_request_does_not_call_responses_dispatch() -> None:
 
 
 def test_messages_payload_carries_bearer_authorization() -> None:
-    request = AnthropicMessagesRequest(
-        model="stealth/ox-alpha",
-        max_tokens=32,
-        messages=[{"role": "user", "content": "ping"}],
-    )
     transport = mock.Mock()
     transport.create_message = lambda payload, headers=None: (
         200,
