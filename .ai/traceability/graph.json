@@ -465,6 +465,28 @@
       "backlinks": [
         "plan:reverso-root:northstar-ollama-reverso-provider"
       ]
+    },
+    {
+      "id": "plan:reverso-root:northstar-opencode-go-provider",
+      "type": "plan",
+      "title": "northstar sliced plan: opencode-go-provider",
+      "status": "active",
+      "repo_id": "reverso-root",
+      "path": ".ai/handoff/northstar-opencode-go-provider.md",
+      "backlinks": [
+        "prd:reverso-root:ollama-reverso-provider"
+      ]
+    },
+    {
+      "id": "handoff:reverso-root:northstar-opencode-go-provider",
+      "type": "handoff",
+      "title": "northstar A->B handoff: opencode-go-provider",
+      "status": "active",
+      "repo_id": "reverso-root",
+      "path": ".ai/handoff/northstar-opencode-go-provider.md",
+      "backlinks": [
+        "plan:reverso-root:northstar-opencode-go-provider"
+      ]
     }
   ],
   "edges": [
@@ -691,6 +713,20 @@
       "relation": "summarized-by",
       "created_by": "northstar-reconciler",
       "evidence_path": ".ai/handoff/northstar-ollama-reverso-provider.md"
+    },
+    {
+      "source": "prd:reverso-root:ollama-reverso-provider",
+      "target": "plan:reverso-root:northstar-opencode-go-provider",
+      "relation": "planned-by",
+      "created_by": "northstar",
+      "evidence_path": ".ai/handoff/northstar-opencode-go-provider.md"
+    },
+    {
+      "source": "plan:reverso-root:northstar-opencode-go-provider",
+      "target": "handoff:reverso-root:northstar-opencode-go-provider",
+      "relation": "summarized-by",
+      "created_by": "northstar",
+      "evidence_path": ".ai/handoff/northstar-opencode-go-provider.md"
     }
   ],
   "coverage": {
