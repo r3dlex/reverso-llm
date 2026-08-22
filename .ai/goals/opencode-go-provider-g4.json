@@ -1,0 +1,58 @@
+{
+  "id": "OCG-G4",
+  "issue_ref": ".ai/work-intake/opencode-go-provider-g4-codex-responses-vertical.md",
+  "implementation_ready": true,
+  "context": "First usable OpenCode Go vertical, deliberately the Codex/Responses one: the ProviderAdapter contract is Responses-shaped and the transport is chat-completions, so no protocol round-trip is involved and a defect here is an adapter defect rather than a translation defect.",
+  "root_causes": [
+    "No OpenCode Go adapter existed; G3 fixed the credential, catalog and endpoint facts but deliberately shipped no ProviderAdapter.",
+    "The inherited chat-completions streaming transport raises the DeepSeek error type on any non-2xx, so a quota refusal on the streaming path would surface as a generic 502 attributed to the wrong provider with the 429 dropped.",
+    "Codex sizes its context management from the model listing, so a listing without per-model context windows makes the client compact at the wrong point."
+  ],
+  "evidence": [
+    "KimiAdapter(DeepSeekAdapter) is the established precedent for a chat-completions provider reusing the transport and overriding only credentials, base URL and listing.",
+    "DeepSeekAdapter._call_upstream_stream raises DeepSeekError on a non-2xx before any SSE byte is read, which a subclass inherits verbatim.",
+    "ResponsesGatewayApp raises ValueError on any adapter prefix absent from APP_PROVIDER_PREFIXES, so registering an adapter without allowlisting its prefix breaks boot for every provider.",
+    "normalize_headroom_provider maps any provider outside _PROVIDER_KEYS to 'other', which would make this backend's Headroom behaviour unattributable.",
+    "The headroom v2 governed provider map is asserted exactly in two places (a fixture and test_client_convergence_contract), a deliberate double-entry tripwire on widening it.",
+    "models.dev exposes a dedicated opencode-go provider block covering 28 of the 29 live ids with context and output limits; the sole gap, hy3-preview, is also upstream-unavailable."
+  ],
+  "solutions": [
+    "Subclass DeepSeekAdapter for the transport and override only credentials, headers, base URL, listing and error taxonomy.",
+    "Override _call_upstream_stream so a streamed non-2xx raises the OpenCode error type, and a 429 raises OpenCodeQuotaError carrying status and payload for verbatim surfacing.",
+    "Send Authorization: Bearer plus a User-Agent on dispatch, and no credential at all on the public GET /models path.",
+    "Enrich the listing from a committed models.dev snapshot, omitting limits for unknown ids rather than guessing a window.",
+    "Register on the Responses gateway only, allowlist the prefix, add a real Headroom provider dimension, and assert by negative test that the Anthropic surface is untouched."
+  ],
+  "acceptance_criteria": [
+    "The adapter satisfies the frozen ProviderAdapter protocol and reaches /opencode/v1/responses.",
+    "Unary and streaming both map to canonical Responses shapes.",
+    "Dispatch carries the bearer credential and a User-Agent, and targets the zen/go base.",
+    "A missing credential raises before any upstream request is issued.",
+    "A 429 raises a quota error carrying status 429 and a payload, on both the unary and streaming paths, with exactly one attempt and no fallback.",
+    "A streamed non-2xx is attributed to OpenCode, not to the inherited transport's provider.",
+    "An upstream error never echoes the credential.",
+    "The listing carries per-model context windows where known and omits them where not, reports live versus fallback provenance, and needs no credential.",
+    "Headroom resolves a real provider dimension rather than collapsing to 'other'.",
+    "No OpenCode route is reachable on the Anthropic surface in this goal."
+  ],
+  "scope": [
+    "src/reverso/protocols/adapters/opencode/adapter.py",
+    "src/reverso/protocols/adapters/opencode/metadata.py",
+    "src/reverso/proxy/compose.py",
+    "src/reverso/protocols/responses_app.py",
+    "src/reverso/protocols/headroom_compression.py",
+    "tests/unit/test_opencode_adapter.py",
+    "tests/unit/test_opencode_registration.py",
+    "tests/unit/test_codex_direct_adapter.py",
+    "tests/unit/test_client_convergence_contract.py",
+    "tests/fixtures/client_convergence/headroom_usage_v2_contract.json",
+    "tests/verify_opencode_g4.sh",
+    ".ai/goals/opencode-go-provider-g4.json"
+  ],
+  "verification": [
+    "bash tests/verify_opencode_g4.sh"
+  ],
+  "coverage_percent": 91,
+  "legacy_safe_tdd": true,
+  "legacy_risk_reason": "extends the shared Responses gateway prefix allowlist, the adapter registry and the governed Headroom provider map; a regression breaks boot for every provider rather than only this one"
+}
