@@ -115,16 +115,20 @@ def build_adapters(
     # the sole owner of the singleton.
     from reverso.protocols.adapters.openrouter.adapter import OpenRouterAdapter
     from reverso.protocols.adapters.openrouter.credentials import resolve_api_key
+    from reverso.protocols.adapters.openrouter.runtime import build_openrouter_runtime
+    from reverso.protocols.adapters.openrouter.transport import HttpOpenRouterTransport
 
     class _OpenRouterCredentialProxy:
         def resolve_api_key(self) -> str:
             return resolve_api_key()
 
-    from reverso.protocols.adapters.openrouter.runtime import build_openrouter_runtime
-
-    _openrouter_runtime = build_openrouter_runtime(
-        transport=None,
+    _openrouter_transport = HttpOpenRouterTransport(
+        api_base="https://openrouter.ai/api/v1",
         credentials=_OpenRouterCredentialProxy(),
+    )
+    _openrouter_runtime = build_openrouter_runtime(
+        transport=_openrouter_transport,
+        credentials=_openrouter_transport,
         catalog=None,
         policy=type(
             "P",
@@ -145,8 +149,8 @@ def build_adapters(
         compatibility_providers=("zdr_only_endpoint_providers",),
     )
     adapters["openrouter"] = OpenRouterAdapter(
-        transport=None,
-        credentials=_openrouter_runtime,
+        transport=_openrouter_transport,
+        credentials=_openrouter_transport,
     )
     if codex_direct_backend_enabled(env):
         from reverso.protocols.adapters.codex import CodexOAuthAuth
