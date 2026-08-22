@@ -237,6 +237,7 @@ def test_direct_codex_route_is_reserved_but_disabled_by_kill_switch(
         "deepseek",
         "kimi",
         "opencode",
+        "openrouter",
     }
     assert "codex_direct" not in mounted
     assert "codex-direct" not in mounted
