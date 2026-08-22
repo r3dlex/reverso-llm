@@ -1,11 +1,10 @@
-"""OpenRouter ``ProviderAdapter`` (OR-G1, OR-G2; U7, U8, I1, I3, I4).
+"""OpenRouter ``ProviderAdapter`` (OR-G1..OR-G3; U7, U8, I1, I3, I4).
 
 The adapter implements the frozen ``ProviderAdapter`` Protocol and forwards
-Responses requests to ``POST /api/v1/responses``. Streaming is delegated to
-the transport which yields SSE events verbatim. The transport strips
+Responses requests to ``POST /api/v1/responses``. The transport strips
 ``previous_response_id`` and ``store`` so the stateless OpenRouter endpoint
-never sees state, and the optional store reflects the response locally for
-``previous_response_id`` chaining.
+never sees state; an optional local store reflects the response so future
+turns can resolve the chain.
 """
 
 from __future__ import annotations
@@ -47,6 +46,10 @@ class OpenRouterResponsesTransport(Protocol):
     async def create_response(
         self, payload: dict[str, Any]
     ) -> tuple[int, dict[str, Any]]: ...
+
+    def stream_response(  # pragma: no cover - exercised by OR-G3 tests
+        self, payload: dict[str, Any]
+    ) -> AsyncIterator[dict[str, Any]]: ...
 
 
 class ResponseStore(Protocol):
@@ -128,8 +131,13 @@ class OpenRouterAdapter:
     async def stream_response(
         self, request: ResponsesRequest
     ) -> AsyncIterator[SSEEvent]:  # type: ignore[override]
-        # OR-G3 will provide the streaming implementation.
-        raise NotImplementedError("OpenRouter Responses streaming lands in OR-G3")
+        payload = self._translate(request)
+        async for raw_event in self._transport.stream_response(payload):
+            if isinstance(raw_event, SSEEvent):
+                yield raw_event
+                continue
+            event_type = str(raw_event.get("type") or "")
+            yield SSEEvent(event=event_type, data=raw_event)
 
     async def get_response(self, response_id: str) -> ResponseEnvelope:  # type: ignore[override]
         if self._store is None:
@@ -150,12 +158,7 @@ class OpenRouterAdapter:
         return InputItemList(response_id=response_id, data=list(items), object="list")
 
     def _translate(self, request: ResponsesRequest) -> dict[str, Any]:
-        """Translate a ResponsesRequest into the OpenRouter request body.
-
-        ``provider`` and ``X-OpenRouter-Title`` are merged into ``extra`` by the
-        runtime before the adapter sees them; this method carries them through
-        verbatim and never overrides caller-set routing fields.
-        """
+        """Translate a ResponsesRequest into the OpenRouter request body."""
         body: dict[str, Any] = {
             "model": request.model,
             "input": request.input,
