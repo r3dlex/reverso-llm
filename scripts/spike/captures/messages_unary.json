@@ -1,0 +1,47 @@
+{
+  "fixture": "openrouter_or-g0",
+  "name": "messages_unary",
+  "method": "POST",
+  "path": "/api/v1/messages",
+  "request": {
+    "headers": {
+      "Authorization": "[REDACTED]"
+    },
+    "body": {
+      "model": "stealth/ox-alpha",
+      "max_tokens": 32,
+      "messages": "[REDACTED]"
+    }
+  },
+  "expected": {
+    "status": 200,
+    "content_type": "application/json",
+    "model": "stealth/ox-alpha",
+    "stop_reason": "max_tokens",
+    "content_block_types": [
+      "thinking"
+    ],
+    "usage_keys": [
+      "cache_creation",
+      "cache_creation_input_tokens",
+      "cache_read_input_tokens",
+      "cost",
+      "cost_details",
+      "inference_geo",
+      "input_tokens",
+      "is_byok",
+      "output_tokens",
+      "output_tokens_details",
+      "server_tool_use",
+      "service_tier",
+      "speed"
+    ],
+    "reported_cost_usd": 0.0
+  },
+  "elapsed_seconds": 218.1652,
+  "budget": {
+    "approved_amount_usd": 0.1,
+    "spent_amount_usd": 0.0,
+    "currency": "USD"
+  }
+}
