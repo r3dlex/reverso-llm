@@ -120,6 +120,17 @@ def _load_model_list(path: Path | None = None) -> list[dict[str, Any]]:
     return [row for row in model_list if isinstance(row, dict)]
 
 
+# CATALOG-OWNING backends (ADR 0020). A third kind, declared rather than derived:
+# it owns a DISCOVERABLE catalog of bare ids that may OVERLAP the incumbents, which
+# neither existing kind can express. Behind its prefix the declared catalog is
+# authoritative, so a contested id stays reachable as `<backend>/<id>`; outside the
+# catalog it fails closed, unlike a rowless prefix which trusts any bare id. Bare
+# routing is granted only for ids no incumbent claims: incumbency always wins,
+# because moving a bare id would silently change which upstream subscription, which
+# credential and whose bill served the request.
+_CATALOG_OWNING_BACKENDS: dict[str, frozenset[str]] = {}
+
+
 class ModelIndexConflictError(RuntimeError):
     """Two backends claim the same bare model id.
 
@@ -174,6 +185,14 @@ def _build_model_index(path: Path | None = None) -> dict[str, str]:
         claim(model_id, backend)
     for model_id in _KIMI_MODELS:
         claim(model_id, "kimi")
+    # Catalog owners seed LAST and DEFER: an id an incumbent already claims is
+    # skipped rather than claimed, so this is not the cross-backend conflict OCG-G1
+    # made fatal. The contested id stays reachable through the provider prefix.
+    for backend, catalog in _CATALOG_OWNING_BACKENDS.items():
+        for model_id in sorted(catalog):
+            if _normalize_model(model_id) in index:
+                continue
+            claim(model_id, backend)
     return index
 
 
@@ -264,6 +283,10 @@ def _resolve_qualified(provider: str, bare: str) -> str | None:
     selects GitHub Copilot's gpt-5.5, distinct from codex's bare ``gpt-5.5`` (the
     two are different upstream subscriptions that happen to share a model name).
 
+    A CATALOG-OWNING backend (ADR 0020) is checked first: its declared catalog is
+    authoritative behind the prefix, including for an id indexed to an incumbent, and
+    anything outside that catalog fails closed.
+
     Kimi is config-independent but accepts only its converged ``kimi-k3`` selector
     id through the same indexed taxonomy as bare routing. A rows-owning backend
     (codex/deepseek/claude/kimi) must name a model indexed to
@@ -275,6 +298,12 @@ def _resolve_qualified(provider: str, bare: str) -> str | None:
         return None
     if provider == "ollama":
         return None
+    catalog = _CATALOG_OWNING_BACKENDS.get(provider)
+    if catalog is not None:
+        # Checked BEFORE the rows branch: a catalog owner also appears in
+        # _BACKENDS_WITH_ROWS once its unique ids are seeded, and the rows branch
+        # would then reject exactly the contested ids the prefix exists to reach.
+        return provider if bare in catalog else None
     if provider not in _BACKENDS_WITH_ROWS:
         return provider
     indexed = _MODEL_INDEX.get(bare)
