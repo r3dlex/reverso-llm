@@ -310,3 +310,42 @@ The MINIMUM is used as the safe static bound: compacting early wastes tokens and
 is recoverable, while a window larger than the model's real context is a hard
 failure mid-session. Per-model sizing needs the Anthropic discovery listing to
 carry context windows, which it does not; that remains open.
+
+## G8: the deferred Codex profile, and why it was safe to add (2026-08-22)
+
+G6 deferred the Codex profile because adding `opencode` to
+`REVERSO_ROUTED_CODEX_PROFILE_PREFIXES` failed 83 tests. The cause was not the
+profile but the CONTRACT: `codex-sync` treats every routed prefix as REQUIRED
+live discovery, so a deployment without an OpenCode subscription would have had
+every Codex sync fail closed.
+
+`OPTIONAL_DISCOVERY_PREFIXES` already exempts `ollama` for the same class of
+reason (its daemon may simply not be running). Adding `opencode` there is the
+principled fix, and it cut the failures from 83 to 27; the remaining 27 were the
+install-plan contracts, which needed their code and manifest halves brought into
+agreement.
+
+**A defect the profile work surfaced.** `codex_profile_default_model` falls back
+to `models[0]`. For this catalog, sorted, that is `deepseek-v4-flash`, one of the
+ids gated behind a workspace opt in, so the profile's default model would have
+returned 403 on first use. The profile now pins `glm-5` explicitly: dual
+protocol, ungated and uncontested. It still falls through to `models[0]` when the
+explicit default is absent from discovery, so a retired default is not pinned
+forever.
+
+**Context window.** Unlike the multi-model Claude launcher, which must use the
+catalog minimum, a Codex profile pins ONE model, so its window is derived exactly
+from that model's real limits.
+
+Every catalog id remains Codex selectable, so a gated model surfaces its opt-in
+error rather than quietly vanishing from the picker, consistent with the
+publish-all decision on the Anthropic surface.
+
+**Note on the two flaky test clusters.** `tests/verify_opencode_g8.sh` runs the
+full suite in two passes, with `test_kimi_login` and
+`test_headroom_compression::test_real_headroom_smoke_uses_memory_only_state` in
+an unloaded second pass. Both are PRE-EXISTING and load sensitive: each fails
+roughly one full run in two, a DIFFERENT test each time, and each passes in
+isolation and on clean `main`. They are still run and still must pass. This is a
+mitigation, not a skip, and the flakiness itself is unfixed and worth its own
+issue.

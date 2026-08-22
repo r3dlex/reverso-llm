@@ -53,6 +53,7 @@ REVERSO_ROUTED_CODEX_PROFILE_PREFIXES: tuple[str, ...] = (
     "deepseek",
     "kimi",
     "ollama",
+    "opencode",
 )
 CODEX_DIRECT_BACKEND_ENV = "REVERSO_CODEX_DIRECT_BACKEND"
 OPENAI_BACKEND_ENV = "REVERSO_OPENAI_BACKEND"
@@ -60,6 +61,11 @@ REVERSO_HOST_ENV = "REVERSO_HOST"
 _CODEX_DIRECT_PROFILE_PREFIX = "codex-direct"
 _OPENAI_PROFILE_PREFIX = "openai-pass-through"
 DEEPSEEK_CODEX_PROFILE_DEFAULT = "deepseek-v4-pro"
+# The generic default is models[0], which for the OpenCode Go catalog sorts to
+# deepseek-v4-flash: one of the ids gated behind a workspace opt in, so that
+# default would 403 on first use. glm-5 is chosen because it is dual protocol,
+# ungated and uncontested, i.e. reachable bare by this backend.
+OPENCODE_CODEX_PROFILE_DEFAULT = "glm-5"
 KIMI_CODEX_MODEL = "kimi-k3"
 KIMI_CODEX_CONTEXT_WINDOW = 1048576
 KIMI_CODEX_AUTO_COMPACT_TOKEN_LIMIT = KIMI_CODEX_CONTEXT_WINDOW * 9 // 10
@@ -138,6 +144,8 @@ def codex_profile_default_model(prefix: str, models: tuple[str, ...]) -> str:
     """Return the default model for a provider-name Codex profile."""
     if prefix == "deepseek" and DEEPSEEK_CODEX_PROFILE_DEFAULT in models:
         model_id = DEEPSEEK_CODEX_PROFILE_DEFAULT
+    elif prefix == "opencode" and OPENCODE_CODEX_PROFILE_DEFAULT in models:
+        model_id = OPENCODE_CODEX_PROFILE_DEFAULT
     else:
         model_id = models[0]
     return selector_model_id(prefix, model_id)
@@ -172,11 +180,40 @@ def reverso_codex_profile_spec(
         model=codex_profile_default_model(prefix, models),
         model_provider=f"reverso_{prefix}",
         uses_model_catalog=True,
-        model_context_window=(KIMI_CODEX_CONTEXT_WINDOW if prefix == "kimi" else None),
-        model_auto_compact_token_limit=(
-            KIMI_CODEX_AUTO_COMPACT_TOKEN_LIMIT if prefix == "kimi" else None
-        ),
+        model_context_window=_profile_context_window(prefix, models),
+        model_auto_compact_token_limit=_profile_auto_compact_limit(prefix, models),
     )
+
+
+def _opencode_default_limits(models: tuple[str, ...]) -> int | None:
+    """Context window of the model an opencode profile actually pins.
+
+    A Codex profile pins ONE model, so unlike the multi-model Claude launcher
+    this can be exact instead of a safe catalog minimum.
+    """
+    from reverso.protocols.adapters.opencode.metadata import limits_for
+
+    resolved = codex_profile_default_model("opencode", models)
+    bare = resolved.split("/")[-1]
+    limits = limits_for(bare)
+    return limits.context if limits is not None else None
+
+
+def _profile_context_window(prefix: str, models: tuple[str, ...]) -> int | None:
+    if prefix == "kimi":
+        return KIMI_CODEX_CONTEXT_WINDOW
+    if prefix == "opencode":
+        return _opencode_default_limits(models)
+    return None
+
+
+def _profile_auto_compact_limit(prefix: str, models: tuple[str, ...]) -> int | None:
+    if prefix == "kimi":
+        return KIMI_CODEX_AUTO_COMPACT_TOKEN_LIMIT
+    if prefix == "opencode":
+        window = _opencode_default_limits(models)
+        return window * 9 // 10 if window is not None else None
+    return None
 
 
 def provider_scoped_catalog_slug(prefix: str, model_id: str) -> str:
