@@ -58,6 +58,11 @@ LAUNCHER_SCRUB_ENV_KEYS: tuple[str, ...] = (
     "CLAUDE_CODE_OAUTH_TOKEN",
     "ANTHROPIC_CUSTOM_HEADERS",
     "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY",
+    # OpenCode Go (OCG-G3): the gateway holds this credential; no spawned CLI
+    # needs it, and a launched agent inherits its parent environment wholesale.
+    # Both the canonical name and the read-only alias are scrubbed.
+    "OPENCODE_API_KEY",
+    "OCGO_API_KEY",
 )
 KIMI_SCRUB_ENV_KEYS: tuple[str, ...] = (
     "ANTHROPIC_MODEL",
