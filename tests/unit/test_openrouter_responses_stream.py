@@ -11,7 +11,6 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Iterable
-from dataclasses import dataclass, field
 from typing import Any
 from unittest import mock
 
@@ -31,29 +30,6 @@ from reverso.protocols.adapters.openrouter.continuation import (
 # --- Test doubles --------------------------------------------------------------
 
 
-@dataclass
-class FakeStreamClient:
-    response_status: int = 200
-    events: list[str] = field(default_factory=list)
-    recorded: list[dict[str, Any]] = field(default_factory=list)
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *args):
-        return False
-
-    def request(self, method, url, **kwargs):
-        self.recorded.append({"method": method, "url": url, **kwargs})
-        response = mock.Mock()
-        response.status_code = self.response_status
-        response.iter_lines = lambda: iter(self.events)
-        response.__enter__ = lambda self=self: self
-        response.__exit__ = lambda *a: False
-        response.headers = {"content-type": "text/event-stream"}
-        return response
-
-
 # --- U7 streaming canonical events ----------------------------------------------
 
 
@@ -65,7 +41,6 @@ def test_stream_response_emits_canonical_events() -> None:
         'data: {"type":"response.completed","response":{"id":"r1","model":"m","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":2}}}',
         "data: [DONE]",
     ]
-    fake = FakeStreamClient(events=events)
     transport = mock.Mock()
     transport.stream_response = lambda payload: _events_to_async_iter(events)
     adapter = OpenRouterAdapter(transport=transport, credentials=transport)
