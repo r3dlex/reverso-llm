@@ -1,0 +1,64 @@
+{
+  "fixture": "openrouter_or-g0",
+  "name": "list_models_authenticated",
+  "method": "GET",
+  "path": "/api/v1/models",
+  "request": {
+    "headers": {
+      "Authorization": "[REDACTED]"
+    }
+  },
+  "expected": {
+    "status": 200,
+    "content_type": "application/json",
+    "model_entry_keys": [
+      "architecture",
+      "canonical_slug",
+      "context_length",
+      "created",
+      "default_parameters",
+      "description",
+      "expiration_date",
+      "hugging_face_id",
+      "id",
+      "knowledge_cutoff",
+      "links",
+      "name",
+      "per_request_limits",
+      "pricing",
+      "reasoning",
+      "supported_parameters",
+      "supported_voices",
+      "top_provider"
+    ],
+    "model_entry_sample": {
+      "id": "stealth/ox-alpha",
+      "context_length": 1048576,
+      "top_provider": {
+        "context_length": 1048576,
+        "max_completion_tokens": 131072,
+        "is_moderated": false
+      },
+      "pricing_prompt": "0",
+      "pricing_completion": "0",
+      "supported_parameters": [
+        "include_reasoning",
+        "max_tokens",
+        "reasoning",
+        "reasoning_effort",
+        "response_format",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_k",
+        "top_p"
+      ]
+    }
+  },
+  "elapsed_seconds": 0.1695,
+  "budget": {
+    "approved_amount_usd": 0.1,
+    "spent_amount_usd": 0.0,
+    "currency": "USD"
+  }
+}

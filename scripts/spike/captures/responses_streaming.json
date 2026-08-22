@@ -1,0 +1,35 @@
+{
+  "fixture": "openrouter_or-g0",
+  "name": "responses_streaming",
+  "method": "POST",
+  "path": "/api/v1/responses",
+  "request": {
+    "headers": {
+      "Authorization": "[REDACTED]",
+      "Accept": "text/event-stream"
+    },
+    "body": {
+      "model": "stealth/ox-alpha",
+      "input": "[REDACTED]",
+      "max_output_tokens": 32,
+      "stream": true
+    }
+  },
+  "expected": {
+    "status": 200,
+    "content_type": "text/event-stream",
+    "event_types": [],
+    "first_event_type": null,
+    "last_event_type": null,
+    "completion_event_present": false,
+    "unique_event_types": [],
+    "terminal_usage_keys": [],
+    "reported_cost_usd": 0.0
+  },
+  "elapsed_seconds": 51.4569,
+  "budget": {
+    "approved_amount_usd": 0.1,
+    "spent_amount_usd": 0.0,
+    "currency": "USD"
+  }
+}

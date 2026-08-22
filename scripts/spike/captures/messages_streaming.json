@@ -1,0 +1,60 @@
+{
+  "fixture": "openrouter_or-g0",
+  "name": "messages_streaming",
+  "method": "POST",
+  "path": "/api/v1/messages",
+  "request": {
+    "headers": {
+      "Authorization": "[REDACTED]",
+      "Accept": "text/event-stream"
+    },
+    "body": {
+      "model": "stealth/ox-alpha",
+      "max_tokens": 32,
+      "messages": "[REDACTED]",
+      "stream": true
+    }
+  },
+  "expected": {
+    "status": 200,
+    "content_type": "text/event-stream",
+    "event_types": [
+      "ping",
+      "ping",
+      "ping",
+      "ping",
+      "ping",
+      "ping",
+      "message_start",
+      "content_block_start",
+      "content_block_delta",
+      "content_block_delta",
+      "content_block_delta",
+      "content_block_delta",
+      "content_block_delta",
+      "content_block_delta",
+      "content_block_delta",
+      "content_block_delta",
+      "content_block_delta",
+      "content_block_delta",
+      "content_block_delta",
+      "content_block_delta",
+      "content_block_delta",
+      "content_block_stop",
+      "message_delta",
+      "message_stop",
+      "data"
+    ],
+    "first_event_type": "ping",
+    "last_event_type": "data",
+    "message_delta_seen": true,
+    "message_stop_seen": true,
+    "reported_cost_usd": 0.0
+  },
+  "elapsed_seconds": 63.1118,
+  "budget": {
+    "approved_amount_usd": 0.1,
+    "spent_amount_usd": 0.0,
+    "currency": "USD"
+  }
+}

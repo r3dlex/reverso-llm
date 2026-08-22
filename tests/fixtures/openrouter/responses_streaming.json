@@ -1,0 +1,63 @@
+{
+  "fixture": "openrouter_or-g0",
+  "name": "responses_streaming",
+  "method": "POST",
+  "path": "/api/v1/responses",
+  "request": {
+    "headers": {
+      "Authorization": "[REDACTED]",
+      "Accept": "text/event-stream"
+    },
+    "body": {
+      "model": "stealth/ox-alpha",
+      "input": "[REDACTED]",
+      "max_output_tokens": 32,
+      "stream": true
+    }
+  },
+  "expected": {
+    "status": 200,
+    "content_type": "text/event-stream",
+    "transport_uses_data_only": true,
+    "first_event_type": "response.created",
+    "last_event_type": "response.incomplete",
+    "completion_event_present": false,
+    "incomplete_event_present": true,
+    "sample_event_types": [
+      "response.created",
+      "response.in_progress",
+      "response.output_item.added",
+      "response.content_part.added",
+      "response.reasoning_text.delta",
+      "response.reasoning_text.done",
+      "response.content_part.done",
+      "response.output_item.done",
+      "response.incomplete"
+    ],
+    "reasoning_first": true,
+    "terminal_event_order": [
+      "response.reasoning_text.done",
+      "response.content_part.done",
+      "response.output_item.done",
+      "response.incomplete"
+    ],
+    "terminal_usage_keys": [
+      "cost",
+      "cost_details",
+      "input_tokens",
+      "input_tokens_details",
+      "is_byok",
+      "output_tokens",
+      "output_tokens_details",
+      "total_tokens"
+    ],
+    "terminal_status": "incomplete",
+    "reported_cost_usd": 0.0
+  },
+  "elapsed_seconds": 28.928,
+  "budget": {
+    "approved_amount_usd": 0.1,
+    "spent_amount_usd": 0.0,
+    "currency": "USD"
+  }
+}
