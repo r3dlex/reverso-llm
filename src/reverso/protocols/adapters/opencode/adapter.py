@@ -269,8 +269,24 @@ class OpenCodeAdapter(DeepSeekAdapter):
     def _model_of(payload: dict[str, Any]) -> str:
         return str(payload.get("model") or "")
 
+    @staticmethod
+    def _has_tools(payload: dict[str, Any]) -> bool:
+        """Whether this request actually declares tools.
+
+        An EMPTY list is not a tool request: that is what a client sends when it
+        has no tools available, and treating it as tool-bearing would abandon the
+        native path for nothing.
+        """
+        tools = payload.get("tools")
+        return isinstance(tools, list) and bool(tools)
+
     def _serves_natively(self, payload: dict[str, Any]) -> bool:
-        return anthropic_endpoint_for(self._model_of(payload)) == MESSAGES_PATH
+        return (
+            anthropic_endpoint_for(
+                self._model_of(payload), has_tools=self._has_tools(payload)
+            )
+            == MESSAGES_PATH
+        )
 
     async def _translated_anthropic_message(
         self, payload: dict[str, Any]

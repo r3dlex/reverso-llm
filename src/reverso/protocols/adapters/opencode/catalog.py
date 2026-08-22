@@ -38,6 +38,7 @@ from typing import Any
 from reverso.opencode_catalog_artifact import load_catalog_ids as _load_catalog_ids
 
 __all__ = [
+    "ANTHROPIC_TOOL_UNSUPPORTED_MODELS",
     "ANTHROPIC_UNSUPPORTED_MODELS",
     "CHAT_COMPLETIONS_PATH",
     "FALLBACK_MODEL_IDS",
@@ -65,6 +66,35 @@ USER_AGENT = "reverso-opencode-go/1.0"
 # would silently downgrade it.
 ANTHROPIC_UNSUPPORTED_MODELS = frozenset({"grok-4.5"})
 
+# Measured 2026-08-22 by the OCG-G7 end-to-end proof: ids that speak the Anthropic
+# format for a plain message but reject it once the request carries TOOLS, with
+# 400 invalid_request_error. They accept the same tool declaration on
+# /chat/completions, which is why the Responses surface was never affected.
+#
+# This is a SEPARATE axis from ANTHROPIC_UNSUPPORTED_MODELS and cannot be derived
+# from it: the two sets are disjoint, and tool support is almost perfectly
+# ANTI-correlated with output_config support, which means two upstream translator
+# implementations behind one endpoint rather than one strictness rule.
+#
+# It matters because Claude Code sends tools on essentially every turn, so a
+# model-only decision left these ids looking healthy in the picker while failing
+# every real session.
+ANTHROPIC_TOOL_UNSUPPORTED_MODELS = frozenset(
+    {
+        "glm-5",
+        "glm-5.1",
+        "glm-5.2",
+        "glm-5.3",
+        "hy3",
+        "kimi-k2.5",
+        "kimi-k2.6",
+        "kimi-k2.7-code",
+        "mimo-v2.5",
+        "mimo-v2.5-pro",
+        "ox-alpha-free",
+    }
+)
+
 # Bounded offline fallback: the committed catalog artifact
 # (docs/reference/opencode-go-catalog.json). Used only when live discovery fails,
 # so a network outage degrades to a known-good list rather than an empty picker.
@@ -77,15 +107,26 @@ ANTHROPIC_UNSUPPORTED_MODELS = frozenset({"grok-4.5"})
 FALLBACK_MODEL_IDS: tuple[str, ...] = _load_catalog_ids()
 
 
-def supports_anthropic_format(model_id: str) -> bool:
-    """Whether ``model_id`` may be dispatched to the native ``/messages`` path."""
-    return model_id.strip().lower() not in ANTHROPIC_UNSUPPORTED_MODELS
+def supports_anthropic_format(model_id: str, *, has_tools: bool = False) -> bool:
+    """Whether ``model_id`` may be dispatched to the native ``/messages`` path.
+
+    ``has_tools`` is a second, INDEPENDENT gate rather than a refinement of the
+    first: a model can speak the Anthropic format for a plain message and still
+    reject it with tools attached. Defaulting to False keeps every existing
+    tool-free caller on exactly the path it already used.
+    """
+    normalized = model_id.strip().lower()
+    if normalized in ANTHROPIC_UNSUPPORTED_MODELS:
+        return False
+    return not (has_tools and normalized in ANTHROPIC_TOOL_UNSUPPORTED_MODELS)
 
 
-def anthropic_endpoint_for(model_id: str) -> str:
+def anthropic_endpoint_for(model_id: str, *, has_tools: bool = False) -> str:
     """Return the upstream path to use for an Anthropic-shaped request."""
     return (
-        MESSAGES_PATH if supports_anthropic_format(model_id) else CHAT_COMPLETIONS_PATH
+        MESSAGES_PATH
+        if supports_anthropic_format(model_id, has_tools=has_tools)
+        else CHAT_COMPLETIONS_PATH
     )
 
 

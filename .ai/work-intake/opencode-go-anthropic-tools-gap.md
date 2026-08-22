@@ -1,7 +1,7 @@
 ---
 title: "OpenCode Go: 11 of 22 models reject Anthropic-format tools on /messages"
-status: ready-for-agent
-state: ready-for-agent
+status: done
+state: done
 category: defect
 slug: opencode-go-anthropic-tools-gap
 owner: unassigned
@@ -94,3 +94,23 @@ actually sends.
 - [ ] A tool-free request is unaffected for both groups.
 - [ ] The tools-supporting set is a declared, measured constant with the same provenance discipline as the endpoint deny-list.
 - [ ] The live proof shows both surfaces returning a parsed tool call for a tools-rejecting id.
+
+## Resolution (OCG-G9)
+
+Fixed by making the native-path decision tool aware:
+`ANTHROPIC_TOOL_UNSUPPORTED_MODELS` is a second, independent gate consulted only
+when the payload actually declares tools. An EMPTY `tools` list is deliberately
+not treated as tool bearing, since that is what a client sends when it has none.
+
+Proven live rather than only in unit tests. The same request that produced 502
+now returns 200 with a parsed tool call:
+
+```
+anthropic_messages  glm-5      200  tools=1 names=['get_weather']
+anthropic_messages  kimi-k3    200  tools=1 names=['get_weather']
+anthropic_messages  minimax-m3 200  tools=1 names=['get_weather']
+```
+
+Recorded in `docs/reference/opencode-go-proof.json` under
+`end_to_end_after_tool_aware_fix`, and the tool deny-list is gated against the
+recorded measurement so the two cannot diverge.
