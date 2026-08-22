@@ -215,3 +215,51 @@ deepseek; `kimi-k3` to kimi), leaving 26 bare-exposable. Recorded in
 `docs/reference/opencode-go-exposure.json` and policed by
 `scripts/check-opencode-exposure.py --check`, proven falsifiable by injecting a
 collision.
+
+## G5 measurement: the normalization is mostly unnecessary (2026-08-22)
+
+`ocgo` strips seven fields on the grounds that OpenCode's Anthropic endpoint is
+stricter than Anthropic's, and normalizes `system`. G5's acceptance criterion
+requires an observed rejection per strip, so each field was sent individually to
+`/messages` against `glm-5`, `kimi-k3` and `minimax-m3`.
+
+| Field | Result | Verdict |
+|---|---|---|
+| `thinking` | 200 on all three | keep |
+| `reasoning` | 200 on all three | keep |
+| `reasoning_effort` | 200 on all three | keep |
+| `effort` | 200 on all three | keep |
+| `level` | 200 on all three | keep |
+| `depth` | 200 on all three | keep |
+| `output_config` | 400 `invalid_request_error` | STRIP |
+| `system` (string and block form) | 200 on all three | keep, no normalization |
+
+Six of the seven strips are speculative. Stripping `thinking` is the most
+damaging of them: the request would succeed while silently discarding the
+caller's reasoning budget, so the failure is invisible rather than loud.
+
+`output_config` was then scoped across all 22 `/messages`-capable ids: 9 reject
+it (`kimi-k3`, all three `minimax`, all five `qwen`), 11 accept it, and 2 were
+inconclusive (a 503 and a transport failure, deliberately not recorded as
+rejections). It is stripped UNCONDITIONALLY: it is an output-shaping hint these
+non-Anthropic upstreams do not implement, so the accepting ids are almost
+certainly ignoring it, and a per-model table would add drift risk for no
+behavioural gain. This catalog has already produced one hand-maintained table
+that proved wrong.
+
+Note the overlap: the families that reject `output_config` are largely the same
+ones `ocgo` marked as requiring `/messages`. That suggests its table conflated
+"needs special handling" with "needs the Anthropic endpoint".
+
+**Tool-call fidelity.** `kimi-k3` returns reasoning as a proper `thinking`
+content block. `glm-5` instead leaks raw `</think>` markers into `text` content,
+so thinking-tag hygiene is a per-model property of this catalog rather than a
+gateway guarantee.
+
+**Scope moved.** The `claude-opencode` launcher row moved from G5 to G6. It is
+not a routing concern: `LAUNCHER_CATALOGS` feeds the `client_sync` install plan,
+whose manifest (`config/supported-client-surfaces.json`) fails closed on drift
+across provider groups, three shared-dependency lists and per-surface uninstall
+ownership. G6 already owns "uninstall and restore leave no OpenCode artifact", so
+the row lands with the plumbing that makes it removable rather than half-landing
+here.

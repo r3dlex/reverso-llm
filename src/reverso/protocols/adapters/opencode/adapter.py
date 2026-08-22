@@ -39,13 +39,16 @@ from reverso.protocols.adapters.deepseek import DeepSeekAdapter
 from reverso.protocols.openai_chat import parse_stream_event as _parse_stream_event
 from reverso.protocols.adapters.opencode.catalog import (
     FALLBACK_MODEL_IDS,
+    MESSAGES_PATH,
     OPENCODE_GO_API_BASE,
     USER_AGENT,
+    anthropic_endpoint_for,
 )
 from reverso.protocols.adapters.opencode.credentials import (
     OpenCodeCredentialError,
     require_api_key,
 )
+from reverso.protocols.adapters.opencode.messages import normalize_messages_payload
 from reverso.protocols.adapters.opencode.metadata import limits_for
 
 __all__ = ["OpenCodeAdapter", "OpenCodeError", "OpenCodeQuotaError"]
@@ -53,6 +56,7 @@ __all__ = ["OpenCodeAdapter", "OpenCodeError", "OpenCodeQuotaError"]
 logger = logging.getLogger(__name__)
 
 _FORWARD_TIMEOUT_SECONDS = 300.0
+_ANTHROPIC_VERSION = "2023-06-01"
 _OWNED_BY = "opencode"
 
 
@@ -233,6 +237,132 @@ class OpenCodeAdapter(DeepSeekAdapter):
                 "opencode go streaming transport error: %s", type(exc).__name__
             )
             raise OpenCodeError("opencode go streaming transport error") from exc
+
+    # ---- Anthropic-native facet (OCG-G5) -------------------------------------
+    #
+    # Implementing AnthropicNativeAdapter makes the Anthropic surface dispatch
+    # /messages DIRECTLY instead of translating Anthropic -> Responses ->
+    # Anthropic, removing a lossy round-trip for the 22 ids that accept the
+    # native format.
+    #
+    # The app's native-vs-translated choice is a class-level isinstance check,
+    # so it is all-or-nothing per adapter. grok-4.5 refuses the Anthropic format
+    # upstream ("not supported for format anthropic"), so this facet must handle
+    # it rather than fail: it falls back to the chat-completions transport via
+    # the repo's own translators, so the model stays reachable on this surface.
+
+    def _messages_headers(self) -> dict[str, str]:
+        """Headers for the native /messages path.
+
+        NOT the same as dispatch on /chat/completions. Measured: /messages
+        accepts X-API-Key ONLY, and returns AuthError "Missing API key" for an
+        Authorization: Bearer header.
+        """
+        return {
+            "X-API-Key": self._api_key(),
+            "Content-Type": "application/json",
+            "Anthropic-Version": _ANTHROPIC_VERSION,
+            "User-Agent": USER_AGENT,
+        }
+
+    @staticmethod
+    def _model_of(payload: dict[str, Any]) -> str:
+        return str(payload.get("model") or "")
+
+    def _serves_natively(self, payload: dict[str, Any]) -> bool:
+        return anthropic_endpoint_for(self._model_of(payload)) == MESSAGES_PATH
+
+    async def _translated_anthropic_message(
+        self, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Serve an Anthropic request for a model that refuses the native format."""
+        from reverso.protocols.anthropic_translate import (
+            anthropic_request_to_responses,
+            responses_envelope_to_anthropic,
+        )
+
+        envelope = await self.create_response(anthropic_request_to_responses(payload))
+        return responses_envelope_to_anthropic(envelope)
+
+    async def create_anthropic_message(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """POST the native /messages call, normalizing only what is proven."""
+        if not self._serves_natively(payload):
+            return await self._translated_anthropic_message(payload)
+        body = normalize_messages_payload(payload)
+        body.pop("stream", None)
+        try:
+            async with self._client_factory() as client:
+                response = await client.post(
+                    f"{self._api_base}{MESSAGES_PATH}",
+                    headers=self._messages_headers(),
+                    content=json.dumps(body).encode("utf-8"),
+                )
+        except httpx.HTTPError as exc:
+            raise OpenCodeError("opencode go messages request failed") from exc
+        self._raise_for_status(response)
+        try:
+            message = response.json()
+        except ValueError as exc:
+            raise OpenCodeError("opencode go messages returned invalid JSON") from exc
+        if not isinstance(message, dict):
+            raise OpenCodeError("opencode go messages returned non-object JSON")
+        return message
+
+    async def stream_anthropic_message(
+        self, payload: dict[str, Any]
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Stream the native /messages call, yielding decoded Anthropic events."""
+        if not self._serves_natively(payload):
+            # No native stream for a model that refuses the format. Emitting the
+            # translated message as a single terminal event keeps the surface
+            # correct; the alternative is failing a model the picker offers.
+            yield {
+                "type": "message",
+                "message": await self._translated_anthropic_message(payload),
+            }
+            return
+        body = normalize_messages_payload(payload)
+        body["stream"] = True
+        try:
+            async with (
+                self._client_factory() as client,
+                client.stream(
+                    "POST",
+                    f"{self._api_base}{MESSAGES_PATH}",
+                    headers=self._messages_headers(),
+                    content=json.dumps(body).encode("utf-8"),
+                ) as response,
+            ):
+                if not 200 <= response.status_code < 300:
+                    if response.status_code == 429:
+                        await response.aread()
+                    self._raise_for_status(response)
+                pending = b""
+                async for raw in response.aiter_bytes():
+                    if not raw:
+                        continue
+                    pending += raw
+                    while b"\n" in pending:
+                        line, pending = pending.split(b"\n", 1)
+                        line = line.strip()
+                        if not line or not line.startswith(b"data:"):
+                            continue
+                        chunk = line[len(b"data:") :].strip()
+                        if not chunk or chunk == b"[DONE]":
+                            continue
+                        try:
+                            event = json.loads(chunk)
+                        except json.JSONDecodeError:
+                            continue
+                        if isinstance(event, dict):
+                            yield event
+        except OpenCodeError:
+            raise
+        except httpx.HTTPError as exc:
+            logger.warning(
+                "opencode go messages streaming error: %s", type(exc).__name__
+            )
+            raise OpenCodeError("opencode go messages streaming error") from exc
 
     def _model_row(self, model_id: str, created: int) -> dict[str, Any]:
         """Build one listing row, enriched with limits when they are known."""
