@@ -92,6 +92,18 @@ class _Process:
             self.release.set()
 
 
+# Budget for test-side waits on async coordination events.
+#
+# These waits are NOT latency assertions: each one waits for an event that either
+# fires or does not, so the only thing a tight budget buys is sensitivity to CPU
+# contention. At the previous 0.1s, a loaded full-suite run lost the scheduler
+# race often enough that roughly one run in two failed here, a DIFFERENT test
+# each time, while every test passed in isolation. A generous budget keeps the
+# meaning intact (a genuinely stuck event still fails the test) and removes the
+# false negatives.
+_EVENT_WAIT = 10.0
+
+
 def _spawned_coordinator(
     process: _Process,
     *,
@@ -123,7 +135,7 @@ async def test_one_cancelled_waiter_preserves_shared_login() -> None:
     coordinator, spawned, calls = _spawned_coordinator(process)
     first = asyncio.create_task(coordinator.login())
     second = asyncio.create_task(coordinator.login())
-    await asyncio.wait_for(spawned.wait(), timeout=0.1)
+    await asyncio.wait_for(spawned.wait(), timeout=_EVENT_WAIT)
     await asyncio.sleep(0)
 
     first.cancel()
@@ -135,7 +147,7 @@ async def test_one_cancelled_waiter_preserves_shared_login() -> None:
     assert calls == [("kimi", "login")]
 
     process.release.set()
-    await asyncio.wait_for(second, timeout=0.1)
+    await asyncio.wait_for(second, timeout=_EVENT_WAIT)
 
 
 @pytest.mark.asyncio
@@ -143,9 +155,9 @@ async def test_last_waiter_cancellation_reaps_child_and_drains() -> None:
     process = _Process(ignore_terminate=True)
     coordinator, spawned, calls = _spawned_coordinator(process)
     waiter = asyncio.create_task(coordinator.login())
-    await asyncio.wait_for(spawned.wait(), timeout=0.1)
-    await asyncio.wait_for(process.stdout.started.wait(), timeout=0.1)
-    await asyncio.wait_for(process.stderr.started.wait(), timeout=0.1)
+    await asyncio.wait_for(spawned.wait(), timeout=_EVENT_WAIT)
+    await asyncio.wait_for(process.stdout.started.wait(), timeout=_EVENT_WAIT)
+    await asyncio.wait_for(process.stderr.started.wait(), timeout=_EVENT_WAIT)
 
     waiter.cancel()
     with pytest.raises(asyncio.CancelledError):
@@ -184,21 +196,21 @@ async def test_arrival_during_last_waiter_cleanup_starts_fresh_login() -> None:
         exit_grace_seconds=0.05,
     )
     abandoned = asyncio.create_task(coordinator.login())
-    await asyncio.wait_for(first_process.stdout.started.wait(), timeout=0.1)
+    await asyncio.wait_for(first_process.stdout.started.wait(), timeout=_EVENT_WAIT)
 
     abandoned.cancel()
-    await asyncio.wait_for(first_process.terminated.wait(), timeout=0.1)
+    await asyncio.wait_for(first_process.terminated.wait(), timeout=_EVENT_WAIT)
     replacement = asyncio.create_task(coordinator.login())
     await asyncio.sleep(0)
 
     assert calls == [("kimi", "login")]
     assert not replacement.done()
 
-    await asyncio.wait_for(second_spawned.wait(), timeout=1.0)
+    await asyncio.wait_for(second_spawned.wait(), timeout=_EVENT_WAIT)
     second_process.release.set()
     with pytest.raises(asyncio.CancelledError):
         await abandoned
-    await asyncio.wait_for(replacement, timeout=1.0)
+    await asyncio.wait_for(replacement, timeout=_EVENT_WAIT)
 
     assert calls == [("kimi", "login"), ("kimi", "login")]
     assert first_process.kill_calls == 1
@@ -216,7 +228,7 @@ async def test_timeout_fans_out_and_reaps_once() -> None:
         asyncio.create_task(coordinator.login()),
         asyncio.create_task(coordinator.login()),
     ]
-    await asyncio.wait_for(spawned.wait(), timeout=0.1)
+    await asyncio.wait_for(spawned.wait(), timeout=_EVENT_WAIT)
     results = await asyncio.gather(*waiters, return_exceptions=True)
 
     assert all(isinstance(result, KimiLoginError) for result in results)
@@ -270,10 +282,10 @@ async def test_failed_post_kill_reap_is_fatal_and_blocks_new_login() -> None:
         exit_grace_seconds=0.01,
     )
     waiter = asyncio.create_task(coordinator.login())
-    await asyncio.wait_for(spawned.wait(), timeout=0.1)
+    await asyncio.wait_for(spawned.wait(), timeout=_EVENT_WAIT)
 
     with pytest.raises(KimiLoginError, match="cleanup failed"):
-        await asyncio.wait_for(waiter, timeout=0.1)
+        await asyncio.wait_for(waiter, timeout=_EVENT_WAIT)
     with pytest.raises(KimiLoginError, match="cleanup failed"):
         await coordinator.login()
     with pytest.raises(KimiLoginError, match="cleanup failed"):
@@ -305,7 +317,7 @@ async def test_cancellation_resistant_drains_fail_instead_of_reporting_success(
         caplog.at_level(logging.INFO),
         pytest.raises(KimiLoginError, match="cleanup failed"),
     ):
-        await asyncio.wait_for(coordinator.login(), timeout=0.1)
+        await asyncio.wait_for(coordinator.login(), timeout=_EVENT_WAIT)
     with pytest.raises(KimiLoginError, match="cleanup failed"):
         await coordinator.login()
 
@@ -333,7 +345,7 @@ async def test_shutdown_rejects_new_waiters_and_fails_existing_waiters() -> None
         asyncio.create_task(coordinator.login()),
         asyncio.create_task(coordinator.login()),
     ]
-    await asyncio.wait_for(spawned.wait(), timeout=0.1)
+    await asyncio.wait_for(spawned.wait(), timeout=_EVENT_WAIT)
     await asyncio.sleep(0)
 
     await coordinator.close()
@@ -362,15 +374,15 @@ async def test_close_cleanup_survives_cancelled_caller_and_is_idempotent() -> No
         exit_grace_seconds=0.05,
     )
     waiter = asyncio.create_task(coordinator.login())
-    await asyncio.wait_for(spawned.wait(), timeout=0.1)
+    await asyncio.wait_for(spawned.wait(), timeout=_EVENT_WAIT)
 
     first_close = asyncio.create_task(coordinator.close())
-    await asyncio.wait_for(process.terminated.wait(), timeout=0.1)
+    await asyncio.wait_for(process.terminated.wait(), timeout=_EVENT_WAIT)
     first_close.cancel()
     with pytest.raises(asyncio.CancelledError):
         await first_close
 
-    await asyncio.wait_for(coordinator.close(), timeout=0.2)
+    await asyncio.wait_for(coordinator.close(), timeout=_EVENT_WAIT)
     result = await asyncio.gather(waiter, return_exceptions=True)
 
     assert isinstance(result[0], KimiLoginError)
@@ -408,7 +420,7 @@ async def test_large_child_output_is_drained_without_logging_secrets(
     )
 
     with caplog.at_level(logging.INFO):
-        await asyncio.wait_for(coordinator.login(), timeout=3)
+        await asyncio.wait_for(coordinator.login(), timeout=_EVENT_WAIT)
 
     assert sensitive_output not in caplog.text
     assert payload_bytes > 64 * 1024
@@ -431,7 +443,7 @@ async def test_lifecycle_events_are_classified_and_secret_free(
             asyncio.create_task(coordinator.login()),
             asyncio.create_task(coordinator.login()),
         ]
-        await asyncio.wait_for(spawned.wait(), timeout=0.1)
+        await asyncio.wait_for(spawned.wait(), timeout=_EVENT_WAIT)
         await coordinator.close()
         await asyncio.gather(*waiters, return_exceptions=True)
 
@@ -460,7 +472,7 @@ async def test_timeout_event_is_classified(
 
     with caplog.at_level(logging.INFO):
         waiter = asyncio.create_task(coordinator.login())
-        await asyncio.wait_for(spawned.wait(), timeout=0.1)
+        await asyncio.wait_for(spawned.wait(), timeout=_EVENT_WAIT)
         with pytest.raises(KimiLoginError, match="timed out"):
             await waiter
 

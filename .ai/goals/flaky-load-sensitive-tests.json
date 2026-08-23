@@ -1,0 +1,40 @@
+{
+  "id": "FLAKY-LOAD",
+  "issue_ref": ".ai/work-intake/flaky-load-sensitive-tests.md",
+  "implementation_ready": true,
+  "context": "Fix two pre-existing load-sensitive flaky test clusters that failed roughly one full suite run in two, a different test each time, and passed in isolation and on clean main.",
+  "root_causes": [
+    "tests/unit/test_kimi_login.py coordinates async tasks with asyncio.wait_for budgets of 0.1s. These are not latency assertions: each waits for an event that either fires or does not, so a tight budget only buys sensitivity to CPU contention, and whichever test lost the scheduler race failed.",
+    "test_real_headroom_smoke_uses_memory_only_state invoked the REAL Headroom compressor with a hard-coded 5s timeout and then asserted the outcome was a success. Under a loaded run the compressor exceeds that and fails open with reason 'timeout', so the test failed for a reason unrelated to the property it guards."
+  ],
+  "evidence": [
+    "Observed across the whole OpenCode Go slice series: a different test failed each time, always in one of these two files.",
+    "Reproduced deliberately: with the fix stashed, 2 of 4 loaded full-suite runs failed; with it applied, 3 of 3 were clean under the same conditions.",
+    "Running the two affected files alone under external CPU load does NOT reproduce it; the contention comes from the full suite itself.",
+    "Mutation proof that the waits are still load bearing: making the login task never run fails the suite at the new budget rather than passing."
+  ],
+  "solutions": [
+    "Replace the test-side coordination budgets with one named constant at 10s, leaving the timeout_seconds config of the code under test untouched.",
+    "Make the headroom smoke test outcome agnostic: accept fail-open reasons, since the invariant it exists for is that the real path writes nothing under HOME, and raise its timeout so a fail-open means a genuine hang rather than ordinary contention."
+  ],
+  "acceptance_criteria": [
+    "Three consecutive loaded full-suite runs pass.",
+    "The affected files still pass in isolation.",
+    "The async waits still fail when an event genuinely never fires, proven by mutation.",
+    "No timeout_seconds value belonging to the code under test is changed.",
+    "No test is skipped, deselected or marked xfail."
+  ],
+  "scope": [
+    "tests/unit/test_kimi_login.py",
+    "tests/unit/test_headroom_compression.py",
+    "tests/verify_flaky_load_fix.sh",
+    ".ai/work-intake/flaky-load-sensitive-tests.md",
+    ".ai/goals/flaky-load-sensitive-tests.json"
+  ],
+  "verification": [
+    "bash tests/verify_flaky_load_fix.sh"
+  ],
+  "coverage_percent": 91,
+  "legacy_safe_tdd": true,
+  "legacy_risk_reason": "loosening a test-side wait can hide a real regression, so the change is paired with a mutation proof that the waits still gate on the event actually firing"
+}
