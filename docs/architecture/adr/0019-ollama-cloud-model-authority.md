@@ -25,10 +25,15 @@ against the live service at ollama version 0.32.14:
    documented under "Listing models" at <https://docs.ollama.com/cloud>. A
    parallel `GET https://ollama.com/v1/models` returns the identical set.
 2. The authority publishes bare ids (`gpt-oss:120b`). The local Ollama service
-   routes the same model only under the documented `-cloud` alias. A bare id is
-   rejected locally with `model 'gpt-oss:120b' not found`, while
-   `gpt-oss:120b-cloud` succeeds on both surfaces Reverso dispatches to
-   (`/v1/responses` and `/v1/messages`) with no prior `ollama pull`.
+   routes the same model only under the documented `:cloud` alias. A bare id is
+   rejected locally with `model 'gpt-oss:120b' not found`; the earlier
+   `gpt-oss:120b-cloud` (hyphen) alias is also rejected with the same error.
+   Only `gpt-oss:120b:cloud` (colon, the form `ollama run gpt-oss:120b:cloud`
+   creates) succeeds on both surfaces Reverso dispatches to (`/v1/responses`
+   and `/v1/messages`) with no prior `ollama pull`. Tested minimum Ollama
+   version: 0.32.14 (revision 2026-08-22; live probe of `127.0.0.1:11434` with
+   `glm-5.2:cloud` confirms the colon form and rejects the bare and hyphen
+   forms).
 
 ## Decision
 
@@ -39,11 +44,12 @@ background refresh; `OLLAMA_API_KEY` is forwarded as a bearer credential when
 present.
 
 Each authority-published id is published as its documented local routing alias
-`<authority-id>-cloud`, and an authority id already carrying the alias is not
+`<authority-id>:cloud` (colon; the form `ollama run <authority-id>:cloud`
+creates locally), and an authority id already carrying the alias is not
 double-suffixed. This is a documented alias applied to an authority-published
 id, which is categorically different from the barred practice of inferring
 Cloud eligibility from an unlabelled local row: a local `/api/tags` row ending
-in `-cloud` remains `local`, never `cloud`.
+in `:cloud` remains `local`, never `cloud`.
 
 Routing is unchanged. Cloud models reach the same validated loopback endpoint,
 so the loopback-only invariant and the frozen `ProviderAdapter` contract both

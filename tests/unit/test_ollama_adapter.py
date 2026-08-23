@@ -115,7 +115,7 @@ def _transport(request: httpx.Request) -> httpx.Response:
                 "models": [
                     {"name": "qwen3:8b"},
                     {"model": "gpt-oss:20b"},
-                    {"name": "deepseek-v3.1:671b-cloud"},
+                    {"name": "deepseek-v3.1:671b:cloud"},
                 ]
             },
         )
@@ -147,12 +147,12 @@ async def test_tags_discovers_every_validated_row_as_a_local_raw_id(
     assert [row["id"] for row in models.data] == [
         "qwen3:8b",
         "gpt-oss:20b",
-        "deepseek-v3.1:671b-cloud",
-        "gpt-oss:120b-cloud",
+        "deepseek-v3.1:671b:cloud",
+        "gpt-oss:120b:cloud",
     ]
     assert runtime.catalog.entries["qwen3:8b"].local is True
     assert runtime.catalog.entries["qwen3:8b"].cloud is False
-    suffix_looking = runtime.catalog.entries["deepseek-v3.1:671b-cloud"]
+    suffix_looking = runtime.catalog.entries["deepseek-v3.1:671b:cloud"]
     assert suffix_looking.local is True
     assert suffix_looking.cloud is False
     assert runtime.auth.cloud_status == "unavailable"
@@ -183,8 +183,8 @@ async def test_cloud_authority_publishes_documented_local_routing_aliases() -> N
         (row["id"], row["ollama_local"], row["ollama_cloud"]) for row in models.data
     ] == [
         ("qwen3:8b", True, False),
-        ("gpt-oss:120b-cloud", False, True),
-        ("kimi-k3-cloud", False, True),
+        ("gpt-oss:120b:cloud", False, True),
+        ("kimi-k3:cloud", False, True),
     ]
     assert models.discovery_source == "ollama-inventory-current"
     assert runtime.catalog.cloud_status == "current"
@@ -202,7 +202,7 @@ async def test_cloud_authority_id_already_carrying_the_alias_is_not_double_suffi
 ):
     def transport(request: httpx.Request) -> httpx.Response:
         if request.url.host == "ollama.com":
-            return _cloud_authority_response("gpt-oss:120b-cloud")
+            return _cloud_authority_response("gpt-oss:120b:cloud")
         return httpx.Response(200, json={"models": [{"name": "qwen3:8b"}]})
 
     runtime = build_ollama_runtime(
@@ -212,7 +212,7 @@ async def test_cloud_authority_id_already_carrying_the_alias_is_not_double_suffi
 
     models = await runtime.adapter.list_models()
 
-    assert [row["id"] for row in models.data] == ["qwen3:8b", "gpt-oss:120b-cloud"]
+    assert [row["id"] for row in models.data] == ["qwen3:8b", "gpt-oss:120b:cloud"]
     await runtime.close()
 
 
@@ -221,7 +221,7 @@ async def test_local_row_matching_a_cloud_alias_reports_both_sources() -> None:
     def transport(request: httpx.Request) -> httpx.Response:
         if request.url.host == "ollama.com":
             return _cloud_authority_response("gpt-oss:120b")
-        return httpx.Response(200, json={"models": [{"name": "gpt-oss:120b-cloud"}]})
+        return httpx.Response(200, json={"models": [{"name": "gpt-oss:120b:cloud"}]})
 
     runtime = build_ollama_runtime(
         client=httpx.AsyncClient(transport=httpx.MockTransport(transport)),
@@ -232,7 +232,7 @@ async def test_local_row_matching_a_cloud_alias_reports_both_sources() -> None:
 
     assert [
         (row["id"], row["ollama_local"], row["ollama_cloud"]) for row in models.data
-    ] == [("gpt-oss:120b-cloud", True, True)]
+    ] == [("gpt-oss:120b:cloud", True, True)]
     await runtime.close()
 
 
@@ -578,7 +578,7 @@ async def test_cloud_disabled_still_keeps_all_current_local_tags() -> None:
     assert [row["id"] for row in models.data] == [
         "qwen3:8b",
         "gpt-oss:20b",
-        "deepseek-v3.1:671b-cloud",
+        "deepseek-v3.1:671b:cloud",
     ]
     assert runtime.auth.cloud_status == "disabled"
     await runtime.close()
@@ -658,3 +658,41 @@ async def test_completed_stream_is_stored_before_consumer_disconnect() -> None:
     assert completed.event == "response.completed"
     assert (await runtime.adapter.get_response("resp_stream")).status == "completed"
     await runtime.close()
+
+
+# --- OLLAMA-RP-G5: cloud routing suffix uses colon (":cloud"), not hyphen ---
+
+def test_cloud_routing_suffix_uses_colon_form_for_ollama_0_32_14() -> None:
+    """Regression for OLLAMA-RP-G5.
+
+    Ollama 0.32.14 routes Cloud ids only under ``<id>:cloud`` (colon). The
+    earlier ``-cloud`` (hyphen) form produced routing aliases the local
+    service rejected with ``404 model not found``. ADR-0019 is revised to
+    match.
+    """
+    from reverso.protocols.adapters.ollama.auth import CLOUD_ROUTING_SUFFIX
+
+    assert CLOUD_ROUTING_SUFFIX == ":cloud"
+
+
+@pytest.mark.asyncio
+async def test_authority_routing_id_appends_colon_cloud_alias() -> None:
+    """An authority-published bare id becomes ``<id>:cloud`` after routing."""
+    from reverso.protocols.adapters.ollama.auth import CLOUD_ROUTING_SUFFIX
+    from reverso.protocols.adapters.ollama.catalog import _authority_routing_ids
+
+    payload = {"models": [{"name": "glm-5.2"}, {"name": "kimi-k3"}]}
+
+    assert _authority_routing_ids(payload) == (
+        "glm-5.2" + CLOUD_ROUTING_SUFFIX,
+        "kimi-k3" + CLOUD_ROUTING_SUFFIX,
+    )
+
+
+def test_authority_routing_id_already_carrying_colon_alias_is_not_double_suffixed() -> None:
+    """An authority row that already ends in the colon-cloud alias is preserved verbatim."""
+    from reverso.protocols.adapters.ollama.catalog import _authority_routing_ids
+
+    payload = {"models": [{"name": "glm-5.2:cloud"}]}
+
+    assert _authority_routing_ids(payload) == ("glm-5.2:cloud",)
