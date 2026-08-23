@@ -146,6 +146,11 @@
       "status": "available"
     },
     {
+      "id": "northstar-handoff-reverso-opencode-client-surface",
+      "enabled_when": "northstar_handoff_present",
+      "status": "available"
+    },
+    {
       "id": "northstar-handoff-openrouter-reverso-provider",
       "enabled_when": "northstar_handoff_present",
       "status": "available"

@@ -137,6 +137,33 @@ and sends `x-reverso-model-catalog` plus the launch directory in
 scrub inherited Anthropic credentials, and delegate to the real Claude Code
 executable. The sync refuses to overwrite an unmarked launcher.
 
+The OpenCode harness is also a managed client surface:
+`reverso-opencode-sync` writes these managed profile fragments under
+`~/.config/opencode`:
+
+| Fragment | Model catalog |
+| --- | --- |
+| `opencode-reverso.jsonc` | All Reverso Anthropic-surface models |
+| `opencode-claude.jsonc` | Claude |
+| `opencode-codex.jsonc` | Codex |
+| `opencode-copilot.jsonc` | Copilot |
+| `opencode-auggie.jsonc` | Auggie |
+| `opencode-deepseek.jsonc` | DeepSeek |
+| `opencode-kimi.jsonc` | Kimi |
+| `opencode-ollama.jsonc` | Ollama |
+
+Each fragment binds OpenCode's `reverso` provider to the inbound Anthropic
+Messages surface (`baseURL: http://127.0.0.1:64946`) so requests traverse
+embedded Headroom on `/v1/messages`. The sync never edits user-owned
+`opencode.json` / `opencode.jsonc`; it prints the manual step instead and
+refuses to overwrite an unmanaged fragment:
+
+```bash
+uv run reverso-opencode-sync --dry-run
+uv run reverso-opencode-sync
+REVERSO_OPENCODE_CLIENT_LIVE_PROOF=1 uv run python scripts/opencode-client-live-proof.py --json
+```
+
 Now prove the complete Codex to Reverso to Claude path:
 
 ```bash

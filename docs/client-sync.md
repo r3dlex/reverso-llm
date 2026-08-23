@@ -80,6 +80,23 @@ advance, but provider and shared dependency groups are preserved. A shared
 artifact is never rendered from a mixture of current and prior provider state.
 The result is `partial_freshness` with exit code 4.
 
+## OpenCode profile fragments
+
+`reverso-opencode-sync` writes Reverso-managed `opencode-*.jsonc` profile
+fragments under `<opencode_config_dir>` (default `~/.config/opencode`). Each
+fragment binds the `reverso` provider to the inbound Anthropic Messages surface
+(`baseURL: http://127.0.0.1:64946`) with selector ids from the live
+`GET /v1/models` listing, so model exposure follows the established prefix
+rules and requests traverse embedded Headroom on `/v1/messages`. The sync
+honors the shared client convergence lock, stages exact bytes before writing,
+fails closed when discovery fails or returns no models, and never edits a
+user-owned `opencode.json` / `opencode.jsonc`: unmanaged fragments conflict
+fail-closed and the manual step for user config is printed instead.
+
+This is distinct from the OpenCode Go provider backend (`provider-opencode`,
+OCG series): that layer serves OpenCode Go models THROUGH Reverso, while this
+layer configures the OpenCode harness to call Reverso.
+
 ## Scheduled refresh
 
 `scripts/install-launchagents.sh` installs the short-lived
