@@ -2,7 +2,7 @@
 
 - **Traceability node:** `issue:reverso:reverso-opencode-client-surface`
 - **Spec:** [`docs/specifications/ACTIVE/reverso-opencode-client-surface.md`](../../docs/specifications/ACTIVE/reverso-opencode-client-surface.md)
-- **State:** `in_progress` (northstar 2026-08-22; autonomous directive)
+- **State:** `complete` (shipped as PR #143, B1-B5 one atomic PR)
 - **Owner:** autobahn (northstar → slice → autobahn loop)
 - **Spans repos:** `r3dlex/reverso` only
 - **Hosted reconciliation:** GitHub Issues mirror only when configured AND authorized (fail-closed; not done).
