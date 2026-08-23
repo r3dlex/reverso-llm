@@ -399,6 +399,104 @@
       "runtime_authority": "reverso",
       "path_template": "<codex_config_dir>/reverso-opencode.config.toml",
       "feature_gate": null
+    },
+    {
+      "id": "opencode-reverso",
+      "kind": "shared_launcher",
+      "group": "shared-reverso-launcher",
+      "selector_template": "<model>",
+      "default_model_authority": "runtime",
+      "ownership": "reverso_managed",
+      "runtime_authority": "reverso",
+      "path_template": "<opencode_config_dir>/opencode-reverso.jsonc",
+      "feature_gate": null
+    },
+    {
+      "id": "opencode-claude",
+      "kind": "provider_launcher",
+      "group": "provider-claude",
+      "selector_template": "<model>",
+      "default_model_authority": "runtime",
+      "ownership": "reverso_managed",
+      "runtime_authority": "reverso",
+      "path_template": "<opencode_config_dir>/opencode-claude.jsonc",
+      "feature_gate": null
+    },
+    {
+      "id": "opencode-codex",
+      "kind": "provider_launcher",
+      "group": "provider-codex",
+      "selector_template": "gpt-*",
+      "default_model_authority": "codex",
+      "ownership": "reverso_managed",
+      "runtime_authority": "codex",
+      "path_template": "<opencode_config_dir>/opencode-codex.jsonc",
+      "feature_gate": null
+    },
+    {
+      "id": "opencode-copilot",
+      "kind": "provider_launcher",
+      "group": "provider-copilot",
+      "selector_template": "copilot-<model>",
+      "default_model_authority": "runtime",
+      "ownership": "reverso_managed",
+      "runtime_authority": "reverso",
+      "path_template": "<opencode_config_dir>/opencode-copilot.jsonc",
+      "feature_gate": null
+    },
+    {
+      "id": "opencode-auggie",
+      "kind": "provider_launcher",
+      "group": "provider-auggie",
+      "selector_template": "auggie-<model>",
+      "default_model_authority": "runtime",
+      "ownership": "reverso_managed",
+      "runtime_authority": "reverso",
+      "path_template": "<opencode_config_dir>/opencode-auggie.jsonc",
+      "feature_gate": null
+    },
+    {
+      "id": "opencode-deepseek",
+      "kind": "provider_launcher",
+      "group": "provider-deepseek",
+      "selector_template": "<model>",
+      "default_model_authority": "runtime",
+      "ownership": "reverso_managed",
+      "runtime_authority": "reverso",
+      "path_template": "<opencode_config_dir>/opencode-deepseek.jsonc",
+      "feature_gate": null
+    },
+    {
+      "id": "opencode-kimi",
+      "kind": "provider_launcher",
+      "group": "provider-kimi",
+      "selector_template": "kimi-k3",
+      "default_model_authority": "runtime",
+      "ownership": "reverso_managed",
+      "runtime_authority": "reverso",
+      "path_template": "<opencode_config_dir>/opencode-kimi.jsonc",
+      "feature_gate": null
+    },
+    {
+      "id": "opencode-ollama",
+      "kind": "provider_launcher",
+      "group": "provider-ollama",
+      "selector_template": "anthropic-ollama-<raw-model-id>",
+      "default_model_authority": "runtime",
+      "ownership": "reverso_managed",
+      "runtime_authority": "reverso",
+      "path_template": "<opencode_config_dir>/opencode-ollama.jsonc",
+      "feature_gate": null
     }
-  ]
+  ],
+  "opencode_launchers": {
+    "opencode-reverso": "all",
+    "opencode-claude": "claude",
+    "opencode-codex": "codex",
+    "opencode-copilot": "copilot",
+    "opencode-auggie": "auggie",
+    "opencode-deepseek": "deepseek",
+    "opencode-kimi": "kimi",
+    "opencode-ollama": "ollama"
+  }
 }
