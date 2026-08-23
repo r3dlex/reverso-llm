@@ -16,13 +16,14 @@ https://ollama.com/search?c=cloud, and shipped static lists all remain barred.
 """
 
 CLOUD_AUTHORITY_HOST = "ollama.com"
-CLOUD_ROUTING_SUFFIX = "-cloud"
+CLOUD_ROUTING_SUFFIX = ":cloud"
 """Documented local routing alias for an authority-published Cloud model.
 
 The authority publishes bare ids (``gpt-oss:120b``). The user-owned local
-Ollama service routes the same model only under ``<id>-cloud`` (see
-https://docs.ollama.com/cloud, "Running Cloud models"); the bare id is rejected
-with ``model 'gpt-oss:120b' not found``.
+Ollama service routes the same model only under ``<id>:cloud`` (colon, see
+https://docs.ollama.com/cloud, "Running Cloud models"); the bare id and
+the earlier documented ``<id>-cloud`` (hyphen) alias are both rejected
+with ``model 'gpt-oss:120b' not found``. Tested minimum Ollama version: 0.32.14.
 """
 
 
