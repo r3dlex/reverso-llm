@@ -33,6 +33,7 @@ from reverso.client_sync_mutations import (
     apply_prepared_group,
     capture_state,
     file_state,
+    is_owned_by_marker,
     missing_parent_mutations,
 )
 from reverso.protocols.surface_registry import (
@@ -161,13 +162,7 @@ def _failed_prepared(
 
 
 def _is_managed_fragment_state(state: Any) -> bool:
-    if state.kind != "file" or not isinstance(state.data, bytes):
-        return False
-    try:
-        first_line = state.data.decode("utf-8").splitlines()[:1]
-    except UnicodeDecodeError:
-        return False
-    return MANAGED_MARKER in first_line
+    return is_owned_by_marker(state, MANAGED_MARKER, head_lines=1)
 
 
 def _render_profile(base_url: str, selectors: list[str]) -> str:

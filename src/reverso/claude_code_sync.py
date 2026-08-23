@@ -27,7 +27,10 @@ from reverso.client_sync_mutations import (
     apply_prepared_group,
     capture_state,
     file_state,
+    is_owned_by_marker,
+    is_path_owned_by_marker,
     missing_parent_mutations,
+    next_backup_path,
 )
 
 DEFAULT_SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
@@ -175,16 +178,11 @@ def _next_backup_path(
     *,
     now: datetime | None = None,
 ) -> Path:
-    timestamp = (now or datetime.now(UTC)).strftime("%Y%m%dT%H%M%SZ")
-    suffix = 0
-    while True:
-        suffix_text = "" if suffix == 0 else f".{suffix}"
-        candidate = settings_path.with_name(
-            f"{settings_path.name}{BACKUP_SUFFIX_PREFIX}{timestamp}{suffix_text}"
-        )
-        if not candidate.exists() and not candidate.is_symlink():
-            return candidate
-        suffix += 1
+    return next_backup_path(
+        settings_path,
+        suffix_prefix=BACKUP_SUFFIX_PREFIX,
+        now=now,
+    )
 
 
 def _atomic_write_json(
@@ -236,23 +234,11 @@ def _atomic_write_launcher(path: Path, text: str) -> None:
 
 
 def _is_managed_launcher(path: Path) -> bool:
-    if path.is_symlink() or not path.is_file():
-        return False
-    try:
-        first_lines = path.read_text(encoding="utf-8").splitlines()[:2]
-    except (OSError, UnicodeDecodeError):
-        return False
-    return LAUNCHER_MANAGED_MARKER in first_lines
+    return is_path_owned_by_marker(path, LAUNCHER_MANAGED_MARKER)
 
 
 def _is_managed_launcher_state(state: FileState) -> bool:
-    if state.kind != "file" or not isinstance(state.data, bytes):
-        return False
-    try:
-        first_lines = state.data.decode("utf-8").splitlines()[:2]
-    except UnicodeDecodeError:
-        return False
-    return LAUNCHER_MANAGED_MARKER in first_lines
+    return is_owned_by_marker(state, LAUNCHER_MANAGED_MARKER)
 
 
 def _is_usable_claude(path: Path) -> bool:
