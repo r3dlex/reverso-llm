@@ -713,9 +713,7 @@ def test_strip_partial_features_drops_only_partial_reasoning_subkeys() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "provider", ["claude", "auggie", "deepseek", "kimi", "ollama"]
-)
+@pytest.mark.parametrize("provider", ["claude", "auggie", "deepseek", "kimi", "ollama"])
 @pytest.mark.parametrize("stream", [False, True])
 @pytest.mark.parametrize(
     ("include_case", "include_value", "allowed"),

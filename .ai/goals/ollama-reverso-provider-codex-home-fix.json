@@ -1,0 +1,36 @@
+{
+  "id": "OLLAMA-RP-CODEX-HOME-FIX",
+  "issue_ref": "codex-sync CODEX_HOME catalog resolution regression",
+  "implementation_ready": true,
+  "context": "Repair Reverso Codex sync so a process launched with CODEX_HOME writes its generated Ollama profile and catalog under the active Codex home.",
+  "root_causes": [
+    "codex_sync.DEFAULT_CONFIG_PATH hardcodes ~/.codex/config.toml and ignores CODEX_HOME.",
+    "The stale active catalog contained only qwen3.8:27b-mlx while the gateway exposed both models."
+  ],
+  "evidence": [
+    "CODEX_HOME regression test was red before the fix and green after it.",
+    "uv run --project . python -m pytest tests/unit/test_codex_sync.py -q passed 138 tests.",
+    "The active CODEX_HOME convergence apply changed provider-ollama and updated its catalog to include glm-5.2:cloud and qwen3.8:27b-mlx."
+  ],
+  "solutions": [
+    "Resolve the default Codex config from CODEX_HOME at module import time.",
+    "Keep the existing config-parent catalog resolution and add one focused regression test."
+  ],
+  "acceptance_criteria": [
+    "A subprocess with CODEX_HOME set resolves the generated config and catalog under that home.",
+    "The default ~/.codex behavior remains unchanged when CODEX_HOME is unset.",
+    "The focused and full codex_sync unit tests pass.",
+    "The active CODEX_HOME Ollama catalog exposes both live models."
+  ],
+  "scope": [
+    "src/reverso/codex_sync.py",
+    "tests/unit/test_codex_sync.py",
+    ".ai/evidence/OLLAMA-QWEN38-OPT.md"
+  ],
+  "verification": [
+    "uv run --project . python -m pytest tests/unit/test_codex_sync.py -q"
+  ],
+  "coverage_percent": 0,
+  "legacy_safe_tdd": true,
+  "legacy_risk_reason": "Cross-home profile routing affects active client files, so a subprocess import test is used to cover the environment boundary."
+}
