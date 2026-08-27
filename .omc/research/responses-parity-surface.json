@@ -71,7 +71,7 @@
       "deepseek": "native",
       "kimi": "native",
       "codex": "native",
-      "ollama": "unsupported"
+      "ollama": "partial"
     },
     "stream": {
       "claude": "translated",
@@ -107,7 +107,7 @@
       "deepseek": "partial",
       "kimi": "partial",
       "codex": "partial",
-      "ollama": "unsupported"
+      "ollama": "partial"
     },
     "tools.file_search": {
       "claude": "unsupported",
@@ -179,7 +179,7 @@
       "deepseek": "translated",
       "kimi": "translated",
       "codex": "partial",
-      "ollama": "unsupported"
+      "ollama": "partial"
     },
     "reasoning.effort": {
       "claude": "partial",
@@ -188,7 +188,7 @@
       "deepseek": "translated",
       "kimi": "translated",
       "codex": "unsupported",
-      "ollama": "unsupported"
+      "ollama": "partial"
     },
     "reasoning.summary": {
       "claude": "partial",
@@ -197,7 +197,7 @@
       "deepseek": "translated",
       "kimi": "translated",
       "codex": "unsupported",
-      "ollama": "unsupported"
+      "ollama": "partial"
     },
     "sampling.temperature": {
       "claude": "unsupported",
@@ -260,7 +260,7 @@
       "deepseek": "partial",
       "kimi": "partial",
       "codex": "unsupported",
-      "ollama": "unsupported"
+      "ollama": "partial"
     },
     "background": {
       "claude": "unsupported",
