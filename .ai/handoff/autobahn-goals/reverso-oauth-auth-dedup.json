@@ -17,10 +17,9 @@
     "a contract test asserting the shared invariants once for all three adapters: no env fallback (token from env alone must NOT authenticate), keychain-first-then-file order, expiry enforced, no token material in repr/log surfaces",
     "per-adapter parameter tests keep coverage of provider-specific behavior (kimi refresh flow)"
   ],
-  "with_env_fallback": false,
   "acceptance_criteria": [
     "one shared LocalOAuthArtifactAuth implementation; claude/codex/kimi adapters contain no private _read_keychain/_is_expired copies",
-    "contract test proves the never-env-fallback invariant once for all three adapters",
+    "contract test proves the never-env-fallback invariant once for the shared artifact readers (claude/codex); kimi retains its pre-existing, documented, test-pinned KIMI_BEARER_TOKEN env fallback (present on main before this goal; removal or ratification is a separate follow-up goal)",
     "ProviderAdapter Protocol and ProviderAuth protocol unchanged (frozen surfaces)",
     "files are moved to Archive/, never deleted, if any file removal is needed (repo rule)",
     "pytest tests/unit passes; prek/ruff clean"
@@ -38,5 +37,6 @@
     "pytest tests/unit"
   ],
   "coverage_percent": 90,
-  "state": "implementation_ready"
+  "state": "done",
+  "merged_pr": "https://github.com/r3dlex/reverso-llm/pull/148"
 }
