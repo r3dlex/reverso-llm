@@ -1,0 +1,11 @@
+{
+  "goal_id": "reverso-oauth-auth-dedup",
+  "green": {
+    "command": "PATH=\"$PWD/.venv/bin:$PATH\" pytest tests/unit",
+    "exit_code": 0
+  },
+  "red": {
+    "command": "PATH=\"$PWD/.venv/bin:$PATH\" pytest tests/unit",
+    "exit_code": 2
+  }
+}
