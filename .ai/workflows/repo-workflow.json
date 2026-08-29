@@ -155,6 +155,11 @@
       "id": "northstar-handoff-openrouter-reverso-provider",
       "enabled_when": "northstar_handoff_present",
       "status": "available"
+    },
+    {
+      "id": "northstar-handoff-reverso-convergence-participant-seam",
+      "enabled_when": "northstar_handoff_present",
+      "status": "available"
     }
   ],
   "handoff": ".ai/handoff/init-ai-repo-handoff.md",
