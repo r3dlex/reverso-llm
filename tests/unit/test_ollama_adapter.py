@@ -662,6 +662,7 @@ async def test_completed_stream_is_stored_before_consumer_disconnect() -> None:
 
 # --- OLLAMA-RP-G5: cloud routing suffix uses colon (":cloud"), not hyphen ---
 
+
 def test_cloud_routing_suffix_uses_colon_form_for_ollama_0_32_14() -> None:
     """Regression for OLLAMA-RP-G5.
 
@@ -689,7 +690,9 @@ async def test_authority_routing_id_appends_colon_cloud_alias() -> None:
     )
 
 
-def test_authority_routing_id_already_carrying_colon_alias_is_not_double_suffixed() -> None:
+def test_authority_routing_id_already_carrying_colon_alias_is_not_double_suffixed() -> (
+    None
+):
     """An authority row that already ends in the colon-cloud alias is preserved verbatim."""
     from reverso.protocols.adapters.ollama.catalog import _authority_routing_ids
 
