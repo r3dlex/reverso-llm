@@ -154,7 +154,10 @@ The OpenCode harness is also a managed client surface:
 
 Each fragment binds OpenCode's `reverso` provider to the inbound Anthropic
 Messages surface (`baseURL: http://127.0.0.1:64946`) so requests traverse
-embedded Headroom on `/v1/messages`. The sync never edits user-owned
+embedded Headroom on `/v1/messages`. The scheduled catalog refresh converges
+these fragments alongside the Codex profiles and Claude launchers, so all three
+client surfaces track the same model inventory; the command below converges only
+the OpenCode surface on demand. The sync never edits user-owned
 `opencode.json` / `opencode.jsonc`; it prints the manual step instead and
 refuses to overwrite an unmanaged fragment:
 

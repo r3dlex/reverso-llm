@@ -673,13 +673,11 @@ def plan_rtk_convergence(executable: Path, *, home: Path | None = None) -> RtkPl
         preconditions.append(PreparedMutation(parent, before, after))
     if link.is_symlink():
         try:
-            current_target = link.resolve(strict=True)
-        except OSError as exc:
-            raise ClientSyncError(
-                f"RTK symlink conflict at {link}",
-                code="ownership_conflict",
-                status="ownership_conflict",
-            ) from exc
+            current_target: Path | None = link.resolve(strict=True)
+        except OSError:
+            # A dangling link carries no target to preserve. Ownership, not
+            # resolvability, decides whether Reverso may repair it below.
+            current_target = None
         if current_target == resolved:
             link_before = capture_state(link)
             if marker_owned:
@@ -705,10 +703,36 @@ def plan_rtk_convergence(executable: Path, *, home: Path | None = None) -> RtkPl
                 False,
                 group,
             )
-        raise ClientSyncError(
-            f"RTK symlink conflict at {link}",
-            code="ownership_conflict",
-            status="ownership_conflict",
+        if current_target is not None or not marker_owned:
+            raise ClientSyncError(
+                f"RTK symlink conflict at {link}",
+                code="ownership_conflict",
+                status="ownership_conflict",
+            )
+        # Marker-owned AND dangling: a Homebrew version bump deletes the old
+        # Cellar path outright, so the link Reverso wrote resolves to nothing and
+        # every later refresh failed closed. A dangling link has no target to
+        # preserve, so repairing it destroys nothing. A link that still resolves
+        # to a different binary remains a conflict above, marker or not.
+        link_before = capture_state(link)
+        marker_before = capture_state(marker)
+        return RtkPlan(
+            resolved,
+            headroom_dir,
+            bin_dir,
+            link,
+            marker,
+            create_directories,
+            True,
+            False,
+            PreparedGroup(
+                "rtk",
+                (
+                    *preconditions,
+                    PreparedMutation(link, link_before, symlink_state(resolved)),
+                    PreparedMutation(marker, marker_before, marker_before),
+                ),
+            ),
         )
     elif link.exists():
         raise ClientSyncError(
@@ -1034,6 +1058,21 @@ def _claude_mutation_group(
     raise ClientSyncError(f"unmapped Claude prepared path: {path}")
 
 
+def _opencode_mutation_group(path: Path, *, config_dir: Path) -> str:
+    """Map one prepared OpenCode fragment onto its declared convergence group."""
+    if path == config_dir or config_dir.is_relative_to(path):
+        return "opencode-roots"
+    if path.parent == config_dir and path.name.endswith(".jsonc"):
+        catalog = dict(opencode_sync.LAUNCHER_CATALOGS).get(
+            path.name.removesuffix(".jsonc")
+        )
+        if catalog == "all":
+            return "shared-reverso-launcher"
+        if catalog is not None:
+            return f"provider-{catalog}"
+    raise ClientSyncError(f"unmapped OpenCode prepared path: {path}")
+
+
 def _append_group_mutations(
     destination: dict[str, list[PreparedMutation]],
     group: str,
@@ -1207,6 +1246,7 @@ def _plan(
     claude_config_dir: Path,
     catalog_dir: Path,
     launch_agent_dir: Path,
+    opencode_config_dir: Path,
     rtk_bin: Path | None,
     home: Path | None,
 ) -> _ConvergencePlan:
@@ -1240,6 +1280,7 @@ def _plan(
         {
             "codex-roots": ("prerequisite", []),
             "claude-roots": ("prerequisite", []),
+            "opencode-roots": ("prerequisite", []),
         }
     )
     group_mutations = {group: [] for group in metadata}
@@ -1343,6 +1384,21 @@ def _plan(
             launcher_dir=launch_agent_dir,
         )
         _append_group_mutations(group_mutations, group, [mutation])
+    # OpenCode fragments are declared surfaces in the same provider groups as the
+    # Codex profile and Claude launcher, so they converge in the one scheduled
+    # pass rather than waiting on a separate operator command.
+    opencode_prepared = opencode_sync.prepare_sync(opencode_config_dir)
+    if opencode_prepared.result.error is not None:
+        provider_errors["opencode-roots"] = opencode_prepared.result.error
+    else:
+        for mutation in opencode_prepared.group.mutations:
+            group = _opencode_mutation_group(
+                mutation.path,
+                config_dir=opencode_config_dir,
+            )
+            if group in allowed_groups or group == "opencode-roots":
+                _append_group_mutations(group_mutations, group, [mutation])
+
     claude_root_mutations = {
         mutation.path: mutation for mutation in group_mutations["claude-roots"]
     }
@@ -1361,6 +1417,25 @@ def _plan(
         mutation
         for mutation in group_mutations["codex-roots"]
         if mutation.path not in shared_root_paths
+    ]
+    # OpenCode's config dir can share missing ancestors with the Claude and Codex
+    # roots. The prerequisite is the same directory either way, so one group owns
+    # it and the others defer, preserving one-path-one-group.
+    claimed_roots = {
+        mutation.path: mutation
+        for group in ("claude-roots", "codex-roots")
+        for mutation in group_mutations[group]
+    }
+    for mutation in group_mutations["opencode-roots"]:
+        claimed = claimed_roots.get(mutation.path)
+        if claimed is not None and claimed != mutation:
+            raise ClientSyncError(
+                f"conflicting prepared candidates for {mutation.path}"
+            )
+    group_mutations["opencode-roots"] = [
+        mutation
+        for mutation in group_mutations["opencode-roots"]
+        if mutation.path not in claimed_roots
     ]
     group_mutations["rtk"].extend(rtk_plan.group.mutations)
     groups = {
@@ -1393,6 +1468,7 @@ def _group_records(
         {
             "codex-roots": ("prerequisite", []),
             "claude-roots": ("prerequisite", []),
+            "opencode-roots": ("prerequisite", []),
         }
     )
     return [
@@ -1948,6 +2024,7 @@ def _run_once(
     claude_config_dir: Path | None = None,
     catalog_dir: Path | None = None,
     launch_agent_dir: Path | None = None,
+    opencode_config_dir: Path | None = None,
     rtk_bin: Path | None = None,
     home: Path | None = None,
     lock_path: Path | None = None,
@@ -1972,6 +2049,9 @@ def _run_once(
     ).expanduser()
     resolved_catalog = (
         catalog_dir or codex_sync._default_catalog_dir(resolved_codex)
+    ).expanduser()
+    resolved_opencode = (
+        opencode_config_dir or opencode_sync.DEFAULT_CONFIG_DIR
     ).expanduser()
     resolved_launchers = (
         launch_agent_dir or claude_code_sync.DEFAULT_LAUNCHER_DIR
@@ -2025,6 +2105,7 @@ def _run_once(
             claude_config_dir=resolved_claude_dir,
             catalog_dir=resolved_catalog,
             launch_agent_dir=resolved_launchers,
+            opencode_config_dir=resolved_opencode,
             rtk_bin=rtk_bin,
             home=home,
         )
@@ -2109,6 +2190,7 @@ def run(
     claude_config_dir: Path | None = None,
     catalog_dir: Path | None = None,
     launch_agent_dir: Path | None = None,
+    opencode_config_dir: Path | None = None,
     rtk_bin: Path | None = None,
     home: Path | None = None,
     lock_path: Path | None = None,
@@ -2123,6 +2205,7 @@ def run(
         claude_config_dir=claude_config_dir,
         catalog_dir=catalog_dir,
         launch_agent_dir=launch_agent_dir,
+        opencode_config_dir=opencode_config_dir,
         rtk_bin=rtk_bin,
         home=home,
         lock_path=lock_path,
