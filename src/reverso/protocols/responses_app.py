@@ -75,6 +75,8 @@ APP_PROVIDER_PREFIXES = frozenset(
         "openai",
         "openai-pass-through",
         "ollama",
+        "opencode",
+        "openrouter",
     }
 )
 

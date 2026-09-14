@@ -1,0 +1,11 @@
+{
+  "goal_id": "OCG-G1",
+  "green": {
+    "command": "uv run pytest tests/unit/test_surface_registry_index_conflicts.py -q",
+    "exit_code": 0
+  },
+  "red": {
+    "command": "uv run pytest tests/unit/test_surface_registry_index_conflicts.py -q",
+    "exit_code": 1
+  }
+}

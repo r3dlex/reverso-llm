@@ -28,6 +28,16 @@ def _resolve_config_path() -> Path:
 _CONFIG_PATH = _resolve_config_path()
 _KEYCHAIN_KEYS = {
     "DEEPSEEK_API_KEY": "reverso/DEEPSEEK_API_KEY",
+    "OPENCODE_API_KEY": "reverso/OPENCODE_API_KEY",
+}
+
+# Env vars that satisfy a Keychain-backed key without being written themselves.
+# OCGO_API_KEY is OpenCode Go's read-only alias (OCG-G3): an ocgo user who
+# exported only the alias is configured, so warning about a missing key would be
+# wrong. The alias is NOT promoted into the canonical variable -- resolution
+# order lives in one place, the credentials module, not in two.
+_KEYCHAIN_ENV_ALIASES = {
+    "OPENCODE_API_KEY": ("OCGO_API_KEY",),
 }
 
 
@@ -50,6 +60,9 @@ def _inject_keychain_secrets() -> None:
     for env_var, service in _KEYCHAIN_KEYS.items():
         if os.environ.get(env_var):
             continue  # already set (e.g., from a test env)
+        aliases = _KEYCHAIN_ENV_ALIASES.get(env_var, ())
+        if any(os.environ.get(alias) for alias in aliases):
+            continue  # satisfied by a read-only alias
         secret = _load_keychain_secret(service)
         if secret:
             os.environ[env_var] = secret

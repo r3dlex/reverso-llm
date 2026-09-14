@@ -1,0 +1,11 @@
+{
+  "goal_id": "OCG-G8",
+  "green": {
+    "command": "bash tests/verify_opencode_g8.sh",
+    "exit_code": 0
+  },
+  "red": {
+    "command": "bash tests/verify_opencode_g8.sh",
+    "exit_code": 2
+  }
+}

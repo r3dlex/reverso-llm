@@ -59,7 +59,11 @@ logger = logging.getLogger(__name__)
 GATEWAY_BASE_URL = "http://127.0.0.1:64946"
 PROFILE_ARCHIVE_DIR = Path("Archive") / "reverso-codex-sync"
 PROFILE_MANAGED_MARKER = "# Managed by reverso-codex-sync."
-OPTIONAL_DISCOVERY_PREFIXES = frozenset({"codex-direct", "ollama"})
+# Prefixes whose live discovery may legitimately be unavailable, so a sync
+# proceeds without them instead of failing closed. ollama's daemon may be off;
+# opencode is a paid subscription many deployments simply do not have, and
+# requiring it would break every Codex sync for those users.
+OPTIONAL_DISCOVERY_PREFIXES = frozenset({"codex-direct", "ollama", "opencode"})
 MANAGED_REVERSO_PROFILE_PREFIXES = (
     *model_exposure.REVERSO_ROUTED_CODEX_PROFILE_PREFIXES,
     "codex-direct",
@@ -91,7 +95,16 @@ GATEWAY_PROVIDERS_END = (
 BACKUPS_KEPT = 5
 BACKUP_SUFFIX_PREFIX = ".reverso-sync."
 
-DEFAULT_CONFIG_PATH = Path.home() / ".codex" / "config.toml"
+
+def _resolve_codex_home() -> Path:
+    """Return the active Codex home, honoring ``CODEX_HOME``."""
+    raw = os.environ.get("CODEX_HOME", "").strip()
+    if raw:
+        return Path(raw).expanduser()
+    return Path.home() / ".codex"
+
+
+DEFAULT_CONFIG_PATH = _resolve_codex_home() / "config.toml"
 # Per-provider catalog JSON files live under this directory, one per profile
 # (e.g. ~/.codex/reverso/copilot.json). The directory is derived from the
 # config file's parent so a custom --config relocates the catalogs too.

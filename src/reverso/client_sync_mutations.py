@@ -8,6 +8,7 @@ import stat
 from collections.abc import Callable, Iterable
 from contextvars import ContextVar
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
@@ -130,6 +131,57 @@ def directory_state(mode: int = 0o700) -> FileState:
 def symlink_state(target: Path | str) -> FileState:
     """Build an immutable symlink state without resolving its target."""
     return FileState("symlink", str(target), None)
+
+
+def is_owned_by_marker(
+    state: FileState,
+    marker: str,
+    *,
+    head_lines: int = 2,
+) -> bool:
+    """True when a captured regular-file state opens with the managed marker."""
+    if state.kind != "file" or not isinstance(state.data, bytes):
+        return False
+    try:
+        head = state.data.decode("utf-8").splitlines()[:head_lines]
+    except UnicodeDecodeError:
+        return False
+    return marker in head
+
+
+def is_path_owned_by_marker(
+    path: Path,
+    marker: str,
+    *,
+    head_lines: int = 2,
+) -> bool:
+    """True when path is a real regular file opening with the managed marker."""
+    if path.is_symlink() or not path.is_file():
+        return False
+    try:
+        head = path.read_text(encoding="utf-8").splitlines()[:head_lines]
+    except (OSError, UnicodeDecodeError):
+        return False
+    return marker in head
+
+
+def next_backup_path(
+    target: Path,
+    *,
+    suffix_prefix: str,
+    now: datetime | None = None,
+) -> Path:
+    """First absent `<name><suffix_prefix><timestamp>[.<n>]` sibling."""
+    timestamp = (now or datetime.now(UTC)).strftime("%Y%m%dT%H%M%SZ")
+    suffix = 0
+    while True:
+        numbered = "" if suffix == 0 else f".{suffix}"
+        candidate = target.with_name(
+            f"{target.name}{suffix_prefix}{timestamp}{numbered}"
+        )
+        if not candidate.exists() and not candidate.is_symlink():
+            return candidate
+        suffix += 1
 
 
 def prepared_mutation(path: Path, after: FileState) -> PreparedMutation:

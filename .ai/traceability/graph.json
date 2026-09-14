@@ -465,6 +465,59 @@
       "backlinks": [
         "plan:reverso-root:northstar-ollama-reverso-provider"
       ]
+    },
+    {
+      "id": "plan:reverso-root:northstar-opencode-go-provider",
+      "type": "plan",
+      "title": "northstar sliced plan: opencode-go-provider",
+      "status": "active",
+      "repo_id": "reverso-root",
+      "path": ".ai/handoff/northstar-opencode-go-provider.md",
+      "backlinks": [
+        "prd:reverso-root:ollama-reverso-provider"
+      ]
+    },
+    {
+      "id": "handoff:reverso-root:northstar-opencode-go-provider",
+      "type": "handoff",
+      "title": "northstar A->B handoff: opencode-go-provider",
+      "status": "active",
+      "repo_id": "reverso-root",
+      "path": ".ai/handoff/northstar-opencode-go-provider.md",
+      "backlinks": [
+        "plan:reverso-root:northstar-opencode-go-provider"
+      ]
+    },
+    {
+      "id": "issue:reverso-root:openrouter-reverso-provider",
+      "type": "issue",
+      "title": "northstar issue: openrouter-reverso-provider",
+      "status": "ready-for-human",
+      "repo_id": "reverso-root",
+      "path": ".ai/work-intake/openrouter-reverso-provider.md",
+      "backlinks": []
+    },
+    {
+      "id": "plan:reverso-root:northstar-openrouter-reverso-provider",
+      "type": "plan",
+      "title": "northstar sliced plan: openrouter-reverso-provider",
+      "status": "active",
+      "repo_id": "reverso-root",
+      "path": ".ai/handoff/northstar-openrouter-reverso-provider.md",
+      "backlinks": [
+        "issue:reverso-root:openrouter-reverso-provider"
+      ]
+    },
+    {
+      "id": "handoff:reverso-root:northstar-openrouter-reverso-provider",
+      "type": "handoff",
+      "title": "northstar A to B handoff: openrouter-reverso-provider",
+      "status": "active",
+      "repo_id": "reverso-root",
+      "path": ".ai/handoff/northstar-openrouter-reverso-provider.md",
+      "backlinks": [
+        "plan:reverso-root:northstar-openrouter-reverso-provider"
+      ]
     }
   ],
   "edges": [
@@ -691,6 +744,34 @@
       "relation": "summarized-by",
       "created_by": "northstar-reconciler",
       "evidence_path": ".ai/handoff/northstar-ollama-reverso-provider.md"
+    },
+    {
+      "source": "prd:reverso-root:ollama-reverso-provider",
+      "target": "plan:reverso-root:northstar-opencode-go-provider",
+      "relation": "planned-by",
+      "created_by": "northstar",
+      "evidence_path": ".ai/handoff/northstar-opencode-go-provider.md"
+    },
+    {
+      "source": "plan:reverso-root:northstar-opencode-go-provider",
+      "target": "handoff:reverso-root:northstar-opencode-go-provider",
+      "relation": "summarized-by",
+      "created_by": "northstar",
+      "evidence_path": ".ai/handoff/northstar-opencode-go-provider.md"
+    },
+    {
+      "source": "issue:reverso-root:openrouter-reverso-provider",
+      "target": "plan:reverso-root:northstar-openrouter-reverso-provider",
+      "relation": "planned-by",
+      "created_by": "northstar-reconciler",
+      "evidence_path": ".ai/work-intake/openrouter-reverso-provider.md"
+    },
+    {
+      "source": "plan:reverso-root:northstar-openrouter-reverso-provider",
+      "target": "handoff:reverso-root:northstar-openrouter-reverso-provider",
+      "relation": "summarized-by",
+      "created_by": "northstar-reconciler",
+      "evidence_path": ".ai/handoff/northstar-openrouter-reverso-provider.md"
     }
   ],
   "coverage": {

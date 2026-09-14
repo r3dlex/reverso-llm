@@ -97,6 +97,7 @@ def build_adapters(
     from reverso.protocols.adapters.claude import ClaudeAdapter
     from reverso.protocols.adapters.copilot import CopilotAdapter
     from reverso.protocols.adapters.deepseek import DeepSeekAdapter
+    from reverso.protocols.adapters.opencode.adapter import OpenCodeAdapter
 
     adapters: dict[str, ProviderAdapter] = {
         "claude": ClaudeAdapter(),
@@ -104,7 +105,53 @@ def build_adapters(
         "auggie": AuggieAdapter(),
         "deepseek": DeepSeekAdapter(),
         "kimi": KimiAdapter(auth=kimi_auth or KimiOAuthAuth()),
+        # OpenCode Go (OCG-G4). Responses surface only this slice; the Anthropic
+        # vertical is G5, and a negative test asserts it is not reachable yet.
+        "opencode": OpenCodeAdapter(),
     }
+    # OR-G1 mounts the OpenRouter runtime, deny-first; the runtime is wired
+    # by the first call to ``reverso.protocols.adapters.openrouter.runtime.get_or_create_runtime``
+    # from inside the OpenRouter adapter wrapper, keeping the composition root
+    # the sole owner of the singleton.
+    from reverso.protocols.adapters.openrouter.adapter import OpenRouterAdapter
+    from reverso.protocols.adapters.openrouter.credentials import resolve_api_key
+    from reverso.protocols.adapters.openrouter.runtime import build_openrouter_runtime
+    from reverso.protocols.adapters.openrouter.transport import HttpOpenRouterTransport
+
+    class _OpenRouterCredentialProxy:
+        def resolve_api_key(self) -> str:
+            return resolve_api_key()
+
+    _openrouter_transport = HttpOpenRouterTransport(
+        api_base="https://openrouter.ai/api/v1",
+        credentials=_OpenRouterCredentialProxy(),
+    )
+    _openrouter_runtime = build_openrouter_runtime(
+        transport=_openrouter_transport,
+        credentials=_openrouter_transport,
+        catalog=None,
+        policy=type(
+            "P",
+            (),
+            {
+                "revision": "discovery-stub",
+                "observed_at": 0.0,
+                "requires_zdr": True,
+                "denies_data_collection": True,
+                "pricing_prompt": "0",
+                "pricing_completion": "0",
+            },
+        )(),
+        freshness_bound_seconds=600,
+        allowlist=frozenset({"openrouter/stealth/ox-alpha"}),
+        request_limit_usd="0.05",
+        session_limit_usd="0.10",
+        compatibility_providers=("zdr_only_endpoint_providers",),
+    )
+    adapters["openrouter"] = OpenRouterAdapter(
+        transport=_openrouter_transport,
+        credentials=_openrouter_transport,
+    )
     if codex_direct_backend_enabled(env):
         from reverso.protocols.adapters.codex import CodexOAuthAuth
         from reverso.protocols.adapters.codex_direct import (

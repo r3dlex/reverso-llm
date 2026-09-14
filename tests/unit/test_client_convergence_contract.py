@@ -502,6 +502,7 @@ def test_headroom_v2_governed_maps_are_exact() -> None:
             "ollama",
             "codex-direct",
             "openai-pass-through",
+            "opencode",
             "other",
         ],
         "surface_counts": ["responses", "anthropic_messages", "other"],

@@ -57,6 +57,7 @@ _PROVIDER_KEYS = (
     "ollama",
     "codex-direct",
     "openai-pass-through",
+    "opencode",
     "other",
 )
 _SURFACE_KEYS = ("responses", "anthropic_messages", "other")

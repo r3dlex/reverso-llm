@@ -14,7 +14,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from reverso import claude_code_sync, codex_sync, ollama_convergence
+from reverso import claude_code_sync, codex_sync, ollama_convergence, opencode_sync
 from reverso.client_sync_lock import (
     ClientSyncLockBusy,
     HeldClientSyncLock,
@@ -80,6 +80,7 @@ EXPECTED_GROUPS = {
     "provider-deepseek": ("provider", ()),
     "provider-kimi": ("provider", ()),
     "provider-ollama": ("provider", ()),
+    "provider-opencode": ("provider", ()),
     "provider-openai-pass-through": ("provider", ()),
     "rtk": ("prerequisite", ()),
     "shared-claude-settings": ("shared_dependency", ()),
@@ -94,6 +95,7 @@ EXPECTED_GROUPS = {
             "provider-kimi",
             "provider-ollama",
             "provider-openai-pass-through",
+            "provider-opencode",
         ),
     ),
     "shared-codex-cleanup": (
@@ -107,6 +109,7 @@ EXPECTED_GROUPS = {
             "provider-kimi",
             "provider-ollama",
             "provider-openai-pass-through",
+            "provider-opencode",
         ),
     ),
     "shared-reverso-launcher": (
@@ -119,6 +122,7 @@ EXPECTED_GROUPS = {
             "provider-deepseek",
             "provider-kimi",
             "provider-ollama",
+            "provider-opencode",
         ),
     ),
 }
@@ -191,6 +195,16 @@ EXPECTED_SURFACES = {
         "reverso_managed",
         "reverso",
         "<launch_agent_dir>/claude-ollama",
+        None,
+    ),
+    "claude-opencode": (
+        "provider_launcher",
+        "provider-opencode",
+        "anthropic-opencode-<raw-model-id>",
+        "runtime",
+        "reverso_managed",
+        "reverso",
+        "<launch_agent_dir>/claude-opencode",
         None,
     ),
     "claude-reverso": (
@@ -313,6 +327,96 @@ EXPECTED_SURFACES = {
         "<codex_config_dir>/reverso-ollama.config.toml",
         None,
     ),
+    "codex-reverso-opencode": (
+        "reverso_route",
+        "provider-opencode",
+        "<raw-model-id>",
+        "runtime",
+        "reverso_managed",
+        "reverso",
+        "<codex_config_dir>/reverso-opencode.config.toml",
+        None,
+    ),
+    "opencode-auggie": (
+        "provider_launcher",
+        "provider-auggie",
+        "auggie-<model>",
+        "runtime",
+        "reverso_managed",
+        "reverso",
+        "<opencode_config_dir>/opencode-auggie.jsonc",
+        None,
+    ),
+    "opencode-claude": (
+        "provider_launcher",
+        "provider-claude",
+        "<model>",
+        "runtime",
+        "reverso_managed",
+        "reverso",
+        "<opencode_config_dir>/opencode-claude.jsonc",
+        None,
+    ),
+    "opencode-codex": (
+        "provider_launcher",
+        "provider-codex",
+        "gpt-*",
+        "codex",
+        "reverso_managed",
+        "codex",
+        "<opencode_config_dir>/opencode-codex.jsonc",
+        None,
+    ),
+    "opencode-copilot": (
+        "provider_launcher",
+        "provider-copilot",
+        "copilot-<model>",
+        "runtime",
+        "reverso_managed",
+        "reverso",
+        "<opencode_config_dir>/opencode-copilot.jsonc",
+        None,
+    ),
+    "opencode-deepseek": (
+        "provider_launcher",
+        "provider-deepseek",
+        "<model>",
+        "runtime",
+        "reverso_managed",
+        "reverso",
+        "<opencode_config_dir>/opencode-deepseek.jsonc",
+        None,
+    ),
+    "opencode-kimi": (
+        "provider_launcher",
+        "provider-kimi",
+        "kimi-k3",
+        "runtime",
+        "reverso_managed",
+        "reverso",
+        "<opencode_config_dir>/opencode-kimi.jsonc",
+        None,
+    ),
+    "opencode-ollama": (
+        "provider_launcher",
+        "provider-ollama",
+        "anthropic-ollama-<raw-model-id>",
+        "runtime",
+        "reverso_managed",
+        "reverso",
+        "<opencode_config_dir>/opencode-ollama.jsonc",
+        None,
+    ),
+    "opencode-reverso": (
+        "shared_launcher",
+        "shared-reverso-launcher",
+        "<model>",
+        "runtime",
+        "reverso_managed",
+        "reverso",
+        "<opencode_config_dir>/opencode-reverso.jsonc",
+        None,
+    ),
 }
 _RTK_MARKER = "Managed by reverso-client-sync.\n"
 
@@ -397,6 +501,9 @@ def validate_supported_surface_manifest(manifest: dict[str, Any]) -> None:
     launchers = dict(claude_code_sync.LAUNCHER_CATALOGS)
     if manifest.get("claude_launchers") != launchers:
         raise ClientSyncError("manifest Claude launchers drift from launcher catalog")
+    oc_launchers = dict(opencode_sync.LAUNCHER_CATALOGS)
+    if manifest.get("opencode_launchers") != oc_launchers:
+        raise ClientSyncError("manifest OpenCode launchers drift from launcher catalog")
     external = manifest.get("external_catalogs", {}).get("agy")
     if not isinstance(external, dict) or (
         external.get("runtime_route") is not False
@@ -464,6 +571,7 @@ def validate_supported_surface_manifest(manifest: dict[str, Any]) -> None:
         "codex-direct",
         "codex-openai-pass-through",
         *manifest["claude_launchers"],
+        *manifest["opencode_launchers"],
     }
     if set(surface_ids) != expected_surface_ids:
         raise ClientSyncError("supported-surface manifest surface inventory drift")

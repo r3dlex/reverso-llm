@@ -6,7 +6,8 @@
     "auggie",
     "deepseek",
     "kimi",
-    "ollama"
+    "ollama",
+    "opencode"
   ],
   "feature_gated_routes": {
     "codex-direct": "REVERSO_CODEX_DIRECT_BACKEND",
@@ -24,7 +25,8 @@
     "claude-auggie": "auggie",
     "claude-deepseek": "deepseek",
     "claude-kimi": "kimi",
-    "claude-ollama": "ollama"
+    "claude-ollama": "ollama",
+    "claude-opencode": "opencode"
   },
   "external_catalogs": {
     "agy": {
@@ -43,6 +45,11 @@
     },
     {
       "id": "codex-roots",
+      "kind": "prerequisite",
+      "dependencies": []
+    },
+    {
+      "id": "rtk",
       "kind": "prerequisite",
       "dependencies": []
     },
@@ -97,38 +104,24 @@
       "dependencies": []
     },
     {
-      "id": "provider-openai-pass-through",
-      "kind": "provider",
-      "dependencies": []
-    },
-    {
       "id": "provider-ollama",
       "kind": "provider",
       "dependencies": []
     },
     {
-      "id": "rtk",
-      "kind": "prerequisite",
+      "id": "provider-openai-pass-through",
+      "kind": "provider",
+      "dependencies": []
+    },
+    {
+      "id": "provider-opencode",
+      "kind": "provider",
       "dependencies": []
     },
     {
       "id": "shared-claude-settings",
       "kind": "shared_dependency",
       "dependencies": []
-    },
-    {
-      "id": "shared-codex-config",
-      "kind": "shared_dependency",
-      "dependencies": [
-        "provider-auggie",
-        "provider-claude",
-        "provider-codex-direct",
-        "provider-copilot",
-        "provider-deepseek",
-        "provider-kimi",
-        "provider-ollama",
-        "provider-openai-pass-through"
-      ]
     },
     {
       "id": "shared-codex-cleanup",
@@ -141,7 +134,23 @@
         "provider-deepseek",
         "provider-kimi",
         "provider-ollama",
-        "provider-openai-pass-through"
+        "provider-openai-pass-through",
+        "provider-opencode"
+      ]
+    },
+    {
+      "id": "shared-codex-config",
+      "kind": "shared_dependency",
+      "dependencies": [
+        "provider-auggie",
+        "provider-claude",
+        "provider-codex-direct",
+        "provider-copilot",
+        "provider-deepseek",
+        "provider-kimi",
+        "provider-ollama",
+        "provider-openai-pass-through",
+        "provider-opencode"
       ]
     },
     {
@@ -154,22 +163,12 @@
         "provider-copilot",
         "provider-deepseek",
         "provider-kimi",
-        "provider-ollama"
+        "provider-ollama",
+        "provider-opencode"
       ]
     }
   ],
   "surfaces": [
-    {
-      "id": "claude-ollama",
-      "kind": "provider_launcher",
-      "group": "provider-ollama",
-      "selector_template": "anthropic-ollama-<raw-model-id>",
-      "default_model_authority": "runtime",
-      "ownership": "reverso_managed",
-      "runtime_authority": "reverso",
-      "path_template": "<launch_agent_dir>/claude-ollama",
-      "feature_gate": null
-    },
     {
       "id": "claude-auggie",
       "kind": "provider_launcher",
@@ -234,6 +233,28 @@
       "ownership": "reverso_managed",
       "runtime_authority": "reverso",
       "path_template": "<launch_agent_dir>/claude-kimi",
+      "feature_gate": null
+    },
+    {
+      "id": "claude-ollama",
+      "kind": "provider_launcher",
+      "group": "provider-ollama",
+      "selector_template": "anthropic-ollama-<raw-model-id>",
+      "default_model_authority": "runtime",
+      "ownership": "reverso_managed",
+      "runtime_authority": "reverso",
+      "path_template": "<launch_agent_dir>/claude-ollama",
+      "feature_gate": null
+    },
+    {
+      "id": "claude-opencode",
+      "kind": "provider_launcher",
+      "group": "provider-opencode",
+      "selector_template": "anthropic-opencode-<raw-model-id>",
+      "default_model_authority": "runtime",
+      "ownership": "reverso_managed",
+      "runtime_authority": "reverso",
+      "path_template": "<launch_agent_dir>/claude-opencode",
       "feature_gate": null
     },
     {
@@ -367,6 +388,115 @@
       "runtime_authority": "reverso",
       "path_template": "<codex_config_dir>/reverso-ollama.config.toml",
       "feature_gate": null
+    },
+    {
+      "id": "codex-reverso-opencode",
+      "kind": "reverso_route",
+      "group": "provider-opencode",
+      "selector_template": "<raw-model-id>",
+      "default_model_authority": "runtime",
+      "ownership": "reverso_managed",
+      "runtime_authority": "reverso",
+      "path_template": "<codex_config_dir>/reverso-opencode.config.toml",
+      "feature_gate": null
+    },
+    {
+      "id": "opencode-reverso",
+      "kind": "shared_launcher",
+      "group": "shared-reverso-launcher",
+      "selector_template": "<model>",
+      "default_model_authority": "runtime",
+      "ownership": "reverso_managed",
+      "runtime_authority": "reverso",
+      "path_template": "<opencode_config_dir>/opencode-reverso.jsonc",
+      "feature_gate": null
+    },
+    {
+      "id": "opencode-claude",
+      "kind": "provider_launcher",
+      "group": "provider-claude",
+      "selector_template": "<model>",
+      "default_model_authority": "runtime",
+      "ownership": "reverso_managed",
+      "runtime_authority": "reverso",
+      "path_template": "<opencode_config_dir>/opencode-claude.jsonc",
+      "feature_gate": null
+    },
+    {
+      "id": "opencode-codex",
+      "kind": "provider_launcher",
+      "group": "provider-codex",
+      "selector_template": "gpt-*",
+      "default_model_authority": "codex",
+      "ownership": "reverso_managed",
+      "runtime_authority": "codex",
+      "path_template": "<opencode_config_dir>/opencode-codex.jsonc",
+      "feature_gate": null
+    },
+    {
+      "id": "opencode-copilot",
+      "kind": "provider_launcher",
+      "group": "provider-copilot",
+      "selector_template": "copilot-<model>",
+      "default_model_authority": "runtime",
+      "ownership": "reverso_managed",
+      "runtime_authority": "reverso",
+      "path_template": "<opencode_config_dir>/opencode-copilot.jsonc",
+      "feature_gate": null
+    },
+    {
+      "id": "opencode-auggie",
+      "kind": "provider_launcher",
+      "group": "provider-auggie",
+      "selector_template": "auggie-<model>",
+      "default_model_authority": "runtime",
+      "ownership": "reverso_managed",
+      "runtime_authority": "reverso",
+      "path_template": "<opencode_config_dir>/opencode-auggie.jsonc",
+      "feature_gate": null
+    },
+    {
+      "id": "opencode-deepseek",
+      "kind": "provider_launcher",
+      "group": "provider-deepseek",
+      "selector_template": "<model>",
+      "default_model_authority": "runtime",
+      "ownership": "reverso_managed",
+      "runtime_authority": "reverso",
+      "path_template": "<opencode_config_dir>/opencode-deepseek.jsonc",
+      "feature_gate": null
+    },
+    {
+      "id": "opencode-kimi",
+      "kind": "provider_launcher",
+      "group": "provider-kimi",
+      "selector_template": "kimi-k3",
+      "default_model_authority": "runtime",
+      "ownership": "reverso_managed",
+      "runtime_authority": "reverso",
+      "path_template": "<opencode_config_dir>/opencode-kimi.jsonc",
+      "feature_gate": null
+    },
+    {
+      "id": "opencode-ollama",
+      "kind": "provider_launcher",
+      "group": "provider-ollama",
+      "selector_template": "anthropic-ollama-<raw-model-id>",
+      "default_model_authority": "runtime",
+      "ownership": "reverso_managed",
+      "runtime_authority": "reverso",
+      "path_template": "<opencode_config_dir>/opencode-ollama.jsonc",
+      "feature_gate": null
     }
-  ]
+  ],
+  "opencode_launchers": {
+    "opencode-reverso": "all",
+    "opencode-claude": "claude",
+    "opencode-codex": "codex",
+    "opencode-copilot": "copilot",
+    "opencode-auggie": "auggie",
+    "opencode-deepseek": "deepseek",
+    "opencode-kimi": "kimi",
+    "opencode-ollama": "ollama"
+  }
 }

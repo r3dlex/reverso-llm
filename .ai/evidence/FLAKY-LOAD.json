@@ -1,0 +1,11 @@
+{
+  "goal_id": "FLAKY-LOAD",
+  "green": {
+    "command": "bash tests/verify_flaky_load_fix.sh",
+    "exit_code": 0
+  },
+  "red": {
+    "command": "bash tests/verify_flaky_load_fix.sh",
+    "exit_code": 1
+  }
+}

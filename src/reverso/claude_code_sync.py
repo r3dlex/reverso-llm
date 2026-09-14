@@ -27,7 +27,10 @@ from reverso.client_sync_mutations import (
     apply_prepared_group,
     capture_state,
     file_state,
+    is_owned_by_marker,
+    is_path_owned_by_marker,
     missing_parent_mutations,
+    next_backup_path,
 )
 
 DEFAULT_SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
@@ -36,6 +39,15 @@ GATEWAY_BASE_URL = "http://127.0.0.1:64946"
 PLACEHOLDER_BEARER = "reverso-local-loopback"
 KIMI_MODEL = "kimi-k3"
 KIMI_CONTEXT_WINDOW = "1048576"
+# The OpenCode Go catalog spans 202752 to 1050000 tokens, but a launcher is
+# rendered ONCE and cannot know which of the 29 models the user will pick, so no
+# single static value is per-model correct. The MINIMUM is the safe bound: too
+# small compacts early and wastes tokens, which is recoverable, while too large
+# overflows the model's real context, which is a hard failure mid-session.
+# Per-model sizing would require the Anthropic discovery listing to carry context
+# windows, which it does not.
+OPENCODE_MIN_CONTEXT_WINDOW = "202752"
+
 LAUNCHER_MANAGED_MARKER = "# Managed by reverso-claude-code-sync."
 LAUNCHER_CATALOGS: tuple[tuple[str, str], ...] = (
     ("claude-reverso", "all"),
@@ -46,6 +58,7 @@ LAUNCHER_CATALOGS: tuple[tuple[str, str], ...] = (
     ("claude-deepseek", "deepseek"),
     ("claude-kimi", "kimi"),
     ("claude-ollama", "ollama"),
+    ("claude-opencode", "opencode"),
 )
 LEGACY_REVERSO_ENV_KEYS: tuple[str, ...] = (
     "ANTHROPIC_BASE_URL",
@@ -58,6 +71,11 @@ LAUNCHER_SCRUB_ENV_KEYS: tuple[str, ...] = (
     "CLAUDE_CODE_OAUTH_TOKEN",
     "ANTHROPIC_CUSTOM_HEADERS",
     "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY",
+    # OpenCode Go (OCG-G3): the gateway holds this credential; no spawned CLI
+    # needs it, and a launched agent inherits its parent environment wholesale.
+    # Both the canonical name and the read-only alias are scrubbed.
+    "OPENCODE_API_KEY",
+    "OCGO_API_KEY",
 )
 KIMI_SCRUB_ENV_KEYS: tuple[str, ...] = (
     "ANTHROPIC_MODEL",
@@ -160,16 +178,11 @@ def _next_backup_path(
     *,
     now: datetime | None = None,
 ) -> Path:
-    timestamp = (now or datetime.now(UTC)).strftime("%Y%m%dT%H%M%SZ")
-    suffix = 0
-    while True:
-        suffix_text = "" if suffix == 0 else f".{suffix}"
-        candidate = settings_path.with_name(
-            f"{settings_path.name}{BACKUP_SUFFIX_PREFIX}{timestamp}{suffix_text}"
-        )
-        if not candidate.exists() and not candidate.is_symlink():
-            return candidate
-        suffix += 1
+    return next_backup_path(
+        settings_path,
+        suffix_prefix=BACKUP_SUFFIX_PREFIX,
+        now=now,
+    )
 
 
 def _atomic_write_json(
@@ -221,23 +234,11 @@ def _atomic_write_launcher(path: Path, text: str) -> None:
 
 
 def _is_managed_launcher(path: Path) -> bool:
-    if path.is_symlink() or not path.is_file():
-        return False
-    try:
-        first_lines = path.read_text(encoding="utf-8").splitlines()[:2]
-    except (OSError, UnicodeDecodeError):
-        return False
-    return LAUNCHER_MANAGED_MARKER in first_lines
+    return is_path_owned_by_marker(path, LAUNCHER_MANAGED_MARKER)
 
 
 def _is_managed_launcher_state(state: FileState) -> bool:
-    if state.kind != "file" or not isinstance(state.data, bytes):
-        return False
-    try:
-        first_lines = state.data.decode("utf-8").splitlines()[:2]
-    except UnicodeDecodeError:
-        return False
-    return LAUNCHER_MANAGED_MARKER in first_lines
+    return is_owned_by_marker(state, LAUNCHER_MANAGED_MARKER)
 
 
 def _is_usable_claude(path: Path) -> bool:
@@ -282,6 +283,16 @@ def _render_launcher(claude_executable: Path, catalog: str) -> str:
                 "ANTHROPIC_MODEL": KIMI_MODEL,
                 "CLAUDE_CODE_AUTO_COMPACT_WINDOW": KIMI_CONTEXT_WINDOW,
                 "CLAUDE_CODE_MAX_CONTEXT_TOKENS": KIMI_CONTEXT_WINDOW,
+            }
+        )
+    if catalog == "opencode":
+        # Deliberately no ANTHROPIC_MODEL: unlike kimi this backend is
+        # multi-model, and pinning one id would make the other 28 unreachable
+        # from its own launcher.
+        settings_env.update(
+            {
+                "CLAUDE_CODE_AUTO_COMPACT_WINDOW": OPENCODE_MIN_CONTEXT_WINDOW,
+                "CLAUDE_CODE_MAX_CONTEXT_TOKENS": OPENCODE_MIN_CONTEXT_WINDOW,
             }
         )
     settings = json.dumps(

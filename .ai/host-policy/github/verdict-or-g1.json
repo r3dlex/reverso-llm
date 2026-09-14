@@ -1,0 +1,11 @@
+{
+  "mode": "apply",
+  "confirmation_token": "ct-2026-08-22-002",
+  "marker": "user-explicit-auto-merge-on-green",
+  "status": "apply",
+  "subject": "openrouter-reverso-provider-or-g1",
+  "subject_sha": "12cedb8",
+  "decided_by": "user",
+  "decided_at": "2026-08-22T21:00:00Z",
+  "rationale": "User explicitly instructed 'continue till the end auto-merging on green'. OR-G1 is admit-only (no provider code path) and the deny-first matrix is fully enforced."
+}
