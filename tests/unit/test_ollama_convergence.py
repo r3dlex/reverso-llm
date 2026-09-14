@@ -196,6 +196,7 @@ def test_unchanged_inventory_preserves_bytes_and_mtime(tmp_path: Path) -> None:
 def test_client_sync_apply_twice_uses_one_ollama_snapshot_for_both_clients(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    stub_opencode_convergence: None,
 ) -> None:
     home = tmp_path / "home"
     home.mkdir()

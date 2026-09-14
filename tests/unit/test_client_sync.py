@@ -1698,6 +1698,7 @@ def test_each_stale_provider_is_preserved_while_independent_groups_advance(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     stale_prefix: str,
+    stub_opencode_convergence: None,
 ) -> None:
     monkeypatch.setattr(client_sync, "_post_apply_readback_errors", lambda *a, **k: [])
     home = tmp_path / "home"

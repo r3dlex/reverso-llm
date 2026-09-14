@@ -52,6 +52,7 @@ def test_stale_cloud_only_inventory_is_retained_but_not_catalog_eligible(
 def test_total_ollama_discovery_failure_preserves_group_and_other_provider_hashes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    stub_opencode_convergence: None,
 ) -> None:
     home = tmp_path / "home"
     home.mkdir()
@@ -118,6 +119,7 @@ def test_total_ollama_discovery_failure_preserves_group_and_other_provider_hashe
 def test_ollama_uninstall_is_marker_safe_idempotent_and_apply_restores(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    stub_opencode_convergence: None,
 ) -> None:
     home = tmp_path / "home"
     home.mkdir()
@@ -177,6 +179,7 @@ def test_ollama_uninstall_fails_closed_on_each_unowned_artifact(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     conflict_index: int,
+    stub_opencode_convergence: None,
 ) -> None:
     home = tmp_path / "home"
     home.mkdir()
@@ -239,6 +242,7 @@ def test_ollama_uninstall_fails_closed_on_each_unowned_artifact(
 def test_ollama_apply_failure_precedes_unrelated_provider_mutation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    stub_opencode_convergence: None,
 ) -> None:
     home = tmp_path / "home"
     home.mkdir()
