@@ -71,7 +71,8 @@ def _patch_provider_pipeline(
     def discover(prefix: str) -> Any:
         if prefix == stale:
             raise client_sync.codex_sync.ProviderFreshnessError(prefix)
-        return client_sync.codex_sync.ProviderModels(prefix, (f"{prefix}-model",))
+        model = "kimi-k3" if prefix == "kimi" else f"{prefix}-model"
+        return client_sync.codex_sync.ProviderModels(prefix, (model,))
 
     monkeypatch.setattr(
         client_sync.codex_sync,
@@ -82,6 +83,32 @@ def _patch_provider_pipeline(
         client_sync.codex_sync,
         "prepare_provider_sync",
         lambda models, **_: _prepared_provider(models),
+    )
+    _patch_opencode_pipeline(monkeypatch)
+
+
+def _patch_opencode_pipeline(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    prepared: Any | None = None,
+) -> None:
+    """Keep OpenCode convergence off the network and out of unrelated assertions."""
+    empty = client_sync.opencode_sync.PreparedOpenCodeSync(
+        PreparedGroup("opencode", ()),
+        client_sync.opencode_sync.OpenCodeSyncResult(
+            config_dir="",
+            changed=False,
+            dry_run=True,
+            changed_profiles=(),
+            conflicting_profiles=(),
+            model_count=0,
+            manual_step=None,
+        ),
+    )
+    monkeypatch.setattr(
+        client_sync.opencode_sync,
+        "prepare_sync",
+        lambda _config_dir, **_kwargs: prepared if prepared is not None else empty,
     )
 
 
@@ -296,6 +323,7 @@ def test_plan_clean_home_assigns_shared_missing_ancestors_once(
         claude_config_dir=root / "claude/nested",
         catalog_dir=root / "catalog/nested",
         launch_agent_dir=root / "launch/nested",
+        opencode_config_dir=root / "opencode/nested",
         rtk_bin=_executable(tmp_path / "rtk"),
         home=home,
     )
@@ -1670,6 +1698,7 @@ def test_each_stale_provider_is_preserved_while_independent_groups_advance(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     stale_prefix: str,
+    stub_opencode_convergence: None,
 ) -> None:
     monkeypatch.setattr(client_sync, "_post_apply_readback_errors", lambda *a, **k: [])
     home = tmp_path / "home"
@@ -2614,4 +2643,193 @@ def test_result_records_have_exact_frozen_shapes(
     )
     assert result["surfaces"] == sorted(
         result["surfaces"], key=lambda surface: surface["id"]
+    )
+
+
+def test_rtk_dangling_marker_owned_link_is_repaired_not_failed_closed(
+    tmp_path: Path,
+) -> None:
+    """A Homebrew version bump deletes the old Cellar path under the link.
+
+    The link Reverso wrote then resolves to nothing and every later scheduled
+    refresh failed closed on it, so nothing converged at all.
+    """
+    home = tmp_path / "home"
+    home.mkdir()
+    old_cellar = tmp_path / "cellar" / "0.48.0" / "bin"
+    old_cellar.mkdir(parents=True)
+    old = _executable(old_cellar / "rtk")
+
+    first = client_sync.plan_rtk_convergence(old, home=home)
+    client_sync.apply_rtk_convergence(first)
+    link = home / ".headroom/bin/rtk"
+    assert link.resolve() == old.resolve()
+
+    # The upgrade removes the entire old versioned directory.
+    old.unlink()
+    old_cellar.rmdir()
+    assert link.is_symlink() and not link.exists()
+
+    new_cellar = tmp_path / "cellar" / "0.49.0" / "bin"
+    new_cellar.mkdir(parents=True)
+    new = _executable(new_cellar / "rtk")
+
+    repaired = client_sync.plan_rtk_convergence(new, home=home)
+    assert repaired.changed is True
+    client_sync.apply_rtk_convergence(repaired)
+    assert link.resolve() == new.resolve()
+    assert (home / ".headroom/bin/.reverso-rtk-owner").read_text(
+        encoding="utf-8"
+    ) == client_sync._RTK_MARKER
+
+
+def test_rtk_dangling_link_without_the_marker_stays_a_conflict(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    bin_dir = home / ".headroom/bin"
+    bin_dir.mkdir(parents=True)
+    link = bin_dir / "rtk"
+    link.symlink_to(tmp_path / "gone" / "rtk")
+    executable = _executable(tmp_path / "rtk")
+
+    with pytest.raises(client_sync.ClientSyncError, match="conflict"):
+        client_sync.plan_rtk_convergence(executable, home=home)
+    assert link.is_symlink()
+    assert not (bin_dir / ".reverso-rtk-owner").exists()
+
+
+def _opencode_fragment_mutations(config_dir: Path) -> tuple[Any, ...]:
+    names = [name for name, _catalog in client_sync.opencode_sync.LAUNCHER_CATALOGS]
+    return tuple(
+        prepared_mutation(
+            config_dir / f"{name}.jsonc",
+            file_state(b"// Managed by reverso-opencode-sync.\n{}\n", 0o600),
+        )
+        for name in names
+    )
+
+
+def test_opencode_fragments_converge_inside_their_declared_provider_groups(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """OpenCode is a declared client surface, so the one scheduled pass writes it.
+
+    Before this, the fragments were reachable only through a separate operator
+    command, so the OpenCode catalog silently went stale.
+    """
+    config_dir = tmp_path / "opencode"
+    (tmp_path / "home").mkdir()
+    _patch_provider_pipeline(monkeypatch)
+    monkeypatch.setattr(
+        client_sync.codex_sync,
+        "prepare_sync",
+        lambda **kwargs: _prepared_codex(
+            target=kwargs["target"],
+            catalog_dir=kwargs["catalog_dir"],
+            changed=False,
+        ),
+    )
+    monkeypatch.setattr(
+        client_sync.claude_code_sync,
+        "prepare_sync",
+        lambda *args, **kwargs: _prepared_claude(
+            launcher_dir=kwargs["launcher_dir"],
+            changed=False,
+        ),
+    )
+    _patch_opencode_pipeline(
+        monkeypatch,
+        prepared=client_sync.opencode_sync.PreparedOpenCodeSync(
+            PreparedGroup("opencode", _opencode_fragment_mutations(config_dir)),
+            client_sync.opencode_sync.OpenCodeSyncResult(
+                config_dir=str(config_dir),
+                changed=True,
+                dry_run=True,
+                changed_profiles=(),
+                conflicting_profiles=(),
+                model_count=3,
+                manual_step=None,
+            ),
+        ),
+    )
+
+    plan = client_sync._plan(
+        codex_config=tmp_path / "codex/config.toml",
+        claude_config_dir=tmp_path / "claude",
+        catalog_dir=tmp_path / "catalog",
+        launch_agent_dir=tmp_path / "launchers",
+        opencode_config_dir=config_dir,
+        rtk_bin=_executable(tmp_path / "rtk"),
+        home=tmp_path / "home",
+    )
+
+    assert config_dir / "opencode-ollama.jsonc" in plan.paths["provider-ollama"]
+    assert config_dir / "opencode-kimi.jsonc" in plan.paths["provider-kimi"]
+    # The all-routes fragment belongs with the other shared launchers.
+    assert (
+        config_dir / "opencode-reverso.jsonc" in plan.paths["shared-reverso-launcher"]
+    )
+    # The one-path-one-group invariant still holds across every surface.
+    all_paths = [
+        mutation.path for group in plan.groups.values() for mutation in group.mutations
+    ]
+    assert len(all_paths) == len(set(all_paths))
+
+
+def test_opencode_discovery_failure_preserves_fragments_and_reports_partial(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_dir = tmp_path / "opencode"
+    (tmp_path / "home").mkdir()
+    _patch_provider_pipeline(monkeypatch)
+    monkeypatch.setattr(
+        client_sync.codex_sync,
+        "prepare_sync",
+        lambda **kwargs: _prepared_codex(
+            target=kwargs["target"],
+            catalog_dir=kwargs["catalog_dir"],
+            changed=False,
+        ),
+    )
+    monkeypatch.setattr(
+        client_sync.claude_code_sync,
+        "prepare_sync",
+        lambda *args, **kwargs: _prepared_claude(
+            launcher_dir=kwargs["launcher_dir"],
+            changed=False,
+        ),
+    )
+    _patch_opencode_pipeline(
+        monkeypatch,
+        prepared=client_sync.opencode_sync.PreparedOpenCodeSync(
+            PreparedGroup("opencode", ()),
+            client_sync.opencode_sync.OpenCodeSyncResult(
+                config_dir=str(config_dir),
+                changed=False,
+                dry_run=True,
+                changed_profiles=(),
+                conflicting_profiles=(),
+                model_count=None,
+                manual_step=None,
+                error="model discovery failed: boom",
+            ),
+        ),
+    )
+
+    plan = client_sync._plan(
+        codex_config=tmp_path / "codex/config.toml",
+        claude_config_dir=tmp_path / "claude",
+        catalog_dir=tmp_path / "catalog",
+        launch_agent_dir=tmp_path / "launchers",
+        opencode_config_dir=config_dir,
+        rtk_bin=_executable(tmp_path / "rtk"),
+        home=tmp_path / "home",
+    )
+
+    assert "opencode-roots" in plan.provider_errors
+    assert not any(
+        path.name.endswith(".jsonc") for paths in plan.paths.values() for path in paths
     )
