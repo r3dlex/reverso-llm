@@ -1,0 +1,27 @@
+{
+  "goal_id": "OLLAMA-RP-G5",
+  "issue_ref": ".ai/work-intake/ollama-reverso-provider-g5-cloud-suffix-colon.md",
+  "branch": "fix/adr-0019-cloud-suffix-colon",
+  "base_commit": "ea589e4",
+  "red_command": "uv run pytest tests/unit/test_ollama_adapter.py::test_cloud_routing_suffix_uses_colon_form_for_ollama_0_32_14 tests/unit/test_ollama_adapter.py::test_authority_routing_id_already_carrying_colon_alias_is_not_double_suffixed -q",
+  "red_status": "exit 2",
+  "red_observed_at": "2026-08-23T07:09:00+00:00",
+  "red_summary": "AssertionError: assert '-cloud' == ':cloud' (auth.py:19 constant mismatch); AssertionError: ('glm-5.2:cloud-cloud',) == ('glm-5.2:cloud',) (catalog double-suffix bug).",
+  "green_command": "uv run pytest tests/unit/test_ollama_adapter.py -q",
+  "green_status": "exit 0",
+  "green_observed_at": "2026-08-23T07:12:30+00:00",
+  "green_summary": "52 passed in 0.14s. Full unit suite 1228 passed, 1 flaky kimi-login timing test (pre-existing, passes in isolation).",
+  "files_changed": [
+    "src/reverso/protocols/adapters/ollama/auth.py",
+    "tests/unit/test_ollama_adapter.py",
+    "docs/architecture/adr/0019-ollama-cloud-model-authority.md",
+    ".ai/goals/ollama-reverso-provider-g5.json",
+    ".ai/work-intake/ollama-reverso-provider-g5-cloud-suffix-colon.md"
+  ],
+  "live_probe_evidence": [
+    "ollama run glm-5.2:cloud (colon) -> 200 OK (raw_id glm-5.2:cloud)",
+    "ollama call glm-5.2-cloud (hyphen) -> 404 model not found",
+    "ollama call glm-5.2 (bare) -> 404 model not found",
+    "Gateway POST /ollama/v1/responses model=glm-5.2:cloud -> text: 'OK', model: 'glm-5.2'"
+  ]
+}

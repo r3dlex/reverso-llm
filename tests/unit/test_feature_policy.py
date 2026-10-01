@@ -336,10 +336,12 @@ def test_check_features_passes_when_codex_default_surface_partial() -> None:
     The capability table reclassifies parallel_tool_calls, tool_choice.auto,
     tools.function and tools.web_search so codex turns can complete on every
     first-party provider: `partial` on claude/auggie (CLI runners ignore the
-    fields) and `partial` on deepseek for tools.web_search (`_chat_tools`
-    drops it before the upstream chat call); deepseek translates the other
-    three. This test pins down that the gate does NOT reject any of these
-    features for any non-copilot provider.
+    fields), `partial` on Ollama for parallel_tool_calls, store, and
+    tools.web_search (the shared Codex normalizer drops them), and `partial` on
+    deepseek for tools.web_search
+    (`_chat_tools` drops it before the upstream chat call); deepseek translates
+    the other three. This test pins down that the gate does NOT reject any of
+    these features for any non-copilot provider.
     """
     codex_default_features = {
         "input.message_list_text",
@@ -354,6 +356,9 @@ def test_check_features_passes_when_codex_default_surface_partial() -> None:
     check_features("claude", codex_default_features)
     check_features("auggie", codex_default_features)
     check_features("deepseek", codex_default_features)
+    check_features("ollama", codex_default_features)
+    for feature in ("parallel_tool_calls", "store", "tools.web_search"):
+        assert CAPABILITY_TABLES["ollama"][feature] == "partial"
 
 
 def test_claude_accepts_max_output_tokens_as_best_effort() -> None:
@@ -363,15 +368,15 @@ def test_claude_accepts_max_output_tokens_as_best_effort() -> None:
 
 
 def test_cli_runner_providers_accept_reasoning_fields_as_noop() -> None:
-    """claude/auggie accept reasoning.effort/summary as best-effort no-ops.
+    """Providers without a reasoning knob accept the fields as no-ops.
 
     Codex CLI-forced effort (`omx --high` -> `-c model_reasoning_effort=...`)
-    reaches the gateway on every profile; the claude/auggie CLI runners have
-    no reasoning knob, so the gate must accept-and-ignore rather than fail the
+    reaches the gateway on every profile. The gate must accept-and-ignore it
+    for providers whose adapter does not expose that knob rather than fail the
     whole turn with unsupported_feature (parity: partial, same shape as
     max_output_tokens).
     """
-    for provider in ("claude", "auggie"):
+    for provider in ("claude", "auggie", "ollama"):
         assert CAPABILITY_TABLES[provider]["reasoning.effort"] == "partial"
         assert CAPABILITY_TABLES[provider]["reasoning.summary"] == "partial"
         check_features(provider, {"reasoning.effort", "reasoning.summary"})
@@ -379,7 +384,14 @@ def test_cli_runner_providers_accept_reasoning_fields_as_noop() -> None:
 
 def test_encrypted_content_include_capability_matrix() -> None:
     feature = "include.reasoning.encrypted_content"
-    for provider in ("claude", "copilot", "auggie", "deepseek", "kimi"):
+    for provider in (
+        "claude",
+        "copilot",
+        "auggie",
+        "deepseek",
+        "kimi",
+        "ollama",
+    ):
         assert CAPABILITY_TABLES[provider][feature] == "partial"
         check_features(provider, {feature})
 
@@ -649,7 +661,7 @@ async def test_fast_path_allows_supported_feature_payload() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("provider", ["claude", "auggie"])
+@pytest.mark.parametrize("provider", ["claude", "auggie", "ollama"])
 @pytest.mark.parametrize("stream", [False, True])
 async def test_partial_reasoning_fields_are_stripped_before_dispatch(
     provider: str, stream: bool
@@ -657,8 +669,8 @@ async def test_partial_reasoning_fields_are_stripped_before_dispatch(
     """The adapter must never see reasoning fields classified partial.
 
     The gate accepts them (best-effort) but responses_app strips them from the
-    dispatch payload so a CLI-runner adapter cannot accidentally forward an
-    unsupported knob upstream.
+        dispatch payload so an adapter cannot accidentally forward an unsupported
+        knob upstream.
     """
     adapter = _RecordingAdapter()
     payload: dict[str, Any] = {
@@ -701,7 +713,7 @@ def test_strip_partial_features_drops_only_partial_reasoning_subkeys() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("provider", ["claude", "auggie", "deepseek", "kimi"])
+@pytest.mark.parametrize("provider", ["claude", "auggie", "deepseek", "kimi", "ollama"])
 @pytest.mark.parametrize("stream", [False, True])
 @pytest.mark.parametrize(
     ("include_case", "include_value", "allowed"),

@@ -1,0 +1,42 @@
+{
+  "id": "reverso-oauth-auth-dedup",
+  "implementation_ready": true,
+  "issue_ref": "src/reverso/protocols/adapters/claude.py:146-278",
+  "context": "Local OAuth credential-artifact reading is copy-pasted across three adapters: ClaudeOAuthAuth (claude.py:146-278), CodexOAuthAuth (codex.py:152-310, docstring says 'Mirrors ClaudeOAuthAuth'), and KimiOAuthAuth (kimi.py:118-230). _read_keychain is byte-identical in claude.py and codex.py; _is_expired is duplicated (claude.py:280, codex.py:350); _load_artifact differs only in which JSON key is extracted. The never-fall-back-to-env security invariant and never-log-material are enforced three times instead of once; the next OAuth provider copies it by hand. The ProviderAdapter Protocol (ADR 0002 11.3) and the ProviderAuth protocol (auth.py) are frozen surfaces this change must not alter.",
+  "root_causes": [
+    "the deep module behind the ProviderAuth seam was never extracted; each adapter copied the pattern instead of importing it",
+    "no contract test pins the shared auth invariants (env fallback, expiry, redaction) across adapters, so copies drift silently"
+  ],
+  "evidence": [
+    "claude.py and codex.py contain byte-identical _read_keychain; _is_expired duplicated at claude.py:280 and codex.py:350",
+    "codex.py:152 docstring literally states it mirrors ClaudeOAuthAuth",
+    "auth.py holds only the 139-line protocol; zero shared implementation behind it"
+  ],
+  "solutions": [
+    "one LocalOAuthArtifactAuth module (params: keychain_service, credentials_path, artifact_key extractor, expiry predicate) under src/reverso/protocols/adapters/; claude and codex contribute ~3 lines each; kimi reuses the artifact reader and keeps its refresh logic",
+    "a contract test asserting the shared invariants once for all three adapters: no env fallback (token from env alone must NOT authenticate), keychain-first-then-file order, expiry enforced, no token material in repr/log surfaces",
+    "per-adapter parameter tests keep coverage of provider-specific behavior (kimi refresh flow)"
+  ],
+  "acceptance_criteria": [
+    "one shared LocalOAuthArtifactAuth implementation; claude/codex/kimi adapters contain no private _read_keychain/_is_expired copies",
+    "contract test proves the never-env-fallback invariant once for the shared artifact readers (claude/codex); kimi retains its pre-existing, documented, test-pinned KIMI_BEARER_TOKEN env fallback (present on main before this goal; removal or ratification is a separate follow-up goal)",
+    "ProviderAdapter Protocol and ProviderAuth protocol unchanged (frozen surfaces)",
+    "files are moved to Archive/, never deleted, if any file removal is needed (repo rule)",
+    "pytest tests/unit passes; prek/ruff clean"
+  ],
+  "scope": [
+    "src/reverso/protocols/adapters/claude.py",
+    "src/reverso/protocols/adapters/codex.py",
+    "src/reverso/protocols/adapters/kimi.py",
+    "src/reverso/protocols/adapters/oauth_artifact.py",
+    "tests/unit/*auth*",
+    ".ai/handoff/autobahn-goals/reverso-oauth-auth-dedup.json",
+    ".ai/evidence/reverso-oauth-auth-dedup.json"
+  ],
+  "verification": [
+    "pytest tests/unit"
+  ],
+  "coverage_percent": 90,
+  "state": "done",
+  "merged_pr": "https://github.com/r3dlex/reverso-llm/pull/148"
+}

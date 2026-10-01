@@ -16,7 +16,6 @@ import os
 import tempfile
 import time
 from collections.abc import AsyncIterator
-from enum import Enum
 from math import isfinite
 from pathlib import Path
 from typing import Any
@@ -25,6 +24,10 @@ import httpx
 
 from reverso.protocols.adapter import ModelList, ResponseEnvelope, ResponsesRequest
 from reverso.protocols.adapters.deepseek import DeepSeekAdapter
+from reverso.protocols.adapters.oauth_artifact import (
+    ArtifactState,
+    read_artifact_file,
+)
 from reverso.protocols.kimi_login import KimiLoginCoordinator, KimiLoginError
 from reverso.protocols.openai_chat import parse_stream_event as _parse_stream_event
 
@@ -109,12 +112,6 @@ class KimiModelError(KimiError):
         }
 
 
-class _ArtifactState(Enum):
-    ABSENT = "absent"
-    MALFORMED = "malformed"
-    LOADED = "loaded"
-
-
 class KimiOAuthAuth:
     """Resolve and refresh the OAuth bearer artifact written by Kimi CLI."""
 
@@ -141,18 +138,12 @@ class KimiOAuthAuth:
     def credentials_path(self) -> Path:
         return self._credentials_path
 
-    def _read_artifact(self) -> tuple[_ArtifactState, dict[str, Any] | None]:
+    def _read_artifact(self) -> tuple[ArtifactState, dict[str, Any] | None]:
+        """Read the credential artifact through the shared local reader."""
         try:
-            payload = json.loads(self._credentials_path.read_text(encoding="utf-8"))
-        except FileNotFoundError:
-            return _ArtifactState.ABSENT, None
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            return _ArtifactState.MALFORMED, None
+            return read_artifact_file(self._credentials_path)
         except OSError as exc:
             raise KimiError("kimi OAuth credential artifact could not be read") from exc
-        if not isinstance(payload, dict):
-            return _ArtifactState.MALFORMED, None
-        return _ArtifactState.LOADED, payload
 
     def _load_artifact(self) -> dict[str, Any] | None:
         _, artifact = self._read_artifact()
@@ -345,10 +336,10 @@ class KimiOAuthAuth:
                     failure_kind="artifact_unreadable",
                 )
                 raise
-            if state is _ArtifactState.ABSENT:
+            if state is ArtifactState.ABSENT:
                 _log_auth_reload(outcome="failed", failure_kind="artifact_absent")
                 raise KimiError("kimi login did not create the credential artifact")
-            if state is _ArtifactState.MALFORMED:
+            if state is ArtifactState.MALFORMED:
                 _log_auth_reload(outcome="failed", failure_kind="artifact_malformed")
                 raise KimiError("kimi login created a malformed credential artifact")
             if not (

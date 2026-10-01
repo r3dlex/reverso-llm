@@ -1,0 +1,42 @@
+{
+  "id": "OLLAMA-RP-G5",
+  "issue_ref": ".ai/work-intake/ollama-reverso-provider-g5-cloud-suffix-colon.md",
+  "implementation_ready": true,
+  "context": "ADR-0019 documents the local routing alias for an Ollama 0.32.14 Cloud model as `<id>-cloud` (hyphen). `src/reverso/protocols/adapters/ollama/auth.py:19` hardcodes that hyphen form. Live Ollama 0.32.14 actually uses the colon form `<id>:cloud`; bare and hyphen forms both 404, while the colon form succeeds. The shipped G4 target proof marked `cloud_model_required` and never exercised a real Cloud model end-to-end, so this slipped through. Cloud-authority rows from `https://ollama.com/api/tags` would therefore be published with an alias the local service does not recognize, silently retiring every Cloud row.",
+  "root_causes": [
+    "ADR-0019 was authored against an Ollama version earlier than 0.32.14 without recording a tested minimum version.",
+    "auth.py:19 hardcodes the documented alias verbatim with no live probe to confirm.",
+    "G4 attended proof marked cloud_model_required but the in-session Cloud path had no OLLAMA_API_KEY, so the cloud-authority routing alias was never actually exercised."
+  ],
+  "evidence": [
+    "Live evidence on this machine: `ollama run glm-5.2:cloud` (colon) succeeds; `glm-5.2-cloud` (hyphen) and bare `glm-5.2` both 404 from `127.0.0.1:11434`.",
+    "`GET https://ollama.com/api/tags` returns bare ids such as `glm-5.2`; reversing that onto auth.py:19 yields `glm-5.2-cloud`, which the local service rejects.",
+    "Spec stop-rule: 'If Ollama 0.32.14 protocol behavior differs from official evidence, record the tested minimum version and revise the ADR.'"
+  ],
+  "solutions": [
+    "Change `auth.py:19` `CLOUD_ROUTING_SUFFIX` from `'-cloud'` to `':cloud'` and update the docstring on `auth.py:23` accordingly.",
+    "Update ADR-0019 'Decision' and 'Consequences' so the routing claim matches the corrected colon form, and add the tested minimum Ollama version (0.32.14) under 'Decision'.",
+    "Update test fixtures in `tests/unit/test_ollama_adapter.py` that hardcoded `*-cloud` (lines around 118, 150-151) to `*:cloud`.",
+    "Add one regression test asserting the constant and that `_authority_routing_ids(...)` produces the colon-suffixed alias for an authority bare id."
+  ],
+  "acceptance_criteria": [
+    "`CLOUD_ROUTING_SUFFIX == ':cloud'`.",
+    "`_authority_routing_ids({'models': [{'name': 'glm-5.2'}]})` returns `('glm-5.2:cloud',)`.",
+    "Existing test `test_tags_discovers_every_validated_row_as_a_local_raw_id` and `test_cloud_authority_publishes_documented_local_routing_aliases` pass with colon form.",
+    "ADR-0019 'Decision' references colon form and lists Ollama >= 0.32.14 as the tested minimum version.",
+    "`pytest tests/unit/test_ollama_adapter.py -q` reports 0 failures.",
+    "Lint command `find src -name '*.py' | xargs uv run python -m py_compile` reports no compile errors."
+  ],
+  "scope": [
+    "src/reverso/protocols/adapters/ollama/auth.py",
+    "docs/architecture/adr/0019-ollama-cloud-model-authority.md",
+    "tests/unit/test_ollama_adapter.py",
+    ".ai/evidence/OLLAMA-RP-G5.json",
+    ".ai/work-intake/ollama-reverso-provider-g5-cloud-suffix-colon.md",
+    ".ai/goals/ollama-reverso-provider-g5.json"
+  ],
+  "verification": [
+    "pytest tests/unit/test_ollama_adapter.py -q"
+  ],
+  "coverage_percent": 85
+}

@@ -95,7 +95,16 @@ GATEWAY_PROVIDERS_END = (
 BACKUPS_KEPT = 5
 BACKUP_SUFFIX_PREFIX = ".reverso-sync."
 
-DEFAULT_CONFIG_PATH = Path.home() / ".codex" / "config.toml"
+
+def _resolve_codex_home() -> Path:
+    """Return the active Codex home, honoring ``CODEX_HOME``."""
+    raw = os.environ.get("CODEX_HOME", "").strip()
+    if raw:
+        return Path(raw).expanduser()
+    return Path.home() / ".codex"
+
+
+DEFAULT_CONFIG_PATH = _resolve_codex_home() / "config.toml"
 # Per-provider catalog JSON files live under this directory, one per profile
 # (e.g. ~/.codex/reverso/copilot.json). The directory is derived from the
 # config file's parent so a custom --config relocates the catalogs too.

@@ -11,6 +11,8 @@ from __future__ import annotations
 import datetime
 import json
 import os
+import subprocess
+import sys
 import tomllib
 from pathlib import Path
 from typing import cast
@@ -2286,6 +2288,26 @@ def test_resolve_helpers_prefer_explicit_then_env(
     monkeypatch.setenv("REVERSO_CODEX_BASE_URL", "http://env.invalid")
     assert codex_sync._resolve_config_path(None) == tmp_path / "env.toml"
     assert codex_sync._resolve_base_url(None) == "http://env.invalid"
+
+
+def test_default_config_path_respects_codex_home(tmp_path: Path) -> None:
+    codex_home = tmp_path / "codex-home"
+    env = os.environ.copy()
+    env["CODEX_HOME"] = str(codex_home)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from reverso import codex_sync; print(codex_sync.DEFAULT_CONFIG_PATH)",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert result.stdout.strip() == str(codex_home / "config.toml")
 
 
 def test_resolve_catalog_dir_prefers_explicit_then_env_then_config_parent(

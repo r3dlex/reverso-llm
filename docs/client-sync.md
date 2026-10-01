@@ -93,6 +93,14 @@ fails closed when discovery fails or returns no models, and never edits a
 user-owned `opencode.json` / `opencode.jsonc`: unmanaged fragments conflict
 fail-closed and the manual step for user config is printed instead.
 
+These fragments are declared client surfaces in the same convergence groups as
+the matching Codex profile and Claude launcher, so `client_sync` prepares them
+in its one pass and the scheduled refresh keeps them current without a separate
+operator command. `reverso-opencode-sync` remains available to converge only
+the OpenCode surface on demand. When gateway discovery fails, the fragments are
+preserved untouched and the run reports `partial_freshness` under the
+`opencode-roots` group rather than writing a fragment from absent state.
+
 This is distinct from the OpenCode Go provider backend (`provider-opencode`,
 OCG series): that layer serves OpenCode Go models THROUGH Reverso, while this
 layer configures the OpenCode harness to call Reverso.
@@ -106,7 +114,15 @@ each provider discovery and a 120-second bound for the complete refresh. It
 does not keep running and never restarts either long-lived service.
 The scheduled runner acquires the shared lock and invokes the same in-process
 `client_sync.run("refresh")` convergence path with the held lock capability. It
-does not spawn or reimplement a second refresh pipeline.
+does not spawn or reimplement a second refresh pipeline. That one path converges
+the Codex profiles, the Claude Code launchers, and the OpenCode fragments
+together, so every client surface tracks the same model inventory.
+
+The RTK prerequisite link is repaired when it is marker-owned and dangling. A
+package-manager version bump deletes the old executable path out from under the
+link Reverso wrote; treating that as an ownership conflict failed every later
+refresh closed and silently froze all three client catalogs. A link that still
+resolves to a different binary remains a conflict, marker or not.
 
 The latest status is stored at:
 

@@ -50,7 +50,6 @@ import base64
 import binascii
 import json
 import logging
-import subprocess
 import time
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
@@ -68,6 +67,10 @@ from reverso.protocols.adapters.cli_spine import (
     BoundedCliStreamFailure,
     run_bounded_cli,
     stream_bounded_cli,
+)
+from reverso.protocols.adapters.oauth_artifact import (
+    LocalOAuthArtifactAuth,
+    TokenOutcome,
 )
 from reverso.protocols.adapters.codex_rollout import read_rate_limits
 from reverso.protocols.auth import (
@@ -149,15 +152,16 @@ class CodexAuthError(RuntimeError):
     """Raised when the Codex ChatGPT-subscription OAuth credential cannot resolve."""
 
 
-class CodexOAuthAuth:
+class CodexOAuthAuth(LocalOAuthArtifactAuth):
     """Resolve Codex ChatGPT-subscription credentials from the local OAuth artifact.
 
-    Mirrors ``ClaudeOAuthAuth`` but is VALIDATE-ONLY (design point A3, the default
-    proven by the G002.0 spike): it reads the ``~/.codex/auth.json`` artifact (and,
-    as a future-proof seam, a macOS Keychain item) DIRECTLY and asserts the access
-    token is present and not expired. It never falls back to OPENAI_API_KEY or any
-    environment token; if the artifact is absent the resolution is simply
-    unauthenticated.
+    A thin subclass of the shared LocalOAuthArtifactAuth (the same source
+    layering ClaudeOAuthAuth delegates to) and VALIDATE-ONLY (design point A3,
+    the default proven by the G002.0 spike): it reads the ``~/.codex/auth.json``
+    artifact (and, as a future-proof seam, a macOS Keychain item) DIRECTLY and
+    asserts the access token is present and not expired. It never falls back to
+    OPENAI_API_KEY or any environment token; if the artifact is absent the
+    resolution is simply unauthenticated.
 
     The default CLI-backed path uses this as a validate-only pre-flight check: the
     CLI authenticates the turn from its own ``codex login`` session. The optional
@@ -173,123 +177,20 @@ class CodexOAuthAuth:
         credentials_path: Path | None = None,
         keychain_reader: Any | None = None,
     ) -> None:
-        self._keychain_service = keychain_service
-        self._credentials_path = credentials_path or _CODEX_CREDENTIALS_PATH
-        # Injectable for tests; defaults to the real macOS Keychain read. The
-        # Keychain path returns None on this machine (no entry found) but is kept
-        # so the optional A1/A2 upgrade can reuse the same source layering.
-        self._keychain_reader = keychain_reader or self._read_keychain
-
-    def _read_keychain(self) -> str | None:
-        """Read the raw credential JSON from the macOS Keychain via `security`."""
-        try:
-            result = subprocess.run(
-                [
-                    "security",
-                    "find-generic-password",
-                    "-s",
-                    self._keychain_service,
-                    "-w",
-                ],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            return None
-        return result.stdout.strip() or None
-
-    def _read_credentials_file(self) -> str | None:
-        """Read the raw credential JSON from ~/.codex/auth.json."""
-        try:
-            return self._credentials_path.read_text(encoding="utf-8")
-        except (FileNotFoundError, OSError):
-            return None
-
-    def _load_artifact(self) -> tuple[dict[str, Any] | None, str | None]:
-        """Return (auth.json dict, source) read DIRECTLY from local storage.
-
-        Tries the Keychain first (future-proof seam), then the credentials file.
-        The returned dict is the WHOLE parsed ``auth.json`` object (the token
-        bundle lives under its ``tokens`` key). Neither path consults any
-        environment token. ``source`` is a non-secret diagnostic label.
-        """
-        for source, raw in (
-            ("keychain", self._keychain_reader()),
-            ("credentials_file", self._read_credentials_file()),
-        ):
-            if not raw:
-                continue
-            try:
-                parsed = json.loads(raw)
-            except json.JSONDecodeError:
-                logger.warning(
-                    "codex oauth artifact from %s was not valid JSON", source
-                )
-                continue
-            if isinstance(parsed, dict):
-                return parsed, source
-        return None, None
-
-    def resolve(self) -> AuthResolution:
-        """Resolve the OAuth credential and return a non-secret summary.
-
-        The ``method`` is ALWAYS the OAuth path; this resolver has no api-key code
-        path. ``authenticated`` is True only when an access token is present in the
-        artifact and (when observable via the JWT ``exp`` claim) not expired.
-        """
-        artifact, source = self._load_artifact()
-        if artifact is None:
-            return AuthResolution(
-                authenticated=False,
-                method=OAUTH_METHOD,
-                details={"reason": "no_codex_oauth_artifact"},
-            )
-
-        tokens = artifact.get(_TOKENS_KEY)
-        if not isinstance(tokens, dict):
-            return AuthResolution(
-                authenticated=False,
-                method=OAUTH_METHOD,
-                details={"reason": "no_codex_oauth_tokens", "source": source},
-            )
-
-        access_token = tokens.get(_ACCESS_TOKEN_FIELD)
-        auth_mode = artifact.get(_AUTH_MODE_FIELD)
-
-        if not access_token:
-            return AuthResolution(
-                authenticated=False,
-                method=OAUTH_METHOD,
-                subscription_type=auth_mode,
-                details={"reason": "no_access_token", "source": source},
-            )
-
-        expires_at = _jwt_exp_ms(access_token)
-        details: dict[str, object] = {
-            "source": source,
-            "account_id": tokens.get(_ACCOUNT_ID_FIELD),
-            "auth_mode": auth_mode,
-        }
-
-        if _is_expired(expires_at):
-            details["reason"] = "expired"
-            details["expires_at"] = expires_at
-            return AuthResolution(
-                authenticated=False,
-                method=OAUTH_METHOD,
-                subscription_type=auth_mode,
-                details=details,
-            )
-
-        if expires_at is not None:
-            # expires_at is epoch MILLISECONDS (JWT exp is seconds, multiplied by 1000).
-            details["expires_at"] = expires_at
-        return AuthResolution(
-            authenticated=True,
+        # The Keychain path returns None on this machine (no entry found) but is
+        # kept so the optional A1/A2 upgrade can reuse the same source layering.
+        super().__init__(
             method=OAUTH_METHOD,
-            subscription_type=auth_mode,
-            details=details,
+            error=CodexAuthError,
+            label="codex",
+            missing_reason="no_codex_oauth_artifact",
+            credentials_path=credentials_path or _CODEX_CREDENTIALS_PATH,
+            artifact_key=_codex_artifact_key,
+            token_of=_codex_token_outcome,
+            expiry_of=_codex_expiry_of,
+            details_of=_codex_details,
+            keychain_service=keychain_service,
+            keychain_reader=keychain_reader,
         )
 
     async def bearer_token(self) -> str:
@@ -347,20 +248,43 @@ def _jwt_exp_ms(access_token: Any) -> int | None:
         return None
 
 
-def _is_expired(expires_at: Any) -> bool:
-    """Return True when an observable expiry (epoch ms) has passed.
+def _codex_artifact_key(parsed: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the parsed ``auth.json`` object itself (the bundle is nested).
 
-    When ``expires_at`` is None the expiry is not observable, so this returns
-    False and the caller treats the token as live (a real upstream call would
-    surface the failure).
+    The token bundle lives under the top-level ``tokens`` key, so the whole
+    document is the artifact; non-dict JSON is rejected here so the shared
+    reader skips the source.
     """
-    if expires_at is None:
-        return False
-    try:
-        expiry_ms = float(expires_at)
-    except (TypeError, ValueError):
-        return False
-    return expiry_ms <= time.time() * 1000.0
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _codex_token_outcome(artifact: dict[str, Any]) -> TokenOutcome:
+    """Extract the access token and auth mode from the auth.json document."""
+    tokens = artifact.get(_TOKENS_KEY)
+    if not isinstance(tokens, dict):
+        return TokenOutcome(reason="no_codex_oauth_tokens")
+    return TokenOutcome(
+        token=tokens.get(_ACCESS_TOKEN_FIELD),
+        subscription_type=artifact.get(_AUTH_MODE_FIELD),
+    )
+
+
+def _codex_expiry_of(artifact: dict[str, Any]) -> Any:
+    """Return the access token's JWT ``exp`` claim in epoch MILLISECONDS."""
+    tokens = artifact.get(_TOKENS_KEY)
+    if not isinstance(tokens, dict):
+        return None
+    return _jwt_exp_ms(tokens.get(_ACCESS_TOKEN_FIELD))
+
+
+def _codex_details(artifact: dict[str, Any]) -> dict[str, object]:
+    """Return the non-secret Codex summary fields for the resolution."""
+    tokens = artifact.get(_TOKENS_KEY)
+    account_id = tokens.get(_ACCOUNT_ID_FIELD) if isinstance(tokens, dict) else None
+    return {
+        "account_id": account_id,
+        "auth_mode": artifact.get(_AUTH_MODE_FIELD),
+    }
 
 
 def _codex_model_flag(model: str | None) -> str:

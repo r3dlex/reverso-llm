@@ -24,7 +24,6 @@ import asyncio
 import json
 import logging
 import os
-import subprocess
 import time
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
@@ -43,6 +42,10 @@ from reverso.protocols.adapters.cli_spine import (
     BoundedCliStreamFailure,
     run_bounded_cli,
     stream_bounded_cli,
+)
+from reverso.protocols.adapters.oauth_artifact import (
+    LocalOAuthArtifactAuth,
+    TokenOutcome,
 )
 from reverso.protocols.auth import (
     AuthResolution,
@@ -143,9 +146,13 @@ class ClaudeAuthError(RuntimeError):
     """Raised when the Claude subscription-OAuth credential cannot be resolved."""
 
 
-class ClaudeOAuthAuth:
+class ClaudeOAuthAuth(LocalOAuthArtifactAuth):
     """Resolve Claude subscription credentials from the local OAuth artifact.
 
+    A thin subclass of the shared LocalOAuthArtifactAuth: it supplies the
+    Claude artifact sources and the ``claudeAiOauth`` bundle extraction. The
+    shared base enforces the invariants (never an env token, keychain first
+    then the credentials file, expiry fail-closed, secret-free diagnostics).
     This implements the ProviderAuth surface but does so WITHOUT auth-by-
     elimination: it reads the ``claudeAiOauth`` artifact directly and asserts the
     access token is present. It never falls back to ANTHROPIC_API_KEY or any
@@ -160,137 +167,47 @@ class ClaudeOAuthAuth:
         credentials_path: Path | None = None,
         keychain_reader: Any | None = None,
     ) -> None:
-        self._keychain_service = keychain_service
-        self._credentials_path = credentials_path or _LINUX_CREDENTIALS_PATH
-        # Injectable for tests; defaults to the real macOS Keychain read.
-        self._keychain_reader = keychain_reader or self._read_keychain
-
-    def _read_keychain(self) -> str | None:
-        """Read the raw credential JSON from the macOS Keychain via `security`."""
-        try:
-            result = subprocess.run(
-                [
-                    "security",
-                    "find-generic-password",
-                    "-s",
-                    self._keychain_service,
-                    "-w",
-                ],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            return None
-        return result.stdout.strip() or None
-
-    def _read_credentials_file(self) -> str | None:
-        """Read the raw credential JSON from the Linux/headless fallback file."""
-        try:
-            return self._credentials_path.read_text(encoding="utf-8")
-        except (FileNotFoundError, OSError):
-            return None
-
-    def _load_artifact(self) -> tuple[dict[str, Any] | None, str | None]:
-        """Return (claudeAiOauth dict, source) read DIRECTLY from local storage.
-
-        Tries the Keychain first, then the credentials file. The returned dict is
-        the value under the ``claudeAiOauth`` top-level key. Neither path consults
-        any environment token. ``source`` is a non-secret diagnostic label.
-        """
-        for source, raw in (
-            ("keychain", self._keychain_reader()),
-            ("credentials_file", self._read_credentials_file()),
-        ):
-            if not raw:
-                continue
-            try:
-                parsed = json.loads(raw)
-            except json.JSONDecodeError:
-                logger.warning(
-                    "claude oauth artifact from %s was not valid JSON", source
-                )
-                continue
-            artifact = parsed.get(_OAUTH_ARTIFACT_KEY)
-            if isinstance(artifact, dict):
-                return artifact, source
-        return None, None
-
-    def resolve(self) -> AuthResolution:
-        """Resolve the OAuth credential and return a non-secret summary.
-
-        The ``method`` is ALWAYS the OAuth path when authenticated; this adapter
-        has no api-key code path. ``authenticated`` is True only when a live
-        access token is present in the artifact (and, when observable, not
-        expired).
-        """
-        artifact, source = self._load_artifact()
-        if artifact is None:
-            return AuthResolution(
-                authenticated=False,
-                method=OAUTH_METHOD,
-                details={"reason": "no_claude_oauth_artifact"},
-            )
-
-        access_token = artifact.get("accessToken")
-        subscription_type = artifact.get("subscriptionType")
-        expires_at = artifact.get("expiresAt")
-
-        if not access_token:
-            return AuthResolution(
-                authenticated=False,
-                method=OAUTH_METHOD,
-                subscription_type=subscription_type,
-                details={"reason": "no_access_token", "source": source},
-            )
-
-        details: dict[str, object] = {
-            "source": source,
-            "scopes": artifact.get("scopes"),
-            "rate_limit_tier": artifact.get("rateLimitTier"),
-        }
-
-        if _is_expired(expires_at):
-            details["reason"] = "expired"
-            details["expires_at"] = expires_at
-            return AuthResolution(
-                authenticated=False,
-                method=OAUTH_METHOD,
-                subscription_type=subscription_type,
-                details=details,
-            )
-
-        if expires_at is not None:
-            details["expires_at"] = expires_at
-        return AuthResolution(
-            authenticated=True,
+        super().__init__(
             method=OAUTH_METHOD,
-            subscription_type=subscription_type,
-            details=details,
+            error=ClaudeAuthError,
+            label="claude",
+            missing_reason="no_claude_oauth_artifact",
+            credentials_path=credentials_path or _LINUX_CREDENTIALS_PATH,
+            artifact_key=_claude_artifact_key,
+            token_of=_claude_token_outcome,
+            expiry_of=_claude_expiry_of,
+            details_of=_claude_details,
+            keychain_service=keychain_service,
+            keychain_reader=keychain_reader,
+            bearer_missing_message="no claude oauth access token available",
         )
 
-    async def bearer_token(self) -> str:
-        """Return the live OAuth access token. NEVER log the raw return value."""
-        artifact, _ = self._load_artifact()
-        if not artifact or not artifact.get("accessToken"):
-            raise ClaudeAuthError("no claude oauth access token available")
-        return str(artifact["accessToken"])
+
+def _claude_artifact_key(parsed: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the ``claudeAiOauth`` bundle from the parsed credentials JSON."""
+    artifact = parsed.get(_OAUTH_ARTIFACT_KEY)
+    return artifact if isinstance(artifact, dict) else None
 
 
-def _is_expired(expires_at: Any) -> bool:
-    """Return True when an observable expiry has passed.
+def _claude_token_outcome(bundle: dict[str, Any]) -> TokenOutcome:
+    """Extract the access token and subscription type from the bundle."""
+    return TokenOutcome(
+        token=bundle.get("accessToken"),
+        subscription_type=bundle.get("subscriptionType"),
+    )
 
-    ``expiresAt`` is the Claude Code epoch-milliseconds expiry. When it is absent
-    or unparseable the expiry is not observable, so this returns False and the
-    caller treats the token as live (a real upstream call would surface a 401).
-    """
-    if expires_at is None:
-        return False
-    try:
-        expiry_ms = float(expires_at)
-    except (TypeError, ValueError):
-        return False
-    return expiry_ms <= time.time() * 1000.0
+
+def _claude_expiry_of(bundle: dict[str, Any]) -> Any:
+    """Return the raw ``expiresAt`` (epoch ms, None when unobservable)."""
+    return bundle.get("expiresAt")
+
+
+def _claude_details(bundle: dict[str, Any]) -> dict[str, object]:
+    """Return the non-secret Claude summary fields for the resolution."""
+    return {
+        "scopes": bundle.get("scopes"),
+        "rate_limit_tier": bundle.get("rateLimitTier"),
+    }
 
 
 class _StreamPreflightError(RuntimeError):
